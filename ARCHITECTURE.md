@@ -236,9 +236,11 @@ The sun/moon button in the top bar switches themes. First-time visitors follow t
 
 ## Hosting
 
-Live at **https://wayfarer-production-3acc.up.railway.app**, in the personal Railway workspace ("drishandutt's Projects", project `wayfarer`). In production one Node server (`server/index.ts`) serves the built site from `dist/` and the API, on Railway's `PORT`; `railway.json` holds the build, start and healthcheck settings.
+Live at **https://wayfarer-production-3acc.up.railway.app**, in the personal Railway workspace ("drishandutt's Projects", project `wayfarer`). In production one Node server (`server/index.ts`) serves the built site from `dist/` and the API, on Railway's `PORT`.
 
-Deploy from this folder with the Railway CLI, which is signed in to the personal account:
+The build, start, health check and restart settings live in the `wayfarer` service's own settings on Railway, not in the repo: build `npm run build`, start `NODE_ENV=production node --import tsx server/index.ts`, health check `/api/health` with a 60s timeout, and restart on failure up to 5 times. Railway's old config file, `railway.json`, is deprecated and stops being read on 2026-12-01, so the repo no longer has one. Its replacement, Infrastructure as Code (`.railway/railway.ts`), isn't applied on push, so it would need its own apply step. Change these settings in the dashboard (service → Settings). Railway CLI 4.35's `railway environment edit` answered "No changes to apply" and saved nothing.
+
+Every push to `main` on GitHub (`drishandutt/Travel---Wayfarer`) deploys. A deploy that fails its health check never takes traffic, and the previous one stays live. To deploy the local folder without pushing, use the Railway CLI, which is signed in to the personal account:
 
 ```bash
 railway up --service wayfarer
