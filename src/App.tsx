@@ -428,14 +428,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
 
   const removeTrip = (id: string) => setTrips(deleteTrip(id))
 
-  const restart = () => {
-    abort.current?.abort()
-    saveCurrent(null)
-    dispatch({ type: 'replan' })
-    dispatch({ type: 'chat', role: 'ai', text: 'Fresh map. Tweak anything — destination, days, vibe — then map it again.' })
-  }
-
-  // A clean slate. Your plan so far stays in My trips rather than disappearing.
+  // A clean slate (New trip, Start over). Your plan so far stays in My trips rather than disappearing.
   const newTrip = () => {
     abort.current?.abort()
     const s = latest.current
@@ -539,7 +532,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
             <footer className="actions">
               {state.deckMode
                 ? <button className="ghost" onClick={cancelDeck}>Cancel</button>
-                : <button className="ghost" onClick={restart}>Start over</button>}
+                : <button className="ghost" onClick={newTrip}>Start over</button>}
               {state.history.length > 0 && (state.phase === 'review' || state.phase === 'final') && (
                 <button className="ghost undo" title={`Undo: ${state.history[state.history.length - 1].label}`} aria-label="Undo last change" onClick={() => dispatch({ type: 'undo' })}>↺</button>
               )}
