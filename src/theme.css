@@ -1,0 +1,65 @@
+/* ───────── light mode: Apple's system greys, near-black text ───────── */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ink: #f5f5f7;
+  --ink-2: #fff;
+  --ink-rgb: 245, 245, 247;
+  --glass: rgba(255, 255, 255, .78);
+  --glass-hi: rgba(255, 255, 255, .94);
+  --paper: #1d1d1f;
+  --paper-rgb: 29, 29, 31;
+  --paper-dim: rgba(29, 29, 31, .72);
+  --paper-faint: rgba(29, 29, 31, .56);
+  /* deeper accents as text (>= 4.5:1 on white); fills stay bright with dark text */
+  --amber: #b25000;
+  --coral: #d70015;
+  --mint: #1b7a32;
+  --amber-rgb: 255, 149, 0;
+  --coral-rgb: 215, 0, 21;
+  --mint-rgb: 36, 138, 61;
+  --amber-fill: #ff9500;
+  --coral-fill: #ff3b30;
+  --mint-fill: #34c759;
+  --surface-1: #e8e8ed;
+  --surface-2: #f2f2f7;
+  --sketch-bg: #f2f2f7;
+  --photo-fade: rgba(0, 0, 0, .6);
+  --shadow-rgb: 0, 0, 0;
+  --shadow-a: .14;
+  /* cost chart: validated light slots; some sit under 3:1, so every amount is also labelled */
+  --cost-stay: #2a78d6;
+  --cost-food: #eb6834;
+  --cost-entry: #1baf7a;
+  --cost-transport: #eda100;
+  --cost-buffer: #e87ba4;
+}
+
+/* over photos it's dark scrims and light text, in either theme */
+:root[data-theme="light"] :is(.hero-card, .gallery .frame, .dc-photo, .place-card .close, .sv-poster, .hotel-photo, .stop-photo, .lp-photo) {
+  --ink-rgb: 0, 0, 0;
+  --paper: #f5f5f7;
+  --paper-rgb: 245, 245, 247;
+  --paper-dim: rgba(245, 245, 247, .8);
+  --paper-faint: rgba(245, 245, 247, .64);
+  --amber: #ff9f0a;
+  --amber-rgb: 255, 159, 10;
+  --coral: #ff453a;
+  --mint: #30d158;
+  color: var(--paper); /* body's colour inherits as a value, so restate it */
+}
+:root[data-theme="light"] .dc-nophoto { color: rgba(29, 29, 31, .5); }
+
+/* day colours are bright fills; as text and thin lines they need darkening */
+:root[data-theme="light"] :is(.day-n, .lp-head .arrow) { color: color-mix(in srgb, var(--c) 50%, #1d1d1f); }
+:root[data-theme="light"] .sk-route { stroke: color-mix(in srgb, var(--c) 72%, #1d1d1f); }
+
+/* map chrome */
+:root[data-theme="light"] .maplibregl-ctrl-group button span { filter: none; }
+:root[data-theme="light"] .vignette { opacity: .5; }
+
+/* the toggle (both themes) */
+.theme-btn { align-self: center; flex: none; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line); background: var(--glass); backdrop-filter: blur(20px) saturate(1.4); color: var(--paper-dim); transition: color .2s, background .2s; }
+.theme-btn:hover { color: var(--paper); background: var(--glass-hi); }
+@media (max-width: 760px) { .theme-btn { width: 36px; height: 36px; } }
+/* phones: the mark alone says Wayfarer, which leaves room for the buttons and the step label */
+@media (max-width: 520px) { .brand > span:not(.mark, .brain) { display: none; } }

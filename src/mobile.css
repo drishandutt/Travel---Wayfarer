@@ -1,0 +1,168 @@
+/* ───────── phones: full-screen map + one bottom sheet ───────── */
+
+/* desktop never shows these */
+.step-mini, .deck-mobile-bar { display: none; }
+
+@media (max-width: 760px) {
+  body { overscroll-behavior: none; }
+  .app { height: 100dvh; }
+
+  /* top bar: brand, trips, and where you are */
+  .topbar {
+    top: 0; left: 0; right: 0; gap: 8px; grid-template-columns: 1fr auto;
+    padding: calc(env(safe-area-inset-top) + 8px) 12px 10px;
+    background: linear-gradient(rgba(var(--ink-rgb), .92) 60%, transparent);
+  }
+  .brand { font-size: 19px; gap: 8px; }
+  .brain, .stepper, .brief { display: none !important; }
+  .trips-btn { min-height: 36px; padding: 6px 10px; }
+  .trips-menu { position: fixed; top: calc(env(safe-area-inset-top) + 56px); left: 12px; right: 12px; width: auto; max-height: 70dvh; }
+  .trip-row .open { padding: 12px 10px; }
+  .step-mini {
+    display: inline-flex; align-items: center; gap: 6px; justify-self: end; white-space: nowrap;
+    padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--glass); backdrop-filter: blur(20px) saturate(1.4);
+    font-size: 13px; font-weight: 500; color: var(--paper);
+  }
+  .step-mini i { font-style: normal; color: var(--paper-faint); }
+
+  /* desktop-only chrome */
+  .hero, .legend, .maplibregl-ctrl-bottom-right, .panel-tab { display: none !important; }
+  .vignette { background: linear-gradient(180deg, rgba(var(--ink-rgb), .5) 0%, transparent 18%); }
+  .pin-label { display: none; } /* tapping a pin opens its card instead */
+
+  /* the sheet */
+  .sheet {
+    position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; overflow: hidden;
+    border-radius: 28px 28px 0 0; border-top: 1px solid var(--line);
+    background: var(--glass-hi); backdrop-filter: blur(30px) saturate(1.6);
+    box-shadow: 0 -24px 60px -24px rgba(var(--shadow-rgb), var(--shadow-a));
+    padding-bottom: env(safe-area-inset-bottom);
+    transition: height .38s var(--ease);
+    animation: sheetIn .45s var(--ease) both;
+  }
+  @keyframes sheetIn { from { transform: translateY(40px); opacity: 0; } }
+  .sheet.dragging { transition: none; }
+  .sheet-grab { flex: 0 0 auto; padding: 0 12px 8px; touch-action: none; cursor: grab; }
+  .sheet-handle { display: block; width: 100%; height: 24px; padding: 0; border: 0; background: transparent; }
+  .sheet-handle i { display: block; width: 36px; height: 5px; margin: 8px auto 0; border-radius: 3px; background: rgba(var(--paper-rgb), .28); }
+  .sheet-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(var(--paper-rgb), .07); }
+  .sheet-tabs button {
+    position: relative; flex: 1; min-height: 38px; display: flex; align-items: center; justify-content: center; gap: 7px;
+    border: 0; border-radius: 999px; background: transparent; color: var(--paper-dim); font-size: 14px; font-weight: 500;
+    transition: background .2s, color .2s;
+  }
+  .sheet-tabs button.on { background: var(--paper); color: var(--ink); }
+  .sheet-tabs b { font-size: 13px; font-weight: 500; color: var(--paper-faint); }
+  .sheet-tabs button.on b { color: rgba(var(--ink-rgb), .55); }
+  .sheet-tabs .dot { position: absolute; top: 9px; right: 14px; width: 8px; height: 8px; border-radius: 50%; background: var(--amber-fill); }
+  .sheet-tabs .orb { width: 8px; height: 8px; }
+  .sheet-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+  /* panels living inside the sheet */
+  .sheet .panel {
+    position: static; inset: auto; width: auto; flex: 1; min-height: 0;
+    border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none;
+    animation: none; transform: none !important; opacity: 1 !important; pointer-events: auto !important;
+  }
+  .sheet .panel-head { padding: 4px 16px 8px; }
+  .sheet .chat .panel-head { display: none; } /* the tab already says "Chat" */
+  .sheet .messages { padding-top: 10px; }
+  .sheet .panel-head h2 { font-size: 20px; }
+  .sheet .journal .panel-head:not(:has(.dash-open-btn)) { display: none; } /* the tab already names it */
+  .sheet .day-tabs { background: linear-gradient(var(--glass-hi) 82%, transparent); }
+  .sheet .panel-head .collapse { display: none; }
+  .sheet .dash-open-btn { top: 4px; right: 14px; height: 32px; }
+  .sheet .messages { padding: 2px 14px 12px; }
+  .sheet .chat > .cta { margin: 0 12px 10px; }
+  .sheet .composer { padding: 10px 12px; }
+  .composer input { font-size: 16px; padding: 12px 14px; } /* 16px stops iOS zooming in on focus */
+  .composer button { width: 44px; height: 44px; }
+  .msg { max-width: 92%; }
+  .suggestions button { padding: 12px; }
+  .sheet .journal-body { padding: 0 14px 10px; }
+  .sheet .summary { margin: 0 16px 10px; }
+  .sheet .thinking.compact { display: none; }
+  .sheet .actions { padding: 10px 12px; }
+  .actions .ghost, .actions .cta { min-height: 46px; }
+  .day-tabs button { min-height: 36px; padding: 7px 13px; }
+  .stop-tools button { width: 36px; height: 32px; font-size: 13px; }
+  .buffer .fill { padding: 4px 9px; }
+
+  /* place card becomes a bottom sheet of its own */
+  .place-card {
+    z-index: 30; left: 0; right: 0; bottom: 0; width: auto; max-height: 80dvh; transform: none;
+    border-radius: 28px 28px 0 0; padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    animation: cardUp .35s var(--ease) both;
+  }
+  @keyframes cardUp { from { transform: translateY(48px); opacity: 0; } }
+  .place-card .close { width: 38px; height: 38px; font-size: 22px; }
+  .gallery .frame { height: 210px; }
+  .day-chip { min-height: 40px; padding: 8px 13px; }
+  .danger { min-height: 40px; }
+
+  /* route popup: its photos make it too tall to float near a tap, where the sheet would hide
+     half of it, so it docks under the top bar */
+  .leg-pop { top: calc(env(safe-area-inset-top) + 60px) !important; left: 12px !important; right: 12px; max-width: none !important; transform: none !important; }
+  .leg-pop .maplibregl-popup-content { width: 100%; }
+
+  /* swipe deck takes the screen */
+  .deck-zone {
+    left: 0; right: 0; width: auto; top: calc(env(safe-area-inset-top) + 54px); bottom: 0;
+    padding: 0 12px calc(10px + env(safe-area-inset-bottom));
+    background: linear-gradient(rgba(var(--ink-rgb), .55), var(--ink) 22%);
+  }
+  .deck-head { padding: 2px 4px 10px; }
+  .deck-head h2 { font-size: 22px; margin-bottom: 8px; }
+  .dc-body { padding: 2px 18px 16px; }
+  .dc-body h3 { font-size: 22px; }
+  .dc-body p { font-size: 13px; margin-bottom: 8px; }
+  .stamp { top: 46px; font-size: 15px; }
+  .deck-controls { gap: 22px; padding: 14px 0 2px; }
+  .dbtn.undo { width: 46px; height: 46px; }
+  .dbtn.skip, .dbtn.keep { width: 62px; height: 62px; }
+  .deck-mobile-bar { display: flex; align-items: center; gap: 12px; padding-top: 10px; }
+  .deck-mobile-bar span { font-size: 13px; color: var(--paper-faint); white-space: nowrap; }
+  .deck-mobile-bar b { color: var(--paper); }
+  .deck-mobile-bar .cta { flex: 1; min-height: 48px; }
+
+  /* route popup fits the screen */
+  .maplibregl-popup.leg-pop { max-width: calc(100vw - 24px) !important; }
+  .lp { min-width: 0; }
+
+  /* dashboard */
+  .dash { padding: 0 12px calc(32px + env(safe-area-inset-bottom)); }
+  .dash-bar { flex-wrap: wrap; padding: calc(env(safe-area-inset-top) + 10px) 0 10px; }
+  .dash-actions { width: 100%; flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+  .dash-actions button { flex: 0 0 auto; white-space: nowrap; min-height: 40px; }
+  .dash-back { min-height: 40px; }
+  .dash-grid { gap: 12px; }
+  .card { padding: 18px; border-radius: 22px; }
+  .card h2 { font-size: 20px; }
+  .hero-card { min-height: 220px; padding: 22px; }
+  .hero-card h1 { font-size: 48px; }
+  .countdown b { font-size: 48px; }
+  /* weather and days scroll sideways instead of stacking into a long column */
+  .wx-row, .day-cards { grid-auto-flow: column; grid-template-columns: none; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; padding-bottom: 4px; }
+  .wx-row { grid-auto-columns: 128px; }
+  .day-cards { grid-auto-columns: 86%; }
+  .wx-day, .day-card { scroll-snap-align: start; }
+  .checks label { padding: 10px 6px; }
+}
+
+/* narrower phones: the top bar keeps "4/6" and drops the step's name, then the balance */
+@media (max-width: 400px) {
+  .step-mini { gap: 0; font-size: 0; }
+  .step-mini i { font-size: 11px; }
+}
+@media (max-width: 340px) {
+  .money-amt { display: none; }
+}
+
+/* touch screens: no hover, so show what hover would reveal */
+@media (hover: none) {
+  /* always visible, on their own row so they never sit on the tags */
+  .stop { flex-wrap: wrap; }
+  .stop-tools { position: static; opacity: 1; transform: none; flex-basis: 100%; justify-content: flex-end; margin-top: 2px; }
+  .gallery .nav { opacity: 1; }
+  .trip-row .del { opacity: 1; }
+}

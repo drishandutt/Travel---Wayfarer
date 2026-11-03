@@ -1,0 +1,224 @@
+/* ───────── Memphis layer ─────────
+   Sits on top of the minimal base: same type and layout, plus loud colour, chunky outlines,
+   hard offset shadows and geometric confetti (components/Memphis.tsx). Remove this file and
+   its import to get the plain version back. */
+:root {
+  --m-yellow: #ffd23f;
+  --m-pink: #ff6fae;
+  --m-teal: #2ed3c0;
+  --m-violet: #a78bfa;
+  --m-orange: #ff8c42;
+  --m-blue: #5b8cff;
+  --m-ink: #111;                               /* edges and text on bright fills, in both themes */
+  --m-edge: rgba(var(--paper-rgb), .22);       /* outlines on dark surfaces */
+  --m-drop: var(--m-violet);                   /* hard shadow behind small bright things */
+  --m-pink-text: #ff8cc0;
+  /* the shared accents take the Memphis colours */
+  --amber: var(--m-yellow); --amber-rgb: 255, 210, 63; --amber-fill: var(--m-yellow);
+  --mint: var(--m-teal); --mint-rgb: 46, 211, 192; --mint-fill: var(--m-teal);
+  --coral: #ff5d73; --coral-rgb: 255, 93, 115; --coral-fill: #ff5d73;
+  --cost-stay: var(--m-blue); --cost-food: var(--m-orange); --cost-entry: var(--m-teal); --cost-transport: var(--m-yellow); --cost-buffer: var(--m-pink);
+}
+:root[data-theme="light"] {
+  --m-edge: #111;
+  --m-drop: #111;
+  --m-pink-text: #d6246e;
+  --amber: #8a6200; --amber-rgb: 255, 210, 63; --amber-fill: var(--m-yellow);
+  --mint: #0b7d70; --mint-rgb: 46, 211, 192; --mint-fill: var(--m-teal);
+  --coral: #c8102e; --coral-fill: #ff5d73;
+  --cost-stay: var(--m-blue); --cost-food: var(--m-orange); --cost-entry: var(--m-teal); --cost-transport: var(--m-yellow); --cost-buffer: var(--m-pink);
+}
+/* over photos, light mode keeps the bright accents (theme.css resets them there) */
+:root[data-theme="light"] :is(.hero-card, .gallery .frame, .dc-photo, .sv-poster, .hotel-photo, .stop-photo, .lp-photo) { --amber: var(--m-yellow); --mint: var(--m-teal); }
+
+/* ── the two recipes: bright pressable things, and outlined surfaces ── */
+.cta, .composer button, .dbtn.keep, .dbtn.skip, .dc-match, .badge, .m-upi {
+  border: 2px solid var(--m-ink) !important; color: var(--m-ink) !important;
+  box-shadow: 3px 3px 0 var(--m-drop);
+  transition: transform .15s var(--ease), box-shadow .15s var(--ease), opacity .2s;
+}
+:is(.cta, .composer button, .dbtn.keep, .dbtn.skip):hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--m-drop); opacity: 1; }
+:is(.cta, .composer button, .dbtn.keep, .dbtn.skip):active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--m-drop); }
+:is(.cta, .composer button):disabled { box-shadow: none; }
+.cta:disabled { background: var(--surface-2); border-color: transparent !important; color: var(--paper-faint) !important; opacity: 1; }
+.composer button:disabled { background: var(--surface-2); border-color: transparent !important; color: var(--paper-faint) !important; opacity: 1; }
+.cta { background: var(--m-yellow); font-weight: 700; }
+.composer button { background: var(--m-pink); }
+.ghost { border-width: 2px; border-color: var(--m-edge); }
+
+.panel, .place-card, .dcard, .deck-end, .card, .day-card, .m-modal, .trips-menu, .leg-pop .maplibregl-popup-content, .sheet {
+  border: 2px solid var(--m-edge);
+  box-shadow: 6px 6px 0 var(--pop, var(--m-violet));
+}
+.chat { --pop: var(--m-pink); }
+.journal { --pop: var(--m-teal); }
+.place-card { --pop: var(--m-yellow); }
+.dcard.top { --pop: var(--m-violet); }
+.dcard:not(.top) { box-shadow: none; }
+.trips-menu { --pop: var(--m-yellow); }
+.m-modal { --pop: var(--m-pink); }
+.sheet { --pop: var(--m-pink); box-shadow: 0 -5px 0 var(--pop); border-width: 2px 0 0; }
+.leg-pop .maplibregl-popup-content { --pop: var(--m-teal); }
+
+/* ── chrome on the map ── */
+.brand .mark { color: var(--m-pink); }
+.brain.on { background: var(--m-teal); }
+.trips-btn, .money-btn, .theme-btn, .stepper, .brief, .legend, .panel-tab, .deck-cancel, .step-mini, .trip-nudge { border: 2px solid var(--m-edge); }
+.stepper li:nth-child(1) { --pop: var(--m-yellow); } .stepper li:nth-child(2) { --pop: var(--m-pink); } .stepper li:nth-child(3) { --pop: var(--m-teal); }
+.stepper li:nth-child(4) { --pop: var(--m-violet); } .stepper li:nth-child(5) { --pop: var(--m-orange); } .stepper li:nth-child(6) { --pop: var(--m-blue); }
+.stepper li.now { background: var(--pop); color: var(--m-ink); font-weight: 600; }
+.stepper li.done::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--pop); vertical-align: 2px; }
+.brief span:first-child { color: var(--m-pink-text); }
+.panel-head h2, .deck-head h2, .card-head.bare h2, .m-list-head h1 { width: fit-content; padding-bottom: 6px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='6' viewBox='0 0 24 6'%3E%3Cpath d='M0 3 Q 6 0 12 3 T 24 3' fill='none' stroke='%23ff6fae' stroke-width='2.2'/%3E%3C/svg%3E") left bottom / 24px 6px repeat-x; }
+.journal .panel-head h2 { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='6' viewBox='0 0 24 6'%3E%3Cpath d='M0 3 Q 6 0 12 3 T 24 3' fill='none' stroke='%232ed3c0' stroke-width='2.2'/%3E%3C/svg%3E"); }
+.panel-head .collapse { border: 2px solid var(--m-edge); }
+
+/* intake headline */
+.hero h1 em { color: var(--m-pink-text); }
+.hero h1 { position: relative; }
+
+/* ── chat ── */
+.msg.user { background: var(--m-yellow); color: var(--m-ink); border: 2px solid var(--m-ink); }
+.msg.ai { border: 2px solid transparent; }
+.msg.friend { background: color-mix(in srgb, var(--m-teal) 22%, transparent); }
+.suggestions button { border: 2px dashed var(--m-edge); background: transparent; }
+.suggestions button:nth-child(1):hover { border-color: var(--m-pink); } .suggestions button:nth-child(2):hover { border-color: var(--m-teal); }
+.quick-replies button { border: 2px solid var(--m-edge); }
+.quick-replies button:nth-child(4n+1):hover { background: var(--m-yellow); color: var(--m-ink); }
+.quick-replies button:nth-child(4n+2):hover { background: var(--m-pink); color: var(--m-ink); }
+.quick-replies button:nth-child(4n+3):hover { background: var(--m-teal); color: var(--m-ink); }
+.quick-replies button:nth-child(4n+4):hover { background: var(--m-violet); color: var(--m-ink); }
+.chat-to button.on, .m-segment button.on, .sheet-tabs button.on { background: var(--m-pink); color: var(--m-ink); }
+.sheet-tabs button.on b { color: rgba(17, 17, 17, .6); }
+.trip-bar { border: 2px dashed var(--m-edge); background: transparent; }
+
+/* ── swipe deck ── */
+.dc-match { background: var(--m-yellow); top: 26px; box-shadow: 2px 2px 0 var(--m-ink); backdrop-filter: none; }
+.dbtn.keep { background: var(--m-teal); }
+.dbtn.skip { background: var(--m-pink); }
+.dbtn.undo { border: 2px solid var(--m-edge); }
+.stamp { border: 2px solid var(--m-ink); box-shadow: 3px 3px 0 var(--m-ink); }
+.stamp.keep { background: var(--m-teal); transform: rotate(-8deg); }
+.stamp.skip { background: var(--m-pink); transform: rotate(8deg); }
+.dc-why { color: var(--m-pink-text); }
+.dc-why::first-letter { text-transform: uppercase; }
+.deck-progress { height: 6px; border: 2px solid var(--m-edge); background: transparent; }
+.deck-progress i { background: repeating-linear-gradient(-45deg, var(--m-pink) 0 6px, var(--m-yellow) 6px 12px); }
+.picks-goal > i { height: 6px; }
+.picks-goal > i b, .pack-bar i { background: repeating-linear-gradient(-45deg, var(--m-teal) 0 6px, var(--m-yellow) 6px 12px); }
+.pick .thumb, .rank-row .thumb { border: 2px solid var(--m-edge); }
+
+/* ── itinerary ── */
+.day-tabs button { border: 2px solid transparent; }
+.day-tabs button.on { background: var(--c, var(--m-yellow)); color: var(--m-ink); border-color: var(--m-ink); }
+.day-tabs button:first-child.on { background: var(--m-yellow); }
+.day-tabs button.on i { background: var(--m-ink); }
+.stop-n { border: 2px solid var(--m-ink); }
+.timeline::before { width: 0; background: none; border-left: 2px dashed var(--line-2); }
+.stop-photo, .hotel-photo, .gallery .frame { border-bottom: 2px solid var(--m-edge); }
+.stop-photo { border: 2px solid var(--m-edge); }
+.tidy { border: 2px solid var(--m-edge); background: transparent; }
+.dash-open-btn { background: var(--m-yellow); color: var(--m-ink); border: 2px solid var(--m-ink); }
+.hotel-card { border: 2px solid var(--m-edge); }
+.hotel-card:hover { box-shadow: 4px 4px 0 var(--m-teal); }
+.hotel-card.chosen { border-color: var(--m-edge); box-shadow: 5px 5px 0 var(--m-yellow); }
+.badge { background: var(--m-yellow); top: 14px; box-shadow: 2px 2px 0 var(--m-ink); }
+.fit { color: var(--mint); }
+.day-chip { border: 2px solid var(--m-edge); background: transparent; }
+.day-chip:hover { background: var(--c, var(--m-yellow)); color: var(--m-ink); border-color: var(--m-ink); }
+.pc-log { background: var(--m-teal); color: var(--m-ink); border: 2px solid var(--m-ink); }
+.pc-vote-buttons button.on { background: var(--m-teal); color: var(--m-ink); }
+.sv-chips button.on { background: var(--m-pink); color: var(--m-ink); }
+
+/* map pins */
+.pin.placed .pin-core { border-color: var(--m-ink); }
+.pin[data-verdict='keep'] .pin-core { border: 2px solid var(--m-ink); }
+.hotel-core { border-width: 2px; }
+
+/* ── dashboard: a dotted page with tinted cards ── */
+.dash { background-color: var(--ink); background-image: radial-gradient(rgba(var(--paper-rgb), .13) 1.3px, transparent 1.6px); background-size: 22px 22px; }
+.dash-bar { background-color: rgba(var(--ink-rgb), .86); }
+.dash-back, .dash-actions button { border: 2px solid var(--m-edge); }
+.dash-actions button:nth-child(1):hover:not(:disabled) { background: var(--m-teal); color: var(--m-ink); }
+.dash-actions button:nth-child(2):hover:not(:disabled) { background: var(--m-yellow); color: var(--m-ink); }
+.dash-actions button:nth-child(3):hover:not(:disabled) { background: var(--m-violet); color: var(--m-ink); }
+.dash-actions button:nth-child(4):hover:not(:disabled) { background: var(--m-pink); color: var(--m-ink); }
+.card { --pop: var(--m-violet); }
+.card:not(.hero-card) { background: color-mix(in srgb, var(--pop) 10%, var(--ink-2)); }
+.hero-card { --pop: var(--m-pink); border-color: var(--m-ink); }
+.hero-card h1 { text-shadow: 3px 3px 0 var(--m-pink); }
+.dates-card { --pop: var(--m-yellow); }
+.weather-card { --pop: var(--m-blue); }
+.cost-card { --pop: var(--m-orange); }
+.stats-card { --pop: var(--m-teal); }
+.book-card { --pop: var(--m-pink); }
+.pack-card { --pop: var(--m-teal); }
+.local-card { --pop: var(--m-yellow); }
+.countdown b { color: var(--m-pink-text); }
+.costbar { height: 18px; }
+.costbar .seg { border-block: 2px solid var(--m-ink); }
+.costbar .seg:first-child { border-left: 2px solid var(--m-ink); } .costbar .seg:last-child { border-right: 2px solid var(--m-ink); }
+.cost-lines i { border: 1.5px solid var(--m-ink); }
+/* the four numbers are bright stickers */
+.tile { border: 2px solid var(--m-ink); color: var(--m-ink); box-shadow: 3px 3px 0 var(--m-ink); }
+.tile:nth-child(1) { background: var(--m-yellow); transform: rotate(-1deg); } .tile:nth-child(2) { background: var(--m-pink); transform: rotate(.8deg); }
+.tile:nth-child(3) { background: var(--m-teal); transform: rotate(.8deg); } .tile:nth-child(4) { background: var(--m-violet); transform: rotate(-1deg); }
+.tile small, .tile b em { color: rgba(17, 17, 17, .68); }
+.wx-day { border: 2px solid var(--m-edge); background: transparent; }
+.wx-day.wet { background: color-mix(in srgb, var(--m-blue) 16%, transparent); }
+.day-card { --pop: var(--c); }
+.day-pill::before { width: 10px; height: 10px; border: 2px solid var(--m-ink); }
+.sketch { border: 2px solid var(--m-edge); }
+.sk-dot { stroke: var(--m-ink); }
+.checks input { border: 2px solid var(--m-edge); }
+.checks input:checked { background: var(--m-teal); border-color: var(--m-ink); }
+.checks input:checked::after { color: var(--m-ink); }
+.phrases div { border: 2px solid var(--m-edge); background: transparent; }
+.phrases div:nth-child(4n+1) { box-shadow: 3px 3px 0 var(--m-pink); } .phrases div:nth-child(4n+2) { box-shadow: 3px 3px 0 var(--m-teal); }
+.phrases div:nth-child(4n+3) { box-shadow: 3px 3px 0 var(--m-yellow); } .phrases div:nth-child(4n+4) { box-shadow: 3px 3px 0 var(--m-violet); }
+
+/* ── money ── */
+.m-app .card { --pop: var(--m-violet); }
+.m-hero { --pop: var(--m-yellow); }
+.m-spend { --pop: var(--m-teal); }
+.m-auth { --pop: var(--m-pink); position: relative; }
+.m-auth h1 em { color: var(--m-pink-text); }
+.m-tabs button.on { background: var(--m-pink); color: var(--m-ink); }
+.m-groups button { border: 2px solid var(--m-edge); }
+.m-groups li:nth-child(4n+1) button:hover { box-shadow: 5px 5px 0 var(--m-yellow); } .m-groups li:nth-child(4n+2) button:hover { box-shadow: 5px 5px 0 var(--m-pink); }
+.m-groups li:nth-child(4n+3) button:hover { box-shadow: 5px 5px 0 var(--m-teal); } .m-groups li:nth-child(4n+4) button:hover { box-shadow: 5px 5px 0 var(--m-violet); }
+.m-back { border: 2px solid var(--m-edge); }
+.m-debt { border: 2px solid var(--m-edge); background: transparent; }
+.m-debt-arc path { stroke: var(--m-pink); stroke-width: 2.5; }
+.m-debt-head { border-left-color: var(--m-pink); }
+.m-bars-track i, .m-bullet-track i, .m-legend .bar { background: var(--m-orange); }
+.m-col-bar i { background: var(--m-pink); border: 2px solid var(--m-ink); border-bottom: 0; }
+.m-col.today .m-col-bar i { background: var(--m-yellow); box-shadow: none; }
+.m-cats button.on, .m-chips button.on, .m-methods button.on { background: var(--m-yellow); color: var(--m-ink); }
+.m-check:checked { background: var(--m-teal); border-color: var(--m-ink); }
+.m-check:checked::after { color: var(--m-ink); }
+.m-exp-icon { border: 2px solid var(--m-edge); background: transparent; }
+.m-day .m-exp-list, .m-activity { border: 2px solid var(--m-edge); }
+.m-toggle.on i { background: var(--m-teal); }
+.m-toast { border: 2px solid var(--m-edge); box-shadow: 4px 4px 0 var(--m-pink); }
+.m-avatar { box-shadow: 0 0 0 2px var(--m-ink); }
+
+/* phones: shadows a little tighter */
+@media (max-width: 760px) {
+  .card, .day-card, .dcard.top, .place-card { box-shadow: 4px 4px 0 var(--pop, var(--m-violet)); }
+  .place-card { box-shadow: 0 -5px 0 var(--pop); border-width: 2px 0 0; }
+  .m-modal { box-shadow: 0 -5px 0 var(--pop); border-width: 2px 0 0; }
+}
+@media print { .tile, .card, .day-card { box-shadow: none !important; transform: none !important; } .dash { background-image: none; } }
+
+/* ── confetti (components/Memphis.tsx) ── */
+.mph { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.mph-s { position: absolute; display: block; transform: rotate(var(--r)); animation: mphFloat 7s ease-in-out infinite; }
+.mph-s svg { display: block; width: 100%; height: auto; overflow: visible; }
+@keyframes mphFloat { 50% { transform: rotate(var(--r)) translateY(-6px); } }
+@media (prefers-reduced-motion: reduce) { .mph-s { animation: none; } }
+.hero > :not(.mph), .m-auth > :not(.mph), .deck-end > :not(.mph), .hero-card > :not(.mph), .m-list-head > :not(.mph) { position: relative; z-index: 1; }
+.m-auth { overflow: visible; }
+.m-list-head { position: relative; }
+.m-list-head .mph { left: auto; width: 220px; }
+.deck-end { overflow: hidden; }

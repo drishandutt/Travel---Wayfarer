@@ -1,0 +1,45 @@
+/* ───────── collapsible side panels ───────── */
+
+/* slide in once on mount, then let transitions drive collapse/expand */
+.chat, .journal { animation-fill-mode: backwards; }
+.panel { transition: transform .45s var(--ease), opacity .3s var(--ease); }
+.chat.collapsed { transform: translateX(calc(-100% - 32px)); opacity: 0; pointer-events: none; }
+.journal.collapsed { transform: translateX(calc(100% + 32px)); opacity: 0; pointer-events: none; }
+
+.panel-head { position: relative; }
+.panel-head .collapse {
+  position: absolute; top: 18px; right: 16px; width: 28px; height: 28px; display: grid; place-items: center;
+  border-radius: 50%; border: 0; background: rgba(var(--paper-rgb), .06); color: var(--paper-faint);
+  transition: color .2s, border-color .2s, background .2s;
+}
+.panel-head .collapse:hover { color: var(--paper); background: rgba(var(--paper-rgb), .12); }
+
+/* the slim tab left behind on the edge */
+.panel-tab {
+  position: absolute; z-index: 9; top: 76px; display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 14px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--glass);
+  backdrop-filter: blur(20px) saturate(1.4); color: var(--paper-dim); box-shadow: 0 18px 40px -20px rgba(var(--shadow-rgb), var(--shadow-a));
+  animation: tabIn .45s .1s var(--ease) both; transition: color .2s, border-color .2s;
+}
+.panel-tab.left { left: 16px; }
+.panel-tab.right { right: 16px; --from: 12px; }
+.panel-tab:hover { color: var(--paper); background: var(--glass-hi); }
+.panel-tab span { writing-mode: vertical-rl; font-size: 13px; font-weight: 500; }
+.panel-tab b { font-size: 12px; font-weight: 600; color: var(--paper); }
+.panel-tab b:empty { display: none; }
+.panel-tab .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber-fill); animation: orb 1.4s infinite; }
+@keyframes tabIn { from { opacity: 0; transform: translateX(var(--from, -12px)); } }
+
+/* map chrome follows the free space */
+.app.journal-collapsed .maplibregl-ctrl-bottom-right { right: 0; }
+.app.chat-collapsed .legend { left: 72px; }
+.legend { transition: left .45s var(--ease); }
+
+/* ───────── live edits ───────── */
+.msg { white-space: pre-line; } /* edit replies are bullet lists */
+.day.flash { animation: dayFlash 1.8s var(--ease); border-radius: 14px; }
+@keyframes dayFlash {
+  0% { background: color-mix(in srgb, var(--c) 22%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 60%, transparent); }
+  100% { background: transparent; box-shadow: 0 0 0 1px transparent; }
+}
+.actions .ghost.undo { flex: 0 0 auto; width: 46px; padding: 0; font-size: 18px; }

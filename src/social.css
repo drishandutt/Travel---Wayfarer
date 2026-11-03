@@ -1,0 +1,59 @@
+/* ───────── reels & videos, below a place's details ───────── */
+.social { display: flex; flex-direction: column; gap: 14px; cursor: auto; user-select: text; }
+.social h4 { display: flex; align-items: center; justify-content: space-between; margin: 0; font-family: var(--display); font-weight: 600; font-size: 17px; letter-spacing: -.012em; line-height: 1; }
+.social h4 i { font-style: normal; font-size: 14px; color: var(--paper-faint); animation: svNudge 1.8s var(--ease) 3; }
+@keyframes svNudge { 50% { transform: translateY(3px); } }
+.place-card .social { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+.sv-loading { height: 200px; border-radius: 12px; background: linear-gradient(120deg, var(--surface-1), var(--surface-2) 50%, var(--surface-1)); background-size: 200% 100%; animation: shimmer 1.6s linear infinite; }
+.social p.sv-none { margin: 0; font-size: 13px; color: var(--paper-dim); }
+
+.sv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sv-chips button { min-height: 30px; padding: 4px 13px; border-radius: 999px; border: 0; background: rgba(var(--paper-rgb), .07); color: var(--paper-dim); font-size: 12px; transition: all .2s; }
+.sv-chips button:hover { color: var(--paper); border-color: var(--paper-faint); }
+.sv-chips button.on { background: var(--paper); color: var(--ink); }
+
+.sv { display: flex; flex-direction: column; gap: 8px; }
+.sv-frame { position: relative; overflow: hidden; border-radius: 12px; background: var(--surface-1); }
+.sv-frame.wide { aspect-ratio: 16 / 9; }
+.sv-frame.tall, .sv-frame.tiktok { aspect-ratio: 9 / 16; max-height: 560px; margin-inline: auto; width: 100%; max-width: 315px; }
+.sv-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+/* Instagram's page is its 4:5 media plus a header and footer; this stops just below "View more on Instagram" */
+.sv-frame.instagram { box-sizing: content-box; aspect-ratio: 4 / 5; padding-bottom: 114px; }
+
+.sv-poster { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer; }
+.sv-poster img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .5s var(--ease); }
+.sv-poster:hover img { transform: scale(1.03); }
+.sv-play { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: rgba(0, 0, 0, .45); backdrop-filter: blur(10px); }
+.sv-play::after { content: ''; position: absolute; left: 22px; top: 17px; border-style: solid; border-width: 11px 0 11px 18px; border-color: transparent transparent transparent #fff; }
+
+.sv-by { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; color: var(--paper-faint); }
+.sv-by b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--paper); }
+.sv-by small { flex: none; font-size: 12px; }
+.sv-by a { flex: none; margin-left: auto; color: var(--paper-dim); text-decoration: none; }
+.sv-by a:hover { color: var(--paper); text-decoration: underline; }
+.sv-badge { flex: none; padding: 2px 8px; border-radius: 999px; background: rgba(var(--paper-rgb), .07); font-size: 11px; color: var(--paper-dim); }
+.social .sv-info p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 4px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--paper-dim); }
+
+.sv-more { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 12px; color: var(--paper-faint); }
+.sv-more a { color: var(--paper-dim); text-decoration: none; }
+.sv-more a:hover { color: var(--paper); text-decoration: underline; }
+
+/* swipe tile: the first screen is unchanged, except the feed's title peeks in as the scroll cue */
+.dc-scroll { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.dc-scroll::-webkit-scrollbar { display: none; }
+.dc-first { display: flex; flex-direction: column; height: calc(100% - 46px); }
+.dcard .social { padding: 13px 20px 20px; border-top: 1px solid var(--line); }
+.dcard.top { touch-action: pan-y; } /* up and down scrolls; sideways stays a swipe */
+.dcard:not(.top) .dc-scroll { overflow: hidden; }
+/* the feed makes the card long, so Close stays in reach while scrolling it */
+.place-card { overscroll-behavior: contain; }
+.place-card .close { position: sticky; top: 10px; right: auto; display: block; margin: 10px -8px -38px auto; }
+
+@media (max-width: 760px) {
+  .place-card .close { margin-bottom: -48px; }
+  .sv-chips button { min-height: 38px; padding: 6px 14px; }
+  .sv-by a { padding: 4px 0; }
+  .sv-more a { padding: 4px 0; }
+  .dcard .social { padding: 13px 16px 16px; }
+}
