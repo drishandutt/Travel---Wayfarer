@@ -19,6 +19,9 @@ import type { SharedPlan, SharedTrip } from '../../src/trip/types'
 // React scheduler against the actual server. What goes wrong here goes wrong in the gaps between
 // a reload, a switch of trips and an answer still on its way, which only shows when they run.
 
+// Before the browser below exists: the in-process Postgres would take itself for one.
+const db = await Db.local()
+
 // ── just enough browser ───────────────────────────────────────────────────────
 
 class Storage {
@@ -80,7 +83,6 @@ g.EventSource = FakeEventSource
 // ── people and tabs ───────────────────────────────────────────────────────────
 
 let server: Server
-let db: Db
 let dir: string
 let n = 0
 
@@ -163,17 +165,16 @@ function browser(p: Person) {
 
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'wf-tripsync-'))
-  db = new Db(join(dir, 'test.db'))
   const handle = createMoneyApi(db)
   server = createServer((req, res) => handle(req, res, new URL(req.url ?? '/', 'http://localhost')))
   await new Promise<void>(r => server.listen(0, r))
   base = `http://localhost:${(server.address() as { port: number }).port}`
 })
 
-after(() => {
+after(async () => {
   server.closeAllConnections()
   server.close()
-  db.close()
+  await db.close()
   rmSync(dir, { recursive: true, force: true })
   // React's scheduler and the open tabs' timers would otherwise keep the test process alive
   setTimeout(() => process.exit(0), 50).unref()

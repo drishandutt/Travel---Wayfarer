@@ -94,11 +94,11 @@ const server = createServer(async (req, res) => {
     // inside the try: a malformed path like "//" throws here, and must not stop the server
     const url = new URL(req.url ?? '/', 'http://localhost')
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(moneyApi()) })
+      return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(await moneyApi()) })
     }
     // Before the check below: shared expenses have nothing to do with Claude and must work without a key.
     if (url.pathname.startsWith('/api/money/')) {
-      const money = moneyApi()
+      const money = await moneyApi()
       if (!money) return json(res, 503, { error: 'Money tracking isn’t set up on this server yet.', code: 'no-storage' })
       return await money(req, res, url)
     }
@@ -129,6 +129,8 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Wayfarer API on http://localhost:${PORT} — brain: ${brainEnabled ? MODEL : 'offline (no ANTHROPIC_API_KEY)'}`)
+  // connect (and run any migration) now, not on someone's first tap
+  void moneyApi()
 })
 
 // A redeploy stops the old container with SIGTERM. Without a handler the process dies on
@@ -140,8 +142,8 @@ function shutdown(signal: string) {
   console.log(`${signal}: shutting down`)
   server.close()
   server.closeAllConnections() // live-sync streams would otherwise hold the close open
-  closeMoneyDb()
-  process.exit(0)
+  // a transaction still in flight is rolled back by the database, so nothing half-written stays
+  void Promise.race([closeMoneyDb(), new Promise(r => setTimeout(r, 3000))]).finally(() => process.exit(0))
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))

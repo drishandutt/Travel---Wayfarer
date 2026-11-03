@@ -195,9 +195,11 @@ A leftover cent goes by largest remainder, with ties broken by a hash of the exp
 
 **Settling up records payments, it doesn't make them.** Wayfarer keeps the books. When the recipient has added a UPI ID and the amount is in rupees, a button opens the payer's UPI app with it filled in; otherwise the handle is shown to copy.
 
-**Storage.** One SQLite file through Node's built-in `node:sqlite`: `npm run dev` needs no setup and writes to `./data/wayfarer.db`. `server/money/db.ts` runs numbered migrations. Node is single-threaded and this API is synchronous, so a transaction can't interleave with another request as long as it doesn't await. The stream hub and rate limits are in memory, so this design is for one server: running several would need Postgres and a shared pub/sub.
+**Storage.** Postgres. Production uses the Supabase project `Wayfarer` (`nqzmjhupkbbeasngchqt`, eu-west-1) through `DATABASE_URL`. With no URL, `npm run dev` and the tests run a real Postgres inside the process (PGlite): dev keeps its files in `./data/pg`, and each test file gets a fresh one in memory. `server/money/db.ts` runs numbered migrations at startup and tracks them in `wayfarer_meta`. Queries are written with `?`, and `db.ts` numbers them. Every write in `store.ts` runs as one transaction, its checks included, and transactions run one at a time in the process, as they did under SQLite. Independent reads go out in parallel, because each one is a network hop. The tables are in Supabase's `public` schema with row security on and no policies, and Supabase's API roles have no grants on them, so only this server can read them. The stream hub and rate limits are in memory, so this design is for one server: running several would need a shared pub/sub, and the in-process transaction queue would have to become row locks.
 
-**Production needs a volume.** Without one, a redeploy would wipe everyone's balances. So in production the money API refuses to run (503, and the screen says so) unless `RAILWAY_VOLUME_MOUNT_PATH` or `WAYFARER_DB_PATH` is set. It's routed before the Claude key check in `server/index.ts`, since it has nothing to do with Claude and the live service has no key. The live service has this set up: a 5 GB volume, `wayfarer-volume`, mounted at `/data`. A plain `railway up --service wayfarer` keeps it. Because a volume can't attach to two containers at once, each deploy now has a gap of some seconds.
+**Moving from SQLite.** Until 2026-11, the data was in one SQLite file on a Railway volume. `server/money/importSqlite.ts` copies it across once, when `WAYFARER_IMPORT_SQLITE` names the file. It runs only into a database with no accounts yet, checks that every table's row count matches, and records that it ran in `wayfarer_meta`, so later starts skip it. The old file isn't changed, so it stays as a backup.
+
+**Production needs `DATABASE_URL`.** Without it, the money API refuses to run (503, and the screen says so) rather than keep balances somewhere a redeploy would wipe. If the database can't be reached, the rest of the site stays up and the connection is tried again on the next request. The money API is routed before the Claude key check in `server/index.ts`, since it has nothing to do with Claude and the live service has no key. Use Supabase's session pooler string: the direct host is IPv6 only. The old volume, `wayfarer-volume` at `/data`, still holds the SQLite file the data was copied from.
 
 Not built yet: push and email notifications (reminders and changes only show when someone opens the app), and repeating expenses, which matter little on a trip of up to 5 days.
 
@@ -242,7 +244,7 @@ Deploy from this folder with the Railway CLI, which is signed in to the personal
 railway up --service wayfarer
 ```
 
-The directory is linked to the project. The Railway connector available to Claude is a different, work account, so it isn't used for this app. There is no `ANTHROPIC_API_KEY` on the service, so it runs the offline planner. Adding a key would switch on the Claude endpoints for anyone with the URL, so add rate limits first. Money's email sign-in wouldn't protect them, since anyone can type an address. Shared expenses need a volume on the service: see [Money](#money-shared-expenses).
+The directory is linked to the project. The Railway connector available to Claude is a different, work account, so it isn't used for this app. There is no `ANTHROPIC_API_KEY` on the service, so it runs the offline planner. Adding a key would switch on the Claude endpoints for anyone with the URL, so add rate limits first. Money's email sign-in wouldn't protect them, since anyone can type an address. Shared expenses need `DATABASE_URL` on the service: see [Money](#money-shared-expenses).
 
 ---
 
@@ -278,7 +280,8 @@ server/
     routes.ts              Money API: validation, permissions, live streams
     store.ts               Groups, people, expenses, payments (each change one transaction)
     auth.ts                Accounts, sessions, password hashing, rate limits
-    db.ts                  SQLite, migrations, where the file lives
+    db.ts                  Postgres (Supabase, or in-process for dev and tests), migrations
+    importSqlite.ts        the one-time copy from the old SQLite file
     fx.ts                  Exchange rates with daily cache and fallback
     *.test.ts              Maths and full API tests (npm test)
 src/

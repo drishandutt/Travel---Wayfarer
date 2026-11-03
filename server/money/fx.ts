@@ -23,10 +23,10 @@ async function fromFrankfurter(base: string): Promise<Omit<FxRates, 'stale'>> {
 
 const inFlight = new Map<string, Promise<FxRates | null>>()
 
-export function getRates(db: Db, base: string, fetchers = [fromExchangeRateApi, fromFrankfurter]): Promise<FxRates | null> {
+export async function getRates(db: Db, base: string, fetchers = [fromExchangeRateApi, fromFrankfurter]): Promise<FxRates | null> {
   const day = new Date().toISOString().slice(0, 10)
-  const cached = db.one<{ rates: string }>('SELECT rates FROM fx_cache WHERE base = ? AND day = ?', base, day)
-  if (cached) return Promise.resolve({ ...JSON.parse(cached.rates), stale: false })
+  const cached = await db.one<{ rates: string }>('SELECT rates FROM fx_cache WHERE base = ? AND day = ?', base, day)
+  if (cached) return { ...JSON.parse(cached.rates), stale: false }
 
   // many people opening the form at once only needs one upstream call
   const key = `${base}:${day}`
@@ -36,13 +36,14 @@ export function getRates(db: Db, base: string, fetchers = [fromExchangeRateApi, 
     for (const fetcher of fetchers) {
       try {
         const fresh = await fetcher(base)
-        db.run('INSERT OR REPLACE INTO fx_cache (base, day, rates, fetched_at) VALUES (?, ?, ?, ?)', base, day, JSON.stringify(fresh), Date.now())
+        await db.run(`INSERT INTO fx_cache (base, day, rates, fetched_at) VALUES (?, ?, ?, ?)
+          ON CONFLICT (base, day) DO UPDATE SET rates = excluded.rates, fetched_at = excluded.fetched_at`, base, day, JSON.stringify(fresh), Date.now())
         return { ...fresh, stale: false }
       } catch (err) {
         console.warn('[fx]', (err as Error).message)
       }
     }
-    const last = db.one<{ rates: string }>('SELECT rates FROM fx_cache WHERE base = ? ORDER BY day DESC LIMIT 1', base)
+    const last = await db.one<{ rates: string }>('SELECT rates FROM fx_cache WHERE base = ? ORDER BY day DESC LIMIT 1', base)
     return last ? { ...JSON.parse(last.rates), stale: true } as FxRates : null
   })().finally(() => inFlight.delete(key))
   inFlight.set(key, job)

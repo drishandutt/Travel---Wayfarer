@@ -7,7 +7,9 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { after, before, beforeEach, describe, it } from 'node:test'
 import { resetLimits } from './auth'
-import { Db, MIGRATIONS } from './db'
+import { Db } from './db'
+import { importSqliteOnce } from './importSqlite'
+import { SQLITE_MIGRATIONS } from './sqliteSchema.fixture'
 import { createMoneyApi } from './routes'
 import type { GroupState, GroupSummary } from '../../src/money/types'
 import type { SharedPlan, SharedTrip } from '../../src/trip/types'
@@ -22,7 +24,7 @@ let db: Db
 
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'wayfarer-trip-'))
-  db = new Db(join(dir, 'test.db'))
+  db = await Db.local()
   const handle = createMoneyApi(db)
   server = createServer((req, res) => handle(req, res, new URL(req.url ?? '/', 'http://localhost')))
   await new Promise<void>(r => server.listen(0, r))
@@ -35,7 +37,7 @@ beforeEach(() => resetLimits())
 after(async () => {
   server.closeAllConnections()
   await new Promise(r => server.close(r))
-  db.close()
+  await db.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -94,30 +96,124 @@ async function trip() {
 
 const read = (p: Person, groupId: string, since = -1) => p.ok<SharedTrip>('GET', `/groups/${groupId}/trip?planSince=${since}`)
 
-describe('upgrading a live database', () => {
-  it('adds the new tables without touching what’s there', () => {
-    const path = join(dir, 'old.db')
+describe('moving the live data from SQLite', () => {
+  // the old file as production had it: both SQLite migrations, people, a trip, money and a photo
+  function oldFile() {
+    const path = join(dir, `old-${randomUUID()}.db`)
     const old = new DatabaseSync(path)
     old.exec('PRAGMA foreign_keys = ON')
-    old.exec(MIGRATIONS[0])
-    old.exec('PRAGMA user_version = 1')
-    old.prepare('INSERT INTO users (id, name, email, created_at) VALUES (?, ?, ?, ?)').run('u1', 'Old', 'old@example.com', 1)
-    old.prepare('INSERT INTO money_groups (id, name, currency, invite_token, created_at) VALUES (?, ?, ?, ?, ?)').run('g1', 'Old trip', 'INR', 'tok', 1)
-    old.prepare('INSERT INTO members (id, group_id, user_id, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)').run('m1', 'g1', 'u1', 'Old', 'owner', 1)
+    SQLITE_MIGRATIONS.forEach(sql => old.exec(sql))
+    old.exec(`PRAGMA user_version = ${SQLITE_MIGRATIONS.length}`)
+    const add = (sql: string, ...v: (string | number | null | Uint8Array)[]) => old.prepare(sql).run(...v)
+    add('INSERT INTO users (id, name, email, created_at) VALUES (?, ?, ?, ?)', 'u1', 'Old', 'Old@Example.com', 1_700_000_000_000)
+    add('INSERT INTO users (id, name, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)', 'u2', 'Pal', 'pal@example.com', 'scrypt$x', 1_700_000_000_001)
+    add('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)', 'hash1', 'u1', 1, 4_000_000_000_000)
+    add('INSERT INTO money_groups (id, name, currency, invite_token, created_at, plan, plan_version) VALUES (?, ?, ?, ?, ?, ?, ?)', 'g1', 'Old trip', 'INR', 'tok-old', 1, '{"phase":"swipe"}', 3)
+    add(`INSERT INTO members (id, group_id, user_id, name, role, created_at) VALUES ('m1', 'g1', 'u1', 'Old', 'owner', 1)`)
+    add(`INSERT INTO members (id, group_id, user_id, name, created_at) VALUES ('m2', 'g1', 'u2', 'Pal', 2)`)
+    add(`INSERT INTO members (id, group_id, email, name, created_at) VALUES ('m3', 'g1', 'Later@Example.com', 'Later', 3)`)
+    add(`INSERT INTO expenses (id, group_id, title, amount, currency, fx_rate, base_amount, category, date, payers, split, shares, base_paid, base_owed, created_by, created_at, updated_at)
+      VALUES ('e1', 'g1', 'Dinner', 400000, 'INR', 1, 400000, 'food', '2026-10-30', ?, ?, ?, ?, ?, 'm1', 5, 5)`,
+      JSON.stringify([{ memberId: 'm1', amount: 400000 }]), JSON.stringify({ method: 'equal', entries: [{ memberId: 'm1', value: 1 }, { memberId: 'm2', value: 1 }] }),
+      JSON.stringify({ m1: 200000, m2: 200000 }), JSON.stringify({ m1: 400000 }), JSON.stringify({ m1: 200000, m2: 200000 }))
+    add(`INSERT INTO settlements (id, group_id, from_member, to_member, amount, currency, fx_rate, base_amount, date, method, created_by, created_at)
+      VALUES ('s1', 'g1', 'm2', 'm1', 50000, 'INR', 1, 50000, '2026-10-31', 'upi', 'm2', 6)`)
+    add(`INSERT INTO comments (id, group_id, expense_id, member_id, body, created_at) VALUES ('c1', 'g1', 'e1', 'm2', 'thanks!', 7)`)
+    add(`INSERT INTO receipts (id, group_id, expense_id, mime, bytes, created_by, created_at) VALUES ('r1', 'g1', 'e1', 'image/png', ?, 'm1', 8)`, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 255]))
+    for (let i = 0; i < 3; i++) add(`INSERT INTO activity (group_id, kind, actor, detail, created_at) VALUES ('g1', 'expense-added', 'm1', '{}', ?)`, 10 + i)
+    add(`INSERT INTO fx_cache (base, day, rates, fetched_at) VALUES ('INR', '2026-10-30', '{}', 9)`)
+    add(`INSERT INTO votes (group_id, place_id, member_id, vote, updated_at) VALUES ('g1', 'p1', 'm2', 'like', 9)`)
+    add(`INSERT INTO trip_notes (id, group_id, member_id, body, created_at) VALUES ('n1', 'g1', 'm1', 'Packing list?', 9)`)
     old.close()
+    return path
+  }
 
-    const upgraded = new Db(path)
-    assert.equal(upgraded.one<{ user_version: number }>('PRAGMA user_version')!.user_version, MIGRATIONS.length)
-    const group = upgraded.one<{ name: string; plan: string | null; plan_version: number }>('SELECT name, plan, plan_version FROM money_groups WHERE id = ?', 'g1')!
-    assert.deepEqual({ ...group }, { name: 'Old trip', plan: null, plan_version: 0 })
-    assert.equal(upgraded.one<{ name: string }>('SELECT name FROM members WHERE id = ?', 'm1')!.name, 'Old')
-    upgraded.run(`INSERT INTO votes (group_id, place_id, member_id, vote, updated_at) VALUES ('g1', 'p', 'm1', 'like', 1)`)
-    upgraded.close()
+  it('copies every row, once, and the app carries on from it', async () => {
+    const fresh = await Db.local()
+    try {
+      const path = oldFile()
+      await importSqliteOnce(fresh, path)
+      const count = async (table: string) => (await fresh.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`))!.n
+      assert.deepEqual(
+        await Promise.all(['users', 'sessions', 'money_groups', 'members', 'expenses', 'settlements', 'comments', 'receipts', 'activity', 'fx_cache', 'votes', 'trip_notes'].map(count)),
+        [2, 1, 1, 3, 1, 1, 1, 1, 3, 1, 1, 1],
+      )
+      // addresses are matched case-blind, as SQLite did
+      assert.equal((await fresh.one<{ email: string }>('SELECT email FROM users WHERE id = ?', 'u1'))!.email, 'old@example.com')
+      assert.equal((await fresh.one<{ email: string }>('SELECT email FROM members WHERE id = ?', 'm3'))!.email, 'later@example.com')
+      const group = (await fresh.one<{ plan: string; plan_version: number; created_at: number }>('SELECT plan, plan_version, created_at FROM money_groups WHERE id = ?', 'g1'))!
+      assert.deepEqual({ ...group }, { plan: '{"phase":"swipe"}', plan_version: 3, created_at: 1 })
+      const expense = (await fresh.one<{ amount: number; fx_rate: number; shares: string }>('SELECT amount, fx_rate, shares FROM expenses WHERE id = ?', 'e1'))!
+      assert.deepEqual({ ...expense, shares: JSON.parse(expense.shares) }, { amount: 400000, fx_rate: 1, shares: { m1: 200000, m2: 200000 } })
+      const photo = (await fresh.one<{ bytes: Uint8Array }>('SELECT bytes FROM receipts WHERE id = ?', 'r1'))!
+      assert.deepEqual([...photo.bytes], [0x89, 0x50, 0x4e, 0x47, 0, 255])
 
-    // opening it again changes nothing
-    const again = new Db(path)
-    assert.equal(again.one<{ n: number }>('SELECT COUNT(*) AS n FROM votes')!.n, 1)
-    again.close()
+      // the feed continues after the copied entries rather than colliding with them
+      await fresh.run(`INSERT INTO activity (group_id, kind, detail, created_at) VALUES ('g1', 'comment', '{}', 20)`)
+      assert.equal((await fresh.one<{ seq: number }>('SELECT MAX(seq) AS seq FROM activity'))!.seq, 4)
+
+      // a second start finds it done, even with the file still there
+      await importSqliteOnce(fresh, path)
+      assert.equal(await count('users'), 2)
+    } finally {
+      await fresh.close()
+    }
+  })
+
+  it('people sign in as before, with their seats, history and balances', async () => {
+    const fresh = await Db.local()
+    const handle = createMoneyApi(fresh)
+    const local = createServer((req, res) => handle(req, res, new URL(req.url ?? '/', 'http://localhost')))
+    await new Promise<void>(r => local.listen(0, r))
+    try {
+      await importSqliteOnce(fresh, oldFile())
+      const url = `http://localhost:${(local.address() as { port: number }).port}/api/money`
+      const signIn = await fetch(`${url}/auth/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'OLD@example.com' }) })
+      const cookie = signIn.headers.get('set-cookie')!.split(';')[0]
+      assert.equal((await signIn.json() as { user: { id: string } }).user.id, 'u1')
+      const get = async <T>(path: string) => await (await fetch(`${url}${path}`, { headers: { cookie } })).json() as T
+      const [summary] = (await get<{ groups: GroupSummary[] }>('/groups')).groups
+      assert.deepEqual({ name: summary.name, role: summary.role, phase: summary.phase, myNet: summary.myNet }, { name: 'Old trip', role: 'owner', phase: 'swipe', myNet: 150000 })
+      const state = await get<GroupState>('/groups/g1')
+      assert.deepEqual(state.expenses.map(e => [e.title, e.receipts]), [['Dinner', ['r1']]])
+      assert.deepEqual(state.comments.map(c => c.body), ['thanks!'])
+      // the seat waiting for an address is still waiting, and joins when that address signs up
+      assert.equal(state.members.find(m => m.id === 'm3')!.joined, false)
+      await fetch(`${url}/auth/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'later@example.com', name: 'Later' }) })
+      assert.equal((await get<GroupState>('/groups/g1')).members.find(m => m.id === 'm3')!.joined, true)
+    } finally {
+      local.closeAllConnections()
+      await new Promise(r => local.close(r))
+      await fresh.close()
+    }
+  })
+
+  it('won’t mix the old data into a database that already has people in it', async () => {
+    const fresh = await Db.local()
+    try {
+      await fresh.run(`INSERT INTO users (id, name, email, created_at) VALUES ('x', 'New', 'new@example.com', 1)`)
+      await assert.rejects(importSqliteOnce(fresh, oldFile()), /already has accounts/)
+      await assert.rejects(importSqliteOnce(fresh, join(dir, 'missing.db')), /no file there/)
+      assert.equal((await fresh.one<{ n: number }>('SELECT COUNT(*) AS n FROM users'))!.n, 1)
+    } finally {
+      await fresh.close()
+    }
+  })
+})
+
+describe('the schema', () => {
+  it('is set up once, and starting again changes nothing', async () => {
+    const path = join(dir, 'pg')
+    const first = await Db.local(path)
+    await first.run(`INSERT INTO users (id, name, email, created_at) VALUES ('u', 'Kept', 'kept@example.com', 1)`)
+    await first.close()
+    const again = await Db.local(path)
+    assert.equal((await again.one<{ name: string }>('SELECT name FROM users'))!.name, 'Kept')
+    await again.close()
+  })
+
+  it('refuses an address with capitals, which would slip past an email lookup', async () => {
+    await assert.rejects(db.run(`INSERT INTO users (id, name, email, created_at) VALUES ('caps', 'Caps', 'Caps@example.com', 1)`))
   })
 })
 

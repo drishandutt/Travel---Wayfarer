@@ -44,23 +44,23 @@ function readCookie(req: IncomingMessage): string | undefined {
 const isHttps = (req: IncomingMessage) => req.headers['x-forwarded-proto'] === 'https'
 const cookieAttrs = (req: IncomingMessage) => `Path=/api/money; HttpOnly; SameSite=Lax${isHttps(req) ? '; Secure' : ''}`
 
-export function startSession(db: Db, req: IncomingMessage, res: ServerResponse, userId: string) {
+export async function startSession(db: Db, req: IncomingMessage, res: ServerResponse, userId: string) {
   const token = randomBytes(32).toString('base64url')
   const now = Date.now()
-  db.run('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)', tokenHash(token), userId, now, now + SESSION_MS)
+  await db.run('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)', tokenHash(token), userId, now, now + SESSION_MS)
   res.setHeader('Set-Cookie', `${COOKIE}=${token}; Max-Age=${SESSION_MS / 1000}; ${cookieAttrs(req)}`)
 }
 
-export function endSession(db: Db, req: IncomingMessage, res: ServerResponse) {
+export async function endSession(db: Db, req: IncomingMessage, res: ServerResponse) {
   const token = readCookie(req)
-  if (token) db.run('DELETE FROM sessions WHERE token_hash = ?', tokenHash(token))
+  if (token) await db.run('DELETE FROM sessions WHERE token_hash = ?', tokenHash(token))
   res.setHeader('Set-Cookie', `${COOKIE}=; Max-Age=0; ${cookieAttrs(req)}`)
 }
 
-export function currentUser(db: Db, req: IncomingMessage): UserRow | null {
+export async function currentUser(db: Db, req: IncomingMessage): Promise<UserRow | null> {
   const token = readCookie(req)
   if (!token) return null
-  return db.one<UserRow>(
+  return await db.one<UserRow>(
     'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?',
     tokenHash(token), Date.now(),
   ) ?? null

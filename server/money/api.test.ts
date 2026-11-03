@@ -22,7 +22,7 @@ let db: Db
 
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'wayfarer-money-'))
-  db = new Db(join(dir, 'test.db'))
+  db = await Db.local()
   const handle = createMoneyApi(db)
   server = createServer((req, res) => handle(req, res, new URL(req.url ?? '/', 'http://localhost')))
   await new Promise<void>(r => server.listen(0, r))
@@ -35,7 +35,7 @@ beforeEach(() => resetLimits())
 after(async () => {
   server.closeAllConnections()
   await new Promise(r => server.close(r))
-  db.close()
+  await db.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -133,11 +133,11 @@ describe('accounts', () => {
     const b = await person('B')
     assert.equal((await a.call('POST', '/auth/secure', { email: a.email, password: 'short' })).status, 400)
     await a.ok('POST', '/auth/secure', { email: a.email, password: 'hunter2hunter2' })
-    const row = db.one<{ password_hash: string }>('SELECT password_hash FROM users WHERE email = ?', a.email)!
+    const row = (await db.one<{ password_hash: string }>('SELECT password_hash FROM users WHERE email = ?', a.email))!
     assert.ok(row.password_hash.startsWith('scrypt$'))
     assert.ok(!row.password_hash.includes('hunter2'))
     assert.equal((await b.call('POST', '/auth/secure', { email: a.email })).status, 409)
-    const sessions = db.all<{ token_hash: string }>('SELECT token_hash FROM sessions')
+    const sessions = await db.all<{ token_hash: string }>('SELECT token_hash FROM sessions')
     assert.ok(!sessions.some(x => a.cookie.includes(x.token_hash)), 'session tokens are stored hashed')
   })
 
@@ -483,7 +483,7 @@ describe('who can see and change what', () => {
     assert.equal((await ben.call('DELETE', `/groups/${groupId}`)).status, 403)
     await asha.ok('DELETE', `/groups/${groupId}`)
     assert.equal((await asha.call('GET', `/groups/${groupId}`)).status, 404)
-    assert.equal(db.one<{ n: number }>('SELECT COUNT(*) AS n FROM expenses WHERE group_id = ?', groupId)!.n, 0)
+    assert.equal((await db.one<{ n: number }>('SELECT COUNT(*) AS n FROM expenses WHERE group_id = ?', groupId))!.n, 0)
   })
 })
 
@@ -769,7 +769,7 @@ describe('exchange rates', () => {
 
   it('falls back to the last known rates, marked stale, if every source is down', async () => {
     const down = async () => { throw new Error('down') }
-    db.run(`INSERT INTO fx_cache (base, day, rates, fetched_at) VALUES ('NOK', '2020-01-01', ?, 0)`, JSON.stringify({ base: 'NOK', date: '2020-01-01', rates: { USD: 0.1 }, source: 'test' }))
+    await db.run(`INSERT INTO fx_cache (base, day, rates, fetched_at) VALUES ('NOK', '2020-01-01', ?, 0)`, JSON.stringify({ base: 'NOK', date: '2020-01-01', rates: { USD: 0.1 }, source: 'test' }))
     const rates = await getRates(db, 'NOK', [down])
     assert.equal(rates?.stale, true)
     assert.equal(rates?.rates.USD, 0.1)

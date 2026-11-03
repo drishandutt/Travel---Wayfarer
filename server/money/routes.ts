@@ -5,8 +5,9 @@ import { CATEGORY_IDS } from '../../src/money/categories'
 import { CURRENCIES, isCurrencyCode } from '../../src/money/currency'
 import { MAX_AMOUNT, SplitError } from '../../src/money/engine'
 import { checkPassword, clearLimit, clientIp, currentUser, endSession, hashPassword, overLimit, startSession, toAccount, type UserRow } from './auth'
-import { Db, resolveDbPath } from './db'
+import { openDatabase, type Db } from './db'
 import { getRates } from './fx'
+import { importSqliteOnce } from './importSqlite'
 import type { SharedPlan } from '../../src/trip/types'
 import * as store from './store'
 import { HttpError, type GroupRow, type MemberRow } from './store'
@@ -142,9 +143,15 @@ const listeners = new Map<string, Set<{ res: ServerResponse; userId: string }>>(
 // Writing to a stream that has ended would raise an unhandled error and stop the whole server.
 const writeLive = (res: ServerResponse, text: string) => { if (!res.writableEnded && !res.destroyed) res.write(text) }
 
-function publish(db: Db, groupId: string) {
-  const message = `data: ${JSON.stringify(store.versionsOf(db, groupId))}\n\n`
+async function publish(db: Db, groupId: string) {
+  const versions = await store.versionsOf(db, groupId)
+  const message = `data: ${JSON.stringify(versions)}\n\n`
   for (const l of listeners.get(groupId) ?? []) writeLive(l.res, message)
+  return versions
+}
+
+async function publishAll(db: Db, groupIds: string[]) {
+  for (const g of groupIds) await publish(db, g)
 }
 
 // Ends the streams of one person who lost access, or of everyone if the group is gone.
@@ -164,10 +171,11 @@ setInterval(() => {
   for (const set of listeners.values()) for (const l of set) writeLive(l.res, ': ping\n\n')
 }, 25_000).unref()
 
-function openStream(db: Db, c: Ctx, groupId: string, userId: string) {
+async function openStream(db: Db, c: Ctx, groupId: string, userId: string) {
   const { res, req } = c
+  const versions = await store.versionsOf(db, groupId)
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' })
-  res.write(`data: ${JSON.stringify(store.versionsOf(db, groupId))}\n\n`)
+  res.write(`data: ${JSON.stringify(versions)}\n\n`)
   const entry = { res, userId }
   const set = listeners.get(groupId) ?? new Set()
   listeners.set(groupId, set.add(entry))
@@ -200,18 +208,15 @@ export function createMoneyApi(db: Db) {
   }
   // Group routes: the signed-in person must hold a seat in the group in the path.
   const groupRoute = (method: string, path: string, handler: (c: Ctx, group: GroupRow, me: MemberRow) => unknown) => {
-    route(method, `/groups/:gid${path}`, c => {
-      const { group, me } = store.requireSeat(db, c.params[0], needUser(c).id)
+    route(method, `/groups/:gid${path}`, async c => {
+      const { group, me } = await store.requireSeat(db, c.params[0], needUser(c).id)
       return handler(c, group, me)
     })
   }
-  const done = (groupId: string) => {
-    publish(db, groupId)
-    return { ok: true, version: store.versionOf(db, groupId) }
-  }
+  const done = async (groupId: string) => ({ ok: true, version: (await publish(db, groupId)).version })
 
   // ── accounts ──
-  route('GET', '/auth/me', c => ({ user: c.user ? toAccount(c.user) : null }))
+  route('GET', '/auth/me', async c => ({ user: c.user ? toAccount(c.user) : null }))
 
   // The only way in. Your email is your account: a new one asks for a name, one with a
   // password asks for that, and otherwise you're signed in.
@@ -219,14 +224,14 @@ export function createMoneyApi(db: Db) {
     const ip = clientIp(c.req)
     if (overLimit(`login-ip:${ip}`, 40, 900_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
     const body = await readBody(c.req, z.object({ email, name: name.optional(), password: z.string().max(200).optional() }))
-    let found = db.one<UserRow>('SELECT * FROM users WHERE email = ?', body.email)
+    let found = await db.one<UserRow>('SELECT * FROM users WHERE email = ?', body.email)
     if (!found) {
       if (!body.name) return { next: 'name' }
       if (overLimit(`signup:${ip}`, 30, 3_600_000)) throw new HttpError(429, 'Too many new accounts from here. Try again later.')
-      const userId = randomUUID()
-      db.run('INSERT INTO users (id, name, email, created_at) VALUES (?, ?, ?, ?)', userId, body.name, body.email, Date.now())
-      found = db.one<UserRow>('SELECT * FROM users WHERE id = ?', userId)!
-      store.linkWaitingSeats(db, found).forEach(g => publish(db, g))
+      // two taps of the button arriving together make one account
+      await db.run('INSERT INTO users (id, name, email, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (email) DO NOTHING', randomUUID(), body.name, body.email, Date.now())
+      found = (await db.one<UserRow>('SELECT * FROM users WHERE email = ?', body.email))!
+      await publishAll(db, await store.linkWaitingSeats(db, found))
     } else if (found.password_hash) {
       if (!body.password) return { next: 'password' }
       const key = `login:${body.email}`
@@ -234,8 +239,8 @@ export function createMoneyApi(db: Db) {
       if (!await checkPassword(body.password, found.password_hash)) throw new HttpError(401, 'That password isn’t right')
       clearLimit(key)
     }
-    endSession(db, c.req, c.res)
-    startSession(db, c.req, c.res, found.id)
+    await endSession(db, c.req, c.res)
+    await startSession(db, c.req, c.res, found.id)
     return { user: toAccount(found) }
   })
 
@@ -245,30 +250,34 @@ export function createMoneyApi(db: Db) {
     if (overLimit(`secure:${user.id}`, 8, 900_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
     const body = await readBody(c.req, z.object({ email, password: password.optional(), current: z.string().max(200).optional() }))
     if (user.password_hash && !(body.current && await checkPassword(body.current, user.password_hash))) throw new HttpError(403, 'Your current password isn’t right')
-    if (db.one('SELECT 1 FROM users WHERE email = ? AND id != ?', body.email, user.id)) throw new HttpError(409, 'That email already has an account')
+    if (await db.one('SELECT 1 FROM users WHERE email = ? AND id != ?', body.email, user.id)) throw new HttpError(409, 'That email already has an account')
     const hash = body.password ? await hashPassword(body.password) : user.password_hash
-    db.run('UPDATE users SET email = ?, password_hash = ? WHERE id = ?', body.email, hash, user.id)
-    if (body.password) {
-      // signs out everywhere else, in case the old password was the problem
-      db.run('DELETE FROM sessions WHERE user_id = ?', user.id)
-      startSession(db, c.req, c.res, user.id)
-    }
-    const updated = db.one<UserRow>('SELECT * FROM users WHERE id = ?', user.id)!
-    store.linkWaitingSeats(db, updated).forEach(g => publish(db, g))
+    // checked again inside: the address could have been taken while the password was hashing
+    const updated = await db.tx(async () => {
+      if (await db.one('SELECT 1 FROM users WHERE email = ? AND id != ?', body.email, user.id)) throw new HttpError(409, 'That email already has an account')
+      await db.run('UPDATE users SET email = ?, password_hash = ? WHERE id = ?', body.email, hash, user.id)
+      if (body.password) {
+        // signs out everywhere else, in case the old password was the problem
+        await db.run('DELETE FROM sessions WHERE user_id = ?', user.id)
+        await startSession(db, c.req, c.res, user.id)
+      }
+      return (await db.one<UserRow>('SELECT * FROM users WHERE id = ?', user.id))!
+    })
+    await publishAll(db, await store.linkWaitingSeats(db, updated))
     return { user: toAccount(updated) }
   })
 
-  route('POST', '/auth/logout', c => {
-    endSession(db, c.req, c.res)
+  route('POST', '/auth/logout', async c => {
+    await endSession(db, c.req, c.res)
     return { ok: true }
   })
 
   route('PATCH', '/auth/me', async c => {
     const user = needUser(c)
     const body = await readBody(c.req, z.object({ name: name.optional(), payHandle: z.string().trim().max(120).nullable().optional() }))
-    const groups = store.updateAccount(db, user, { name: body.name, payHandle: body.payHandle === '' ? null : body.payHandle })
-    groups.forEach(g => publish(db, g))
-    return { user: toAccount(db.one<UserRow>('SELECT * FROM users WHERE id = ?', user.id)!) }
+    const groups = await store.updateAccount(db, user, { name: body.name, payHandle: body.payHandle === '' ? null : body.payHandle })
+    await publishAll(db, groups)
+    return { user: toAccount((await db.one<UserRow>('SELECT * FROM users WHERE id = ?', user.id))!) }
   })
 
   // ── rates ──
@@ -282,22 +291,22 @@ export function createMoneyApi(db: Db) {
   })
 
   // ── invites ──
-  route('GET', '/invite/:token', c => {
+  route('GET', '/invite/:token', async c => {
     if (overLimit(`invite:${clientIp(c.req)}`, 60, 600_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
-    return store.invitePreview(db, c.params[0], c.user?.id ?? null)
+    return await store.invitePreview(db, c.params[0], c.user?.id ?? null)
   })
 
   route('POST', '/invite/:token/join', async c => {
     const user = needUser(c)
     if (overLimit(`invite:${clientIp(c.req)}`, 60, 600_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
     const body = await readBody(c.req, z.object({ claim: id.nullish() }))
-    const groupId = store.joinGroup(db, c.params[0], user, body.claim)
-    publish(db, groupId)
+    const groupId = await store.joinGroup(db, c.params[0], user, body.claim)
+    await publish(db, groupId)
     return { groupId }
   })
 
   // ── groups ──
-  route('GET', '/groups', c => ({ groups: store.listGroups(db, needUser(c).id) }))
+  route('GET', '/groups', async c => ({ groups: await store.listGroups(db, needUser(c).id) }))
 
   route('POST', '/groups', async c => {
     const user = needUser(c)
@@ -311,16 +320,16 @@ export function createMoneyApi(db: Db) {
     }))
     // each entry is a name or an email
     const members = (body.members ?? []).map(entry => (entry.includes('@') ? { email: email.parse(entry) } : { name: name.parse(entry) }))
-    const { group, me } = store.createGroup(db, user, { ...body, members })
-    return store.readState(db, group, me)
+    const { group, me } = await store.createGroup(db, user, { ...body, members })
+    return await store.readState(db, group, me)
   })
 
-  groupRoute('GET', '', (c, group, me) => {
+  groupRoute('GET', '', async (c, group, me) => {
     if (Number(c.url.searchParams.get('since')) === group.version) return { unchanged: true, version: group.version }
-    return store.readState(db, group, me)
+    return await store.readState(db, group, me)
   })
 
-  groupRoute('GET', '/live', (c, group, me) => { openStream(db, c, group.id, me.user_id!) })
+  groupRoute('GET', '/live', async (c, group, me) => { await openStream(db, c, group.id, me.user_id!) })
 
   groupRoute('PATCH', '', async (c, group, me) => {
     const body = await readBody(c.req, z.object({
@@ -330,81 +339,81 @@ export function createMoneyApi(db: Db) {
       currency: currency.optional(),
       trip: tripBody.optional(),
     }))
-    store.updateGroup(db, group, me, body)
-    return done(group.id)
+    await store.updateGroup(db, group, me, body)
+    return await done(group.id)
   })
 
-  groupRoute('DELETE', '', (_c, group, me) => {
-    store.deleteGroup(db, group, me)
+  groupRoute('DELETE', '', async (_c, group, me) => {
+    await store.deleteGroup(db, group, me)
     closeListeners(group.id)
     return { ok: true }
   })
 
-  groupRoute('POST', '/invite', (_c, group, me) => {
-    store.regenerateInvite(db, group, me)
-    return done(group.id)
+  groupRoute('POST', '/invite', async (_c, group, me) => {
+    await store.regenerateInvite(db, group, me)
+    return await done(group.id)
   })
 
   // ── people ──
   groupRoute('POST', '/members', async (c, group, me) => {
     if (overLimit(`add-member:${me.id}`, 100, 3_600_000)) throw new HttpError(429, 'That’s a lot of people. Try again later.')
     const body = await readBody(c.req, z.object({ name: name.optional(), email: email.optional() }).refine(b => b.name || b.email, 'Enter a name or an email'))
-    const memberId = store.addMember(db, group, me, body)
-    return { ...done(group.id), memberId }
+    const memberId = await store.addMember(db, group, me, body)
+    return { ...await done(group.id), memberId }
   })
 
   groupRoute('PATCH', '/members/:mid', async (c, group, me) => {
     const body = await readBody(c.req, z.object({ name: name.optional(), budget: budget.optional(), email: email.optional() }))
-    if (body.email) store.setMemberEmail(db, group, me, c.params[1], body.email)
-    if (body.name !== undefined || body.budget !== undefined) store.updateMember(db, group, me, c.params[1], body)
-    return done(group.id)
+    if (body.email) await store.setMemberEmail(db, group, me, c.params[1], body.email)
+    if (body.name !== undefined || body.budget !== undefined) await store.updateMember(db, group, me, c.params[1], body)
+    return await done(group.id)
   })
 
-  groupRoute('DELETE', '/members/:mid', (c, group, me) => {
-    const gone = store.removeMember(db, group, me, c.params[1])
+  groupRoute('DELETE', '/members/:mid', async (c, group, me) => {
+    const gone = await store.removeMember(db, group, me, c.params[1])
     if (gone) closeListeners(group.id, gone)
-    return done(group.id)
+    return await done(group.id)
   })
 
-  groupRoute('POST', '/members/:mid/unlink', (c, group, me) => {
-    const gone = store.unlinkMember(db, group, me, c.params[1])
+  groupRoute('POST', '/members/:mid/unlink', async (c, group, me) => {
+    const gone = await store.unlinkMember(db, group, me, c.params[1])
     if (gone) closeListeners(group.id, gone)
-    return done(group.id)
+    return await done(group.id)
   })
 
   // ── expenses ──
   groupRoute('POST', '/expenses', async (c, group, me) => {
     const body = await readBody(c.req, expenseBody.extend({ opId: z.string().max(64).optional() }))
-    store.createExpense(db, group, me, body, body.opId)
-    return done(group.id)
+    await store.createExpense(db, group, me, body, body.opId)
+    return await done(group.id)
   })
 
   groupRoute('PUT', '/expenses/:eid', async (c, group, me) => {
     const body = await readBody(c.req, expenseBody.extend({ baseRev: z.number().int(), opId: z.string().max(64).optional() }))
     if (body.id !== c.params[1]) throw new HttpError(400, 'Mismatched id')
-    store.updateExpense(db, group, me, body, body.baseRev, body.opId)
-    return done(group.id)
+    await store.updateExpense(db, group, me, body, body.baseRev, body.opId)
+    return await done(group.id)
   })
 
-  groupRoute('DELETE', '/expenses/:eid', (c, group, me) => {
-    store.setExpenseDeleted(db, group, me, c.params[1], true)
-    return done(group.id)
+  groupRoute('DELETE', '/expenses/:eid', async (c, group, me) => {
+    await store.setExpenseDeleted(db, group, me, c.params[1], true)
+    return await done(group.id)
   })
 
-  groupRoute('POST', '/expenses/:eid/restore', (c, group, me) => {
-    store.setExpenseDeleted(db, group, me, c.params[1], false)
-    return done(group.id)
+  groupRoute('POST', '/expenses/:eid/restore', async (c, group, me) => {
+    await store.setExpenseDeleted(db, group, me, c.params[1], false)
+    return await done(group.id)
   })
 
   groupRoute('POST', '/expenses/:eid/comments', async (c, group, me) => {
     const body = await readBody(c.req, z.object({ id, body: z.string().trim().min(1, 'Write something first').max(1000) }))
-    store.addComment(db, group, me, c.params[1], body.id, body.body)
-    return done(group.id)
+    await store.addComment(db, group, me, c.params[1], body.id, body.body)
+    return await done(group.id)
   })
 
-  groupRoute('DELETE', '/comments/:cid', (c, group, me) => {
-    store.deleteComment(db, group, me, c.params[1])
-    return done(group.id)
+  groupRoute('DELETE', '/comments/:cid', async (c, group, me) => {
+    await store.deleteComment(db, group, me, c.params[1])
+    return await done(group.id)
   })
 
   groupRoute('POST', '/expenses/:eid/receipts', async (c, group, me) => {
@@ -412,60 +421,60 @@ export function createMoneyApi(db: Db) {
     const bytes = await readBytes(c.req, MAX_RECEIPT)
     const mime = imageType(bytes)
     if (!mime) throw new HttpError(415, 'That doesn’t look like a photo')
-    const receiptId = store.addReceipt(db, group, me, c.params[1], mime, bytes)
-    return { ...done(group.id), receiptId }
+    const receiptId = await store.addReceipt(db, group, me, c.params[1], mime, bytes)
+    return { ...await done(group.id), receiptId }
   })
 
-  groupRoute('GET', '/receipts/:rid', (c, group, me) => {
-    const { mime, bytes } = store.readReceipt(db, group, me, c.params[1])
+  groupRoute('GET', '/receipts/:rid', async (c, group, me) => {
+    const { mime, bytes } = await store.readReceipt(db, group, me, c.params[1])
     c.res.writeHead(200, { 'Content-Type': mime, 'Content-Length': bytes.byteLength, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' })
     c.res.end(bytes)
   })
 
-  groupRoute('DELETE', '/receipts/:rid', (c, group, me) => {
-    store.deleteReceipt(db, group, me, c.params[1])
-    return done(group.id)
+  groupRoute('DELETE', '/receipts/:rid', async (c, group, me) => {
+    await store.deleteReceipt(db, group, me, c.params[1])
+    return await done(group.id)
   })
 
   // ── settling up ──
   groupRoute('POST', '/settlements', async (c, group, me) => {
-    store.createSettlement(db, group, me, await readBody(c.req, settlementBody))
-    return done(group.id)
+    await store.createSettlement(db, group, me, await readBody(c.req, settlementBody))
+    return await done(group.id)
   })
 
-  groupRoute('DELETE', '/settlements/:sid', (c, group, me) => {
-    store.deleteSettlement(db, group, me, c.params[1])
-    return done(group.id)
+  groupRoute('DELETE', '/settlements/:sid', async (c, group, me) => {
+    await store.deleteSettlement(db, group, me, c.params[1])
+    return await done(group.id)
   })
 
   // ── the shared trip ──
-  groupRoute('GET', '/trip', (c, group, me) => store.readTrip(db, group, me, Number(c.url.searchParams.get('planSince') ?? -1)))
+  groupRoute('GET', '/trip', async (c, group, me) => await store.readTrip(db, group, me, Number(c.url.searchParams.get('planSince') ?? -1)))
 
   groupRoute('PUT', '/plan', async (c, group, me) => {
     if (me.role !== 'owner') throw new HttpError(403, 'Only the trip’s admin can change the plan')
     const body = await readBody(c.req, z.object({ plan: planBody, summary: tripBody.optional(), baseVersion: z.number().int() }), 4 * 1024 * 1024)
-    const planVersion = store.publishPlan(db, group, me, { plan: body.plan as unknown as SharedPlan, summary: body.summary ?? null, baseVersion: body.baseVersion })
-    publish(db, group.id)
+    const planVersion = await store.publishPlan(db, group, me, { plan: body.plan as unknown as SharedPlan, summary: body.summary ?? null, baseVersion: body.baseVersion })
+    await publish(db, group.id)
     return { planVersion }
   })
 
   groupRoute('POST', '/votes', async (c, group, me) => {
     const body = await readBody(c.req, z.object({ votes: z.array(z.object({ placeId: z.string().max(80), vote: z.enum(['like', 'nope']).nullable() })).min(1).max(300) }))
-    const skipped = store.castVotes(db, group, me, body.votes)
-    return { ...done(group.id), skipped }
+    const skipped = await store.castVotes(db, group, me, body.votes)
+    return { ...await done(group.id), skipped }
   })
 
   groupRoute('POST', '/notes', async (c, group, me) => {
     if (overLimit(`note:${me.id}`, 120, 3_600_000)) throw new HttpError(429, 'That’s a lot of messages. Try again later.')
     const body = await readBody(c.req, z.object({ id, body: z.string().trim().min(1, 'Write something first').max(1000) }))
-    store.addNote(db, group, me, body.id, body.body)
-    return done(group.id)
+    await store.addNote(db, group, me, body.id, body.body)
+    return await done(group.id)
   })
 
   groupRoute('POST', '/remind', async (c, group, me) => {
     const body = await readBody(c.req, z.object({ to: id, amount }))
-    store.remind(db, group, me, body.to, body.amount)
-    return done(group.id)
+    await store.remind(db, group, me, body.to, body.amount)
+    return await done(group.id)
   })
 
   return async function handle(req: IncomingMessage, res: ServerResponse, url: URL) {
@@ -474,7 +483,7 @@ export function createMoneyApi(db: Db) {
         if (r.method !== req.method) continue
         const m = url.pathname.match(r.re)
         if (!m) continue
-        const out = await r.handler({ req, res, url, params: m.slice(1).map(decodeURIComponent), user: currentUser(db, req) })
+        const out = await r.handler({ req, res, url, params: m.slice(1).map(decodeURIComponent), user: await currentUser(db, req) })
         if (!res.headersSent) send(res, 200, out ?? { ok: true })
         return
       }
@@ -493,24 +502,33 @@ export function createMoneyApi(db: Db) {
 
 export type MoneyApi = ReturnType<typeof createMoneyApi>
 
-// Opens the database once. When there's nowhere safe to keep it (production with no
-// volume), every money request gets a clear 503, and the rest of the app carries on.
-let api: MoneyApi | null | undefined
+// Connects once, at the first request or health check. With nowhere safe to keep data
+// (production with no DATABASE_URL), every money request gets a clear 503 and the rest of
+// the app carries on. A connection that fails is tried again on the next request.
+let api: Promise<MoneyApi | null> | undefined
 let openDb: Db | null = null
 
-export function moneyApi(): MoneyApi | null {
-  if (api === undefined) {
-    const path = resolveDbPath()
-    if (!path) console.warn('[money] No volume attached and WAYFARER_DB_PATH unset: the money API is off, so balances can’t be lost on a redeploy.')
-    openDb = path ? new Db(path) : null
-    api = openDb ? createMoneyApi(openDb) : null
-  }
+export function moneyApi(): Promise<MoneyApi | null> {
+  api ??= (async () => {
+    const db = await openDatabase()
+    if (!db) {
+      console.warn('[money] DATABASE_URL is unset: the money API is off, so balances can’t end up somewhere a redeploy would wipe.')
+      return null
+    }
+    await importSqliteOnce(db)
+    openDb = db
+    return createMoneyApi(db)
+  })().catch(err => {
+    console.error('[money] Can’t open the database:', err)
+    api = undefined
+    return null
+  })
   return api
 }
 
-// On shutdown: close SQLite cleanly so nothing half-written is left on the volume.
-export function closeMoneyDb() {
-  openDb?.close()
+export async function closeMoneyDb() {
+  const db = openDb
   openDb = null
   api = undefined
+  await db?.close()
 }
