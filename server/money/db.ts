@@ -238,6 +238,18 @@ export const MIGRATIONS = [`
   END $$;
 `]
 
+// A transaction is one connection, and one connection runs one query at a time: reads that
+// store.ts sends out together inside a transaction go one after another here.
+function inOrder(conn: Conn): Conn {
+  let last: Promise<unknown> = Promise.resolve()
+  const next = <T>(run: () => Promise<T>): Promise<T> => {
+    const out = last.then(run, run)
+    last = out.catch(() => {})
+    return out
+  }
+  return { query: (sql, params) => next(() => conn.query(sql, params)), script: sql => next(() => conn.script(sql)) }
+}
+
 // Queries are written with ? placeholders; Postgres wants $1, $2, …
 const converted = new Map<string, string>()
 function numbered(sql: string): string {
@@ -304,7 +316,7 @@ export class Db {
       let broken = false
       try {
         await conn.query('BEGIN')
-        const out = await this.current.run(conn, fn)
+        const out = await this.current.run(inOrder(conn), fn)
         await conn.query('COMMIT')
         return out
       } catch (err) {
