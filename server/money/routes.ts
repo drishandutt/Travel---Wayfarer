@@ -94,13 +94,15 @@ interface Ctx { req: IncomingMessage; res: ServerResponse; url: URL; params: str
 type Handler = (c: Ctx) => unknown
 
 function send(res: ServerResponse, status: number, body: unknown) {
-  // the rest of an oversized upload is never read, so this connection can't be reused
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...(status === 413 ? { Connection: 'close' } : {}) })
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
   res.end(JSON.stringify(body))
 }
 
-// Not a for-await loop: leaving one early destroys the socket, and the person
-// would see a dropped connection instead of being told the photo is too large.
+// An oversized upload is read to the end and thrown away before the answer goes back: closing
+// on someone still sending makes their phone show a dropped connection instead of being told
+// the photo is too large. One far beyond the limit is cut off.
+const TOO_LARGE = 'That’s too large'
+
 function readBytes(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let size = 0
@@ -108,11 +110,14 @@ function readBytes(req: IncomingMessage, limit: number): Promise<Buffer> {
     const onData = (chunk: Buffer) => {
       size += chunk.length
       if (size <= limit) { chunks.push(chunk); return }
+      chunks.length = 0
+      if (size <= limit * 4) return
       req.off('data', onData)
-      reject(new HttpError(413, 'That’s too large'))
+      req.destroy()
+      reject(new HttpError(413, TOO_LARGE))
     }
     req.on('data', onData)
-    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('end', () => (size > limit ? reject(new HttpError(413, TOO_LARGE)) : resolve(Buffer.concat(chunks))))
     req.on('error', reject)
   })
 }
@@ -174,6 +179,8 @@ setInterval(() => {
 async function openStream(db: Db, c: Ctx, groupId: string, userId: string) {
   const { res, req } = c
   const versions = await store.versionsOf(db, groupId)
+  // gone while that was being looked up: there'd be no 'close' left to forget it on
+  if (res.destroyed || req.socket.destroyed) return
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' })
   res.write(`data: ${JSON.stringify(versions)}\n\n`)
   const entry = { res, userId }
@@ -504,25 +511,31 @@ export type MoneyApi = ReturnType<typeof createMoneyApi>
 
 // Connects once, at the first request or health check. With nowhere safe to keep data
 // (production with no DATABASE_URL), every money request gets a clear 503 and the rest of
-// the app carries on. A connection that fails is tried again on the next request.
+// the app carries on. A start that fails is tried again after a pause.
+const RETRY_MS = 10_000
 let api: Promise<MoneyApi | null> | undefined
 let openDb: Db | null = null
 
 export function moneyApi(): Promise<MoneyApi | null> {
   api ??= (async () => {
-    const db = await openDatabase()
-    if (!db) {
-      console.warn('[money] DATABASE_URL is unset: the money API is off, so balances can’t end up somewhere a redeploy would wipe.')
+    let db: Db | null = null
+    try {
+      db = await openDatabase()
+      if (!db) {
+        console.warn('[money] DATABASE_URL is unset: the money API is off, so balances can’t end up somewhere a redeploy would wipe.')
+        return null
+      }
+      await importSqliteOnce(db)
+      openDb = db
+      return createMoneyApi(db)
+    } catch (err) {
+      console.error('[money] Can’t open the database:', err)
+      // closed before trying again: a second handle on the dev database's files would damage them
+      await db?.close().catch(() => {})
+      setTimeout(() => { api = undefined }, RETRY_MS).unref()
       return null
     }
-    await importSqliteOnce(db)
-    openDb = db
-    return createMoneyApi(db)
-  })().catch(err => {
-    console.error('[money] Can’t open the database:', err)
-    api = undefined
-    return null
-  })
+  })()
   return api
 }
 

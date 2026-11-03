@@ -18,7 +18,8 @@ interface Conn {
 interface Driver extends Conn {
   // PGlite is one connection: a transaction on it would take in every other query too
   readonly exclusive: boolean
-  session(): Promise<Conn & { release(): void }>
+  // release(true) throws the connection away instead of reusing it
+  session(): Promise<Conn & { release(discard?: boolean): void }>
   close(): Promise<void>
 }
 
@@ -33,6 +34,11 @@ function pgDriver(url: string): Driver {
   const pool = new pg.Pool({
     connectionString: parsed.toString(),
     max: 5,
+    // Transactions queue behind each other, so one that hangs would hold up every write:
+    // give up on a connection or a query that takes far too long, and notice a dead link.
+    connectionTimeoutMillis: 10_000,
+    query_timeout: 20_000,
+    keepAlive: true,
     // Supabase signs with its own CA. With DATABASE_CA (from the dashboard) the server is
     // verified; without it the link is still encrypted.
     ssl: local ? false : process.env.DATABASE_CA ? { ca: process.env.DATABASE_CA } : { rejectUnauthorized: false },
@@ -46,7 +52,7 @@ function pgDriver(url: string): Driver {
     script: sql => pool.query(sql),
     session: async () => {
       const client = await pool.connect()
-      return { query: (sql, params) => client.query(sql, params), script: sql => client.query(sql), release: () => client.release() }
+      return { query: (sql, params) => client.query(sql, params), script: sql => client.query(sql), release: (discard?: boolean) => client.release(discard) }
     },
     close: () => pool.end(),
   }
@@ -295,16 +301,18 @@ export class Db {
     if (this.current.getStore()) return fn()
     return this.serial(async () => {
       const conn = await this.driver.session()
+      let broken = false
       try {
         await conn.query('BEGIN')
         const out = await this.current.run(conn, fn)
         await conn.query('COMMIT')
         return out
       } catch (err) {
-        await conn.query('ROLLBACK').catch(() => {})
+        // a connection that can't even roll back is dropped, and Postgres rolls back for it
+        await conn.query('ROLLBACK').catch(() => { broken = true })
         throw err
       } finally {
-        conn.release()
+        conn.release(broken)
       }
     })
   }

@@ -64,6 +64,16 @@ async function logActivity(db: Db, groupId: string, kind: ActivityKind, actor: s
     groupId, kind, actor, a.ref ?? null, a.target ?? null, a.privateTo ?? null, JSON.stringify(a.detail ?? {}), Date.now())
 }
 
+// A write by someone in the group. The group and seat the route looked up were read before the
+// transaction began, perhaps before a request body finished arriving, so they're read again
+// inside it: an admin who has just left can't still delete the group from another device.
+function write<A extends unknown[], R>(fn: (db: Db, group: GroupRow, me: MemberRow, ...args: A) => Promise<R>) {
+  return (db: Db, group: GroupRow, me: MemberRow, ...args: A): Promise<R> => db.tx(async () => {
+    const seat = await requireSeat(db, group.id, me.user_id!)
+    return fn(db, seat.group, seat.me, ...args)
+  })
+}
+
 function mutate<T>(db: Db, groupId: string, fn: () => Promise<T>): Promise<T> {
   return db.tx(async () => {
     const out = await fn()
@@ -122,7 +132,9 @@ export async function readState(db: Db, group: GroupRow, me: MemberRow): Promise
   }
 }
 
-export async function listGroups(db: Db, userId: string): Promise<GroupSummary[]> {
+// In a transaction, so no payment can land between a group's expenses and its settlements and
+// leave a balance on the list that was never true. This answer has no version to catch that.
+export const listGroups = (db: Db, userId: string): Promise<GroupSummary[]> => db.tx(async () => {
   const seats = await db.all<GroupRow & { member_id: string; member_role: 'owner' | 'member'; plan_phase: string | null; member_count: number; updated_at: number | null }>(
     `SELECT g.*, m.id AS member_id, m.role AS member_role, g.plan::json->>'phase' AS plan_phase,
        (SELECT COUNT(*) FROM members x WHERE x.group_id = g.id AND x.left_at IS NULL) AS member_count,
@@ -147,7 +159,7 @@ export async function listGroups(db: Db, userId: string): Promise<GroupSummary[]
     }
   }))
   return summaries.sort((a, b) => b.updatedAt - a.updatedAt)
-}
+})
 
 // ── groups & people ───────────────────────────────────────────────────────────
 
@@ -216,7 +228,7 @@ export async function createGroup(db: Db, user: UserRow, input: { name: string; 
   return requireSeat(db, id, user.id)
 }
 
-export const updateGroup = (db: Db, group: GroupRow, me: MemberRow, patch: { name?: string; simplify?: boolean; budget?: number | null; currency?: string; trip?: TripSummary | null }) => db.tx(async () => {
+export const updateGroup = write(async (db, group, me, patch: { name?: string; simplify?: boolean; budget?: number | null; currency?: string; trip?: TripSummary | null }) => {
   assertAdmin(me, 'change the group’s settings')
   if (patch.currency && patch.currency !== group.currency) {
     const used = await db.one('SELECT 1 FROM expenses WHERE group_id = ? UNION SELECT 1 FROM settlements WHERE group_id = ? LIMIT 1', group.id, group.id)
@@ -240,15 +252,15 @@ export const updateGroup = (db: Db, group: GroupRow, me: MemberRow, patch: { nam
   })
 })
 
-export async function deleteGroup(db: Db, group: GroupRow, me: MemberRow) {
+export const deleteGroup = write(async (db, group, me) => {
   assertAdmin(me, 'delete the group')
   await db.run('DELETE FROM money_groups WHERE id = ?', group.id)
-}
+})
 
-export async function regenerateInvite(db: Db, group: GroupRow, me: MemberRow) {
+export const regenerateInvite = write(async (db, group, me) => {
   assertAdmin(me, 'reset the link')
   await mutate(db, group.id, async () => { await db.run('UPDATE money_groups SET invite_token = ? WHERE id = ?', newInvite(), group.id) })
-}
+})
 
 // Case-blind, as names were under SQLite's NOCASE.
 async function nameTaken(db: Db, groupId: string, name: string, except?: string) {
@@ -267,7 +279,7 @@ async function assertRoom(db: Db, groupId: string) {
 }
 
 // Someone can be in splits from now on, whether or not they've signed in yet.
-export const addMember = (db: Db, group: GroupRow, me: MemberRow, person: NewPerson): Promise<string> => db.tx(async () => {
+export const addMember = write(async (db, group, me, person: NewPerson): Promise<string> => {
   assertAdmin(me, 'add people')
   await assertRoom(db, group.id)
   return mutate(db, group.id, async () => {
@@ -280,7 +292,7 @@ export const addMember = (db: Db, group: GroupRow, me: MemberRow, person: NewPer
 })
 
 // Fixes a typo in an invite, or gives a name-only seat an address to wait for.
-export const setMemberEmail = (db: Db, group: GroupRow, me: MemberRow, memberId: string, email: string) => db.tx(async () => {
+export const setMemberEmail = write(async (db, group, me, memberId: string, email: string) => {
   assertAdmin(me, 'change someone’s email')
   const target = await db.one<MemberRow>('SELECT * FROM members WHERE id = ? AND group_id = ? AND left_at IS NULL', memberId, group.id)
   if (!target) throw new HttpError(404, 'That person isn’t in this group')
@@ -319,7 +331,7 @@ export const linkWaitingSeats = (db: Db, user: UserRow): Promise<string[]> => db
   return seats.map(s => s.group_id)
 })
 
-export const updateMember = (db: Db, group: GroupRow, me: MemberRow, memberId: string, patch: { name?: string; budget?: number | null }) => db.tx(async () => {
+export const updateMember = write(async (db, group, me, memberId: string, patch: { name?: string; budget?: number | null }) => {
   const target = await db.one<MemberRow>('SELECT * FROM members WHERE id = ? AND group_id = ?', memberId, group.id)
   if (!target) throw new HttpError(404, 'That person isn’t in this group')
   if (patch.budget !== undefined && target.id !== me.id) throw new HttpError(403, 'A personal budget can only be set by that person')
@@ -344,7 +356,7 @@ async function balanceOf(db: Db, groupId: string, memberId: string) {
 // Leaving or being removed needs a zero balance, or everyone else's numbers stop adding up.
 // Being removed also resets the invite link: they may have kept it from when they were
 // invited, so otherwise they could walk straight back in.
-export const removeMember = (db: Db, group: GroupRow, me: MemberRow, memberId: string): Promise<string | null> => db.tx(async () => {
+export const removeMember = write(async (db, group, me, memberId: string): Promise<string | null> => {
   const target = await db.one<MemberRow>('SELECT * FROM members WHERE id = ? AND group_id = ? AND left_at IS NULL', memberId, group.id)
   if (!target) throw new HttpError(404, 'That person isn’t in this group')
   const self = target.id === me.id
@@ -369,7 +381,7 @@ export const removeMember = (db: Db, group: GroupRow, me: MemberRow, memberId: s
 // its spending intact, and can be taken through the new invite link or given a new address.
 // The link changes so the person released can't walk straight back in on another seat, and
 // their votes go because those were their opinions, not the seat's.
-export const unlinkMember = (db: Db, group: GroupRow, me: MemberRow, memberId: string): Promise<string | null> => db.tx(async () => {
+export const unlinkMember = write(async (db, group, me, memberId: string): Promise<string | null> => {
   assertAdmin(me, 'release a seat')
   const target = await db.one<MemberRow>('SELECT * FROM members WHERE id = ? AND group_id = ? AND left_at IS NULL', memberId, group.id)
   if (!target?.user_id) throw new HttpError(404, 'That seat has no account linked')
@@ -457,7 +469,7 @@ async function findExpense(db: Db, group: GroupRow, me: MemberRow, id: string): 
   return row
 }
 
-export const createExpense = (db: Db, group: GroupRow, me: MemberRow, raw: ExpenseInput, opId?: string) => db.tx(async () => {
+export const createExpense = write(async (db, group, me, raw: ExpenseInput, opId?: string) => {
   const existing = await db.one<ExpenseRow>('SELECT * FROM expenses WHERE id = ?', raw.id)
   if (existing) {
     // a retry of something that already got through, e.g. the reply was lost on bad signal
@@ -498,7 +510,7 @@ function whatChanged(old: ExpenseRow, input: ExpenseInput, c: { baseAmount: numb
   return out
 }
 
-export const updateExpense = (db: Db, group: GroupRow, me: MemberRow, raw: ExpenseInput, baseRev: number, opId?: string) => db.tx(async () => {
+export const updateExpense = write(async (db, group, me, raw: ExpenseInput, baseRev: number, opId?: string) => {
   const old = await findExpense(db, group, me, raw.id)
   if (opId && old.last_op === opId) return // a retry that already went through
   if (old.deleted_at) throw new HttpError(409, 'Someone deleted this expense', { current: toExpense(old) })
@@ -519,7 +531,7 @@ export const updateExpense = (db: Db, group: GroupRow, me: MemberRow, raw: Expen
   })
 })
 
-export const setExpenseDeleted = (db: Db, group: GroupRow, me: MemberRow, id: string, deleted: boolean) => db.tx(async () => {
+export const setExpenseDeleted = write(async (db, group, me, id: string, deleted: boolean) => {
   const old = await findExpense(db, group, me, id)
   if (Boolean(old.deleted_at) === deleted) return
   await mutate(db, group.id, async () => {
@@ -540,7 +552,7 @@ async function assertCanSettle(db: Db, groupId: string, ids: string[]) {
   }
 }
 
-export const createSettlement = (db: Db, group: GroupRow, me: MemberRow, input: SettlementInput) => db.tx(async () => {
+export const createSettlement = write(async (db, group, me, input: SettlementInput) => {
   const existing = await db.one<SettlementRow>('SELECT * FROM settlements WHERE id = ?', input.id)
   if (existing) {
     if (existing.group_id === group.id && existing.created_by === me.id) return
@@ -562,7 +574,7 @@ export const createSettlement = (db: Db, group: GroupRow, me: MemberRow, input: 
   })
 })
 
-export const deleteSettlement = (db: Db, group: GroupRow, me: MemberRow, id: string) => db.tx(async () => {
+export const deleteSettlement = write(async (db, group, me, id: string) => {
   const old = await db.one<SettlementRow>('SELECT * FROM settlements WHERE id = ? AND group_id = ?', id, group.id)
   if (!old) throw new HttpError(404, 'That payment is gone')
   if (old.deleted_at) return
@@ -574,7 +586,7 @@ export const deleteSettlement = (db: Db, group: GroupRow, me: MemberRow, id: str
 
 // ── comments, receipts, reminders ─────────────────────────────────────────────
 
-export const addComment = (db: Db, group: GroupRow, me: MemberRow, expenseId: string, id: string, body: string) => db.tx(async () => {
+export const addComment = write(async (db, group, me, expenseId: string, id: string, body: string) => {
   const expense = await findExpense(db, group, me, expenseId)
   const existing = await db.one<{ group_id: string; member_id: string }>('SELECT group_id, member_id FROM comments WHERE id = ?', id)
   if (existing) {
@@ -587,7 +599,7 @@ export const addComment = (db: Db, group: GroupRow, me: MemberRow, expenseId: st
   })
 })
 
-export const deleteComment = (db: Db, group: GroupRow, me: MemberRow, id: string) => db.tx(async () => {
+export const deleteComment = write(async (db, group, me, id: string) => {
   const c = await db.one<{ member_id: string }>('SELECT member_id FROM comments WHERE id = ? AND group_id = ?', id, group.id)
   if (!c) return
   if (c.member_id !== me.id) throw new HttpError(403, 'You can only delete your own comments')
@@ -598,7 +610,7 @@ export const deleteComment = (db: Db, group: GroupRow, me: MemberRow, id: string
   })
 })
 
-export const addReceipt = (db: Db, group: GroupRow, me: MemberRow, expenseId: string, mime: string, bytes: Buffer): Promise<string> => db.tx(async () => {
+export const addReceipt = write(async (db, group, me, expenseId: string, mime: string, bytes: Buffer): Promise<string> => {
   const expense = await findExpense(db, group, me, expenseId)
   const perExpense = (await db.one<{ n: number }>('SELECT COUNT(*) AS n FROM receipts WHERE expense_id = ?', expenseId))!.n
   if (perExpense >= MAX_RECEIPTS_PER_EXPENSE) throw new HttpError(409, `An expense can have up to ${MAX_RECEIPTS_PER_EXPENSE} photos`)
@@ -622,7 +634,7 @@ export async function readReceipt(db: Db, group: GroupRow, me: MemberRow, id: st
   return row
 }
 
-export const deleteReceipt = (db: Db, group: GroupRow, me: MemberRow, id: string) => db.tx(async () => {
+export const deleteReceipt = write(async (db, group, me, id: string) => {
   const row = await db.one<{ expense_id: string; private_to: string | null; private_user: string | null }>(
     'SELECT r.expense_id, e.private_to, e.private_user FROM receipts r JOIN expenses e ON e.id = r.expense_id WHERE r.id = ? AND r.group_id = ?', id, group.id)
   if (!row || !canSeeReceipt(row, me)) throw new HttpError(404, 'That photo is gone')
@@ -631,7 +643,7 @@ export const deleteReceipt = (db: Db, group: GroupRow, me: MemberRow, id: string
 
 const REMIND_GAP_MS = 12 * 3_600_000
 
-export const remind = (db: Db, group: GroupRow, me: MemberRow, to: string, amount: number) => db.tx(async () => {
+export const remind = write(async (db, group, me, to: string, amount: number) => {
   await assertMembers(db, group.id, [to])
   if (to === me.id) throw new HttpError(400, 'That’s you')
   const recent = await db.one('SELECT 1 FROM activity WHERE group_id = ? AND kind = ? AND actor = ? AND target = ? AND created_at > ?', group.id, 'remind', me.id, to, Date.now() - REMIND_GAP_MS)
@@ -669,20 +681,19 @@ export async function readTrip(db: Db, group: GroupRow, me: MemberRow, planSince
 
 // Only the admin writes the plan. Carrying the version they started from means a second
 // device with an out-of-date copy gets told, rather than undoing newer changes.
-export function publishPlan(db: Db, group: GroupRow, me: MemberRow, input: PublishPlan): Promise<number> {
+export const publishPlan = write(async (db, group, me, input: PublishPlan): Promise<number> => {
   assertAdmin(me, 'change the plan')
   return mutate(db, group.id, async () => {
-    // looked up here rather than taken from `group`, which was read before a big plan finished uploading
-    const current = (await db.one<{ plan_version: number }>('SELECT plan_version FROM money_groups WHERE id = ?', group.id))!.plan_version
+    const current = group.plan_version
     if (input.baseVersion !== current) throw new HttpError(409, 'The plan changed somewhere else', { planVersion: current })
     await db.run('UPDATE money_groups SET plan = ?, plan_version = ?, trip = COALESCE(?, trip) WHERE id = ?', JSON.stringify(input.plan), current + 1, input.summary ? JSON.stringify(input.summary) : null, group.id)
     return current + 1
   })
-}
+})
 
 // Anyone in the group can vote, on a place that's actually up for a vote in this trip. The rest
 // are reported back rather than refused, so one out-of-date vote doesn't hold up the others.
-export async function castVotes(db: Db, group: GroupRow, me: MemberRow, votes: { placeId: string; vote: VoteValue | null }[]): Promise<string[]> {
+export const castVotes = write(async (db, group, me, votes: { placeId: string; vote: VoteValue | null }[]): Promise<string[]> => {
   const plan = group.plan ? JSON.parse(group.plan) as SharedPlan : null
   if (!plan) throw new HttpError(409, 'There’s nothing to vote on yet')
   const known = new Set([...plan.deck.map(c => c.id), ...Object.keys(plan.candidates)])
@@ -697,9 +708,9 @@ export async function castVotes(db: Db, group: GroupRow, me: MemberRow, votes: {
     }
   })
   return votes.filter(v => !known.has(v.placeId)).map(v => v.placeId)
-}
+})
 
-export const addNote = (db: Db, group: GroupRow, me: MemberRow, id: string, body: string) => db.tx(async () => {
+export const addNote = write(async (db, group, me, id: string, body: string) => {
   const existing = await db.one<{ group_id: string; member_id: string }>('SELECT group_id, member_id FROM trip_notes WHERE id = ?', id)
   if (existing) {
     if (existing.group_id === group.id && existing.member_id === me.id) return

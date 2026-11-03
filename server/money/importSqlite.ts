@@ -5,7 +5,8 @@ import type { Db, Param } from './db'
 // Brings over what was kept in SQLite before the move to Postgres, once and all together.
 // It runs only where WAYFARER_IMPORT_SQLITE names the old file: production's volume, or a
 // dev copy on purpose. It refuses rather than merge into a database that already has people
-// in it, and it never writes to the old file, which stays as a backup.
+// in it. It only reads the old file, which stays as a backup: opening it may fold SQLite's
+// write-ahead log back into it, which changes nothing in what it holds.
 
 // parents before children, for the foreign keys
 const TABLES = ['users', 'sessions', 'money_groups', 'members', 'expenses', 'settlements', 'comments', 'receipts', 'activity', 'fx_cache', 'votes', 'trip_notes']

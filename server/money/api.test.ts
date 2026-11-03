@@ -8,6 +8,7 @@ import { after, before, beforeEach, describe, it } from 'node:test'
 import { resetLimits } from './auth'
 import { Db } from './db'
 import { createMoneyApi } from './routes'
+import * as store from './store'
 import { getRates } from './fx'
 import type { Expense, GroupState, GroupSummary, InvitePreview } from '../../src/money/types'
 import { netBalances } from '../../src/money/engine'
@@ -888,5 +889,22 @@ describe('hardening', () => {
     await asha.ok('POST', `/groups/${groupId}/expenses`, body) // the retry
     await asha.ok('PUT', `/groups/${groupId}/expenses/${body.id}`, { ...body, title: 'Edited after', baseRev: 1, opId: randomUUID() })
     assert.equal((await asha.state(groupId)).expenses[0].title, 'Edited after')
+  })
+})
+
+describe('a seat that changed a moment ago', () => {
+  it('is what a write goes by, not what the request saw when it arrived', async () => {
+    const { asha, ben, groupId, A, B } = await trio()
+    const ashaId = (await db.one<{ id: string }>('SELECT id FROM users WHERE email = ?', asha.email))!.id
+    // what a request from Asha's other device looked up, just before she left on this one
+    const stale = await store.requireSeat(db, groupId, ashaId)
+    await asha.ok('DELETE', `/groups/${groupId}/members/${A}`)
+    const gone = (err: unknown) => err instanceof store.HttpError && err.status === 404
+    await assert.rejects(store.deleteGroup(db, stale.group, stale.me), gone)
+    await assert.rejects(store.removeMember(db, stale.group, stale.me, B), gone)
+    // Ben has the group now, untouched
+    const s = await ben.state(groupId)
+    assert.equal(s.group.name, 'Tokyo')
+    assert.equal(s.members.find(m => m.id === B)!.role, 'owner')
   })
 })
