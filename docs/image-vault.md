@@ -1,6 +1,6 @@
 # Image Vault — Architecture Note
 
-_Status: first slice built (not deployed) · Last updated: 2026-11-04_
+_Status: first slice live · Last updated: 2026-11-04_
 
 The first feature being designed. This note captures locked decisions and the proposed
 architecture so it's recorded before we move to the next feature.
@@ -146,7 +146,7 @@ Google-Photos-like, two regions:
 
 ## 10. Build status
 
-**Slice 1 is built and tested locally (2026-11-04). It isn't deployed.** It covers:
+**Slice 1 has been live since 2026-11-04.** It covers:
 multi-upload, sharing to a group or chosen people, the library grid, and filters by place,
 month, group, and yours vs shared with you. The admin's revoke-or-keep choice on removal is
 in, and so are owner edits (who sees it, place name, delete). How it works is in
@@ -166,12 +166,11 @@ in, and so are owner edits (who sees it, place name, delete). How it works is in
 your seat released takes group photos away, with no question asked. Deleting a group drops
 its shares, and uploaders keep their own photos.
 
-**Before it can go live:**
-1. Create a private bucket `vault` in the Supabase project `Wayfarer`, with a 30 MB file
-   size limit.
-2. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the Railway service.
-3. Try a real upload. The Supabase Storage code path (`server/vault/storage.ts`) hasn't run
-   against a real bucket yet: dev and the tests use the disk store.
+**In production:** the files are in the private Supabase bucket `vault` (30 MB limit; JPEG,
+PNG and WebP only). The Railway service has `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+A live round trip with a placeholder file passed on 2026-11-04: upload, thumbnail, full-size
+file, then delete, which removed the files from the bucket too. Reading EXIF and making
+thumbnails on a real phone is still to be checked with a first real photo.
 
 **Next slices:** face grouping (with the opt-in and kill switch from §7), CLIP embeddings
 for themes and search, selecting many photos at once, HEIC files, and possibly stripping GPS

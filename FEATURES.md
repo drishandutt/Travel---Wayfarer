@@ -13,7 +13,7 @@
 
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
-| 1 | **Image Vault** | 🟢🔵 | Design locked (`docs/image-vault.md`); build started. Multi-upload, share to a group or selected people, auto-sort by people/places/other. |
+| 1 | **Image Vault** | 🟢🔵 | Design locked (`docs/image-vault.md`). Slice 1 live: multi-upload, share to a group or selected people, sorted by places and dates. Next: people (faces) and themes. |
 | 2 | **Documents Vault** | ⚪ | Store passports, tickets, bookings, IDs. |
 | 3 | **Paste Itinerary → Get the Vibe** | ⚪ | Paste an itinerary; app reads it to surface the trip's feel. |
 | 4 | **Real-Time Updates** | ⚪ | Location-based, crisis alerts, population count, safety, events, flight & travel-cost updates, and more. |
