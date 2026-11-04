@@ -26,6 +26,7 @@ interface Props {
   theme: Theme
   onToggleTheme: () => void
   onMoney: () => void
+  onPhotos: () => void
   moneyBadge: { net: number; currency: string } | null
   groups: GroupSummary[]
   activeGroup: string | null
@@ -88,7 +89,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOp
   )
 }
 
-export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleTheme, onMoney, moneyBadge, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut }: Props) {
+export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleTheme, onMoney, onPhotos, moneyBadge, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut }: Props) {
   const b = state.brief
   const city = cityById(b.destination)
   const at = STEPS.findIndex(s => s.id === state.phase)
@@ -114,6 +115,7 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleT
           Money
           {moneyBadge && <span className={`money-amt ${moneyBadge.net > 0 ? 'pos' : 'neg'}`}>{moneyBadge.net > 0 ? '+' : '−'}{fmtMoney(Math.abs(moneyBadge.net), moneyBadge.currency, { compact: true })}</span>}
         </button>
+        <button className="money-btn" onClick={onPhotos}>Photos</button>
         <button className="theme-btn" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
           {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
         </button>

@@ -207,6 +207,26 @@ Tests: `npm test`. `server/money/engine.test.ts` covers the maths, `outbox.test.
 
 ---
 
+## Photo vault
+
+**Photos** in the top bar opens a library of every photo you can see: the ones you uploaded and the ones shared with you, newest first and grouped by day (`src/components/vault/VaultApp.tsx`). The design and its decisions are in [docs/image-vault.md](docs/image-vault.md). It uses the same accounts and groups as Money.
+
+**Sharing.** When you upload, you choose who gets the photos: everyone in a trip group, chosen people from your groups, or only you. The server works out "everyone in the group" each time someone looks, so a person who joins later sees what was already shared, and someone who leaves stops seeing it. You can't share to a group you aren't in, or with someone you don't share a group with. Only the uploader can change who sees a photo, rename its place or delete it. Recipients never see the file name or who else got the photo. The server enforces all of this (`server/vault/store.ts`), the same way Money does.
+
+**Removing someone.** If the person can see photos through the group, the admin is asked first (`DELETE /members/:mid` answers 409 `photo-choice` until `?photos=keep|revoke` is given). *Take them away* just removes them from the group. *Let them keep them* first shares everything the group has had so far with that person directly. Either way they get nothing shared to the group after that. Leaving on your own, or having your seat released, takes the photos away with no question. Deleting a group drops its shares, and each uploader keeps their own photos.
+
+**Uploading.** The browser reads each JPEG's EXIF for the date taken and GPS position (`src/vault/exif.ts`) and makes a 640px JPEG thumbnail. It then uploads the original and the thumbnail straight to storage through signed links, three at a time, reading the next few photos while those send (`src/vault/client.ts`). Then it tells the server the upload is done. The server checks that both files arrived, are within the size limits, and are really images (checked by their first bytes), and only then makes the photo visible. An upload that never finishes is cleared after a day. JPEG, PNG and WebP are accepted, up to 30 MB each, with 2,000 photos and 3 GB per person (`VAULT_MAX_PHOTOS`, `VAULT_MAX_BYTES`).
+
+**Places and dates.** Dates are the camera's own clock, shown as written, since EXIF has no time zone. Photos without one are filed under the day they were added. The server turns GPS positions into a town and country with OpenStreetMap's Nominatim, at most one request a second. Positions are rounded to about 100 m before they're sent, and each rounded position is looked up only once (`vault_places`). The uploader can type a place for any photo. Phones sometimes strip GPS from photos picked in a browser, so expect some photos with *No location*.
+
+**Storage.** In production the files go in a private Supabase Storage bucket, `vault` (`VAULT_BUCKET`), which needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set on the server. Without those, production turns the vault off and the screen says so, rather than keeping photos on a disk that a redeploy would wipe. In dev and tests the files are kept in `./data/vault`, behind links this server signs and serves itself (`server/vault/storage.ts`). Thumbnails are made in the browser because Supabase's image transformations are a paid-plan feature. The tables (`vault_images`, `vault_shares`, `vault_places`) are migration 2 in `server/money/db.ts`.
+
+Not built yet: grouping by faces and themes, selecting many photos at once, and HEIC files. Full-size files keep their EXIF, GPS included, so anyone who opens one gets the exact location.
+
+Tests: `server/money/vault.test.ts` covers who sees what, the upload checks, the removal choice, place names and the EXIF reader.
+
+---
+
 ## How days get their routes
 
 Stops are grouped by area first (`kmeans` in `geo.ts`), then two passes in `src/planner/core.ts` judge the routes that come out. `groupDays` runs all of this from four different starting stops and keeps the most comfortable trip, because trading stops afterwards can't always undo a poor start:
@@ -286,6 +306,10 @@ server/
     importSqlite.ts        the one-time copy from the old SQLite file
     fx.ts                  Exchange rates with daily cache and fallback
     *.test.ts              Maths and full API tests (npm test)
+  vault/
+    routes.ts              Photo vault API under /api/money/vault: uploads, library, sharing
+    store.ts               Who can see which photo, upload checks, removal choice, place names
+    storage.ts             Supabase Storage bucket (production) or disk with signed links (dev)
 src/
   types.ts                 Domain model + PlannerEvent union (the contract)
   data/cities.ts           Seed places + hotels (Tokyo, Lisbon)
@@ -311,6 +335,10 @@ src/
     hooks.ts               Account, live group, exchange rates
     client.ts              Fetch wrapper, offline vs refused errors, local cache
     util.ts                Trip summary, activity text, CSV, photo shrinking, UPI links
+  vault/
+    types.ts               Photo vault model (shared with the server)
+    exif.ts                Date taken and GPS position from a JPEG
+    client.ts              Thumbnails, uploading straight to storage, library calls
   trip/
     types.ts               A trip shared with a group: the plan, votes, chat (shared with the server)
     votes.ts               Ranking places and who's still voting
@@ -335,6 +363,7 @@ src/
     TopBar.tsx             Brand, phase stepper, brief chips
     money/                 The money screens: MoneyApp (sign-in, groups, group shell), tabs,
                            SpendingTab, PeopleTab, ExpenseForm, ExpenseDetail, SettleForm
+    vault/                 VaultApp: the photo grid, filters, upload sheet and viewer
     trip/                  InviteFriends, GroupPicks (ranking, the admin's picks, voting from a card), GroupChat, GroupChat
 ```
 

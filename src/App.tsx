@@ -18,6 +18,7 @@ import { Dashboard } from './components/Dashboard'
 import { AuthScreen, JoinScreen, MoneyApp, useInvite, useMoneyBadge, type MoneyTrip } from './components/money/MoneyApp'
 import type { ExpensePrefill } from './components/money/ExpenseForm'
 import { Empty } from './components/money/parts'
+import { VaultApp } from './components/vault/VaultApp'
 import { InviteFriends } from './components/trip/InviteFriends'
 import { GroupPicks, GroupRanking } from './components/trip/GroupPicks'
 import { tripSummaryOf } from './money/util'
@@ -372,6 +373,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
 
   // Shared expenses, connected to this trip.
   const [moneyOpen, setMoneyOpen] = useState<{ prefill?: ExpensePrefill } | null>(null)
+  const [vaultOpen, setVaultOpen] = useState(false)
   const moneyBadge = useMoneyBadge(Boolean(moneyOpen))
   const hasPlan = (state.phase === 'review' || state.phase === 'final') && state.days.length > 0
   const moneyTrip = useMemo<MoneyTrip>(() => ({
@@ -559,7 +561,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         : { left: tucked.chat && state.phase !== 'swipe' ? 60 : 440, right: tucked.journal || state.phase === 'intake' ? 60 : 460 }} />
       <div className="vignette" />
 
-      <TopBar state={state} brain={brain} trips={trips} onOpen={openTrip} onDelete={removeTrip} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} moneyBadge={moneyBadge}
+      <TopBar state={state} brain={brain} trips={trips} onOpen={openTrip} onDelete={removeTrip} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} moneyBadge={moneyBadge} onPhotos={() => setVaultOpen(true)}
         groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} email={account?.email ?? null} onSignOut={signOut} />
 
       {newGroup && (
@@ -630,6 +632,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       {showDash && <Dashboard state={state} onClose={() => setDashOpen(false)} onDates={member ? undefined : setDates} onMoney={() => setMoneyOpen({})} />}
 
       {moneyOpen && <MoneyApp acct={acct} trip={moneyTrip} prefill={moneyOpen.prefill} onClose={() => setMoneyOpen(null)} />}
+      {vaultOpen && <VaultApp acct={acct} onClose={() => setVaultOpen(false)} />}
 
       {inviteOpen && trip && <InviteFriends trip={trip} tripSize={state.brief.travelers ?? 2} onClose={() => setInviteOpen(false)} onChanged={() => { shared.refresh(); refreshGroups().catch(() => {}) }} />}
 

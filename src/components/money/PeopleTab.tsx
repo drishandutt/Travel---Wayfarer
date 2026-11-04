@@ -5,7 +5,7 @@ import { netBalances } from '../../money/engine'
 import { unsentCount } from '../../money/hooks'
 import { copyText } from '../../money/util'
 import type { Account } from '../../money/types'
-import { Avatar, Field, useAccountCtx, useCtx } from './parts'
+import { Avatar, Field, Modal, useAccountCtx, useCtx } from './parts'
 
 function InviteCard() {
   const { s, g, toast, me } = useCtx()
@@ -54,6 +54,13 @@ function MembersCard() {
   const active = s.members.filter(m => !m.left)
 
   const act = (fn: () => Promise<unknown>) => fn().catch(err => toast((err as Error).message))
+  // set when the person being removed can see photos shared to this group
+  const [photoChoice, setPhotoChoice] = useState<{ id: string; name: string; count: number } | null>(null)
+  const remove = (memberId: string, name: string, photos?: 'keep' | 'revoke') =>
+    g.actions.call('DELETE', `/members/${memberId}${photos ? `?photos=${photos}` : ''}`).then(() => setPhotoChoice(null)).catch(err => {
+      if (err instanceof ApiError && err.data.code === 'photo-choice') setPhotoChoice({ id: memberId, name, count: Number(err.data.count) })
+      else { setPhotoChoice(null); toast((err as Error).message) }
+    })
 
   const add = async () => {
     const name = newName.trim()
@@ -125,7 +132,7 @@ function MembersCard() {
                   )}
                   {me.role === 'owner' && m.id !== s.me && (
                     <button className="m-link danger-link" onClick={() => {
-                      if (confirm(`Remove ${m.name} from the group? The invite link resets too, so they can’t rejoin with the old one. Anyone still to join by link will need the new one.`)) act(() => g.actions.call('DELETE', `/members/${m.id}`))
+                      if (confirm(`Remove ${m.name} from the group? The invite link resets too, so they can’t rejoin with the old one. Anyone still to join by link will need the new one.`)) remove(m.id, m.name)
                     }}>Remove</button>
                   )}
                 </div>
@@ -143,6 +150,20 @@ function MembersCard() {
           </form>
           <p className="m-note">With an email, they get access when they sign in.</p>
         </>
+      )}
+      {photoChoice && (
+        <Modal title={`What about ${photoChoice.name}’s photos?`} eyebrow="Removing someone" onClose={() => setPhotoChoice(null)}
+          footer={<>
+            <button className="ghost" onClick={() => setPhotoChoice(null)}>Cancel</button>
+            <span className="m-spacer" />
+            <button className="ghost" onClick={() => remove(photoChoice.id, photoChoice.name, 'revoke')}>Take them away</button>
+            <button className="cta" onClick={() => remove(photoChoice.id, photoChoice.name, 'keep')}>Let them keep them</button>
+          </>}>
+          <p className="m-note">
+            {photoChoice.name} can see {photoChoice.count} photo{photoChoice.count === 1 ? '' : 's'} that people shared to this group.
+            You can take them away now, or let {photoChoice.name} keep what was shared so far. Either way, they won’t see anything shared to the group after this.
+          </p>
+        </Modal>
       )}
     </section>
   )

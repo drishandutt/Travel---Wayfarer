@@ -236,6 +236,53 @@ export const MIGRATIONS = [`
       EXECUTE format('REVOKE ALL ON ALL SEQUENCES IN SCHEMA %I FROM anon, authenticated', current_schema());
     END IF;
   END $$;
+`, `
+  -- The photo vault. The bytes are in a storage bucket; these rows are the index.
+  CREATE TABLE vault_images (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    original_key TEXT NOT NULL,
+    thumb_key TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    bytes BIGINT NOT NULL,
+    file_name TEXT,
+    width INTEGER,
+    height INTEGER,
+    taken_at TEXT,
+    gps_lat DOUBLE PRECISION,
+    gps_lng DOUBLE PRECISION,
+    place_label TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready')),
+    created_at BIGINT NOT NULL
+  );
+  CREATE INDEX vault_images_owner ON vault_images(owner_id, created_at);
+
+  -- Who an image is shared with: every current member of a group, or one person.
+  CREATE TABLE vault_shares (
+    image_id TEXT NOT NULL REFERENCES vault_images(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL CHECK (target_type IN ('group', 'user')),
+    target_id TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (image_id, target_type, target_id)
+  );
+  CREATE INDEX vault_shares_target ON vault_shares(target_type, target_id);
+
+  -- Reverse-geocoded place names, by coordinates rounded to about a kilometre.
+  CREATE TABLE vault_places (
+    key TEXT PRIMARY KEY,
+    label TEXT,
+    created_at BIGINT NOT NULL
+  );
+
+  ALTER TABLE vault_images ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE vault_shares ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE vault_places ENABLE ROW LEVEL SECURITY;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON vault_images, vault_shares, vault_places FROM anon, authenticated;
+    END IF;
+  END $$;
 `]
 
 // A transaction is one connection, and one connection runs one query at a time: reads that

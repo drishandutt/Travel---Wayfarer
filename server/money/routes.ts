@@ -11,6 +11,10 @@ import { importSqliteOnce } from './importSqlite'
 import type { SharedPlan } from '../../src/trip/types'
 import * as store from './store'
 import { HttpError, type GroupRow, type MemberRow } from './store'
+import { registerVaultRoutes, vaultLimitsFromEnv, type VaultOptions } from '../vault/routes'
+import { vaultStorageFromEnv } from '../vault/storage'
+import * as vault from '../vault/store'
+import { MAX_ORIGINAL_BYTES } from '../../src/vault/types'
 
 // The money API: accounts, groups, expenses, settling up, and a live stream per group.
 // The server trusts nothing it can work out itself: splits, balances and who may see
@@ -208,7 +212,7 @@ function imageType(b: Buffer): string | null {
 
 // ── routes ────────────────────────────────────────────────────────────────────
 
-export function createMoneyApi(db: Db) {
+export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null, geocode: null, limits: vaultLimitsFromEnv() }) {
   const routes: { method: string; re: RegExp; handler: Handler }[] = []
   const route = (method: string, path: string, handler: Handler) => {
     routes.push({ method, re: new RegExp(`^/api/money${path.replace(/:\w+/g, '([^/]+)')}$`), handler })
@@ -351,7 +355,10 @@ export function createMoneyApi(db: Db) {
   })
 
   groupRoute('DELETE', '', async (_c, group, me) => {
-    await store.deleteGroup(db, group, me)
+    await db.tx(async () => {
+      await store.deleteGroup(db, group, me)
+      await vault.forgetGroup(db, group.id)
+    })
     closeListeners(group.id)
     return { ok: true }
   })
@@ -376,8 +383,21 @@ export function createMoneyApi(db: Db) {
     return await done(group.id)
   })
 
+  // Removing someone who can see photos through this group asks the admin first: take them
+  // away, or let the person keep what was shared so far (?photos=revoke|keep).
   groupRoute('DELETE', '/members/:mid', async (c, group, me) => {
-    const gone = await store.removeMember(db, group, me, c.params[1])
+    const choice = c.url.searchParams.get('photos')
+    const gone = await db.tx(async () => {
+      const target = await db.one<MemberRow>('SELECT * FROM members WHERE id = ? AND group_id = ? AND left_at IS NULL', c.params[1], group.id)
+      if (target?.user_id && target.id !== me.id && me.role === 'owner') {
+        const count = await vault.photosThroughGroup(db, group.id, target.user_id)
+        if (count > 0 && choice !== 'keep' && choice !== 'revoke') {
+          throw new HttpError(409, `${target.name} can see ${count} photo${count === 1 ? '' : 's'} shared to this group. Choose whether they keep them.`, { code: 'photo-choice', count })
+        }
+        if (count > 0 && choice === 'keep') await vault.keepGroupPhotos(db, group.id, target.user_id)
+      }
+      return await store.removeMember(db, group, me, c.params[1])
+    })
     if (gone) closeListeners(group.id, gone)
     return await done(group.id)
   })
@@ -484,6 +504,8 @@ export function createMoneyApi(db: Db) {
     return await done(group.id)
   })
 
+  registerVaultRoutes(db, vaultOpts, route, readBody, needUser)
+
   return async function handle(req: IncomingMessage, res: ServerResponse, url: URL) {
     try {
       for (const r of routes) {
@@ -527,7 +549,9 @@ export function moneyApi(): Promise<MoneyApi | null> {
       }
       await importSqliteOnce(db)
       openDb = db
-      return createMoneyApi(db)
+      const storage = vaultStorageFromEnv(MAX_ORIGINAL_BYTES)
+      if (!storage) console.warn('[vault] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are unset: the photo vault is off.')
+      return createMoneyApi(db, { storage, geocode: process.env.VAULT_GEOCODE === 'off' ? null : vault.nominatim(), limits: vaultLimitsFromEnv() })
     } catch (err) {
       console.error('[money] Can’t open the database:', err)
       // closed before trying again: a second handle on the dev database's files would damage them
