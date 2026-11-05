@@ -6,7 +6,7 @@ import type { Theme } from '../state/theme'
 import { fmtMoney } from '../money/currency'
 import type { GroupSummary } from '../money/types'
 import { groupCopyOf } from '../state/persistence'
-import { MoonIcon, SunIcon } from './Icons'
+import { MoonIcon, PhotoIcon, SunIcon } from './Icons'
 
 const STEPS: { id: Phase; label: string }[] = [
   { id: 'intake', label: 'Brief' },
@@ -53,7 +53,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOp
   }, [open])
   return (
     <div className="trips" ref={ref}>
-      <button className="trips-btn" onClick={() => setOpen(o => !o)}>My trips <b>{groups.length + mine.length}</b></button>
+      <button className="trips-btn" onClick={() => setOpen(o => !o)}><span className="trips-long">My trips</span><span className="trips-short">Trips</span> <b>{groups.length + mine.length}</b></button>
       {open && (
         <div className="trips-menu">
           <button className="trip-new" onClick={() => { onNewTrip(); setOpen(false) }}>New trip</button>
@@ -115,7 +115,7 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleT
           Money
           {moneyBadge && <span className={`money-amt ${moneyBadge.net > 0 ? 'pos' : 'neg'}`}>{moneyBadge.net > 0 ? '+' : '−'}{fmtMoney(Math.abs(moneyBadge.net), moneyBadge.currency, { compact: true })}</span>}
         </button>
-        <button className="money-btn" onClick={onPhotos}>Photos</button>
+        <button className="money-btn photos-btn" onClick={onPhotos} aria-label="Photos"><span>Photos</span><PhotoIcon /></button>
         <button className="theme-btn" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
           {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
         </button>

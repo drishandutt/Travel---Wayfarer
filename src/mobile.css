@@ -1,7 +1,7 @@
 /* ───────── phones: full-screen map + one bottom sheet ───────── */
 
 /* desktop never shows these */
-.step-mini, .deck-mobile-bar { display: none; }
+.step-mini, .deck-mobile-bar, .photos-btn svg, .trips-short { display: none; }
 
 @media (max-width: 760px) {
   body { overscroll-behavior: none; }
@@ -149,15 +149,24 @@
   .checks label { padding: 10px 6px; }
 }
 
-/* narrower phones: the top bar keeps "4/6" and drops the step's name, then tightens, then drops the balance */
-@media (max-width: 430px) {
+/* every iPhone width (up to 440pt on the Pro Max): the top bar keeps "4/6" and drops the step's name,
+   then tightens, then drops the balance */
+@media (max-width: 480px) {
   .step-mini { gap: 0; font-size: 0; padding-left: 10px; padding-right: 10px; }
   .step-mini i { font-size: 11px; }
 }
-@media (max-width: 400px) {
+@media (max-width: 440px) {
   .topbar { gap: 6px; padding-left: 10px; padding-right: 10px; }
   .brand { gap: 6px; }
   .trips-btn, .money-btn { padding-left: 8px; padding-right: 8px; }
+  /* Photos becomes a round icon button, like the theme toggle */
+  .photos-btn { min-width: 44px; justify-content: center; padding: 0; border-radius: 50%; }
+  .photos-btn span { display: none; }
+  .photos-btn svg { display: block; }
+}
+@media (max-width: 400px) {
+  .trips-long { display: none; }
+  .trips-short { display: inline; }
 }
 @media (max-width: 340px) {
   .money-amt { display: none; }

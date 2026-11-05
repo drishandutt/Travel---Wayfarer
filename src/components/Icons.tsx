@@ -22,6 +22,9 @@ export const PauseIcon = () => (
 export const ChevronIcon = ({ dir }: { dir: 'left' | 'right' }) => (
   <svg {...base} width={16} height={16}><path d={dir === 'left' ? 'M15 5l-7 7 7 7' : 'M9 5l7 7-7 7'} /></svg>
 )
+export const PhotoIcon = () => (
+  <svg {...base} width={16} height={16}><rect x="3" y="5" width="18" height="14" rx="3" /><circle cx="9" cy="10" r="1.6" /><path d="M21 16l-5-5-9 8" /></svg>
+)
 export const ChatIcon = () => (
   <svg {...base} width={18} height={18}><path d="M4 5h16v11H9l-5 4z" /></svg>
 )
