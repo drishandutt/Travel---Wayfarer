@@ -190,11 +190,14 @@
     content: ''; position: fixed; z-index: 50; top: 0; left: 0; right: 0; height: env(safe-area-inset-top);
     background: rgba(var(--ink-rgb), .92); backdrop-filter: blur(20px); pointer-events: none;
   }
-  .m-tabs, .v-bar { top: env(safe-area-inset-top); }
+  .m-tabs { top: env(safe-area-inset-top); }
   .m-tabs, .day-tabs, .dash-actions, .wx-row, .day-cards { overscroll-behavior-x: contain; }
 
-  /* the vault's top bar starts below the notch, like the money and dashboard bars */
-  .v-app { padding-top: env(safe-area-inset-top); padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+  /* the vault's top bar starts below the notch, like the money and dashboard bars. The bar pins at
+     the very top and carries the notch in its own padding: WebKit adds a scroller's padding to a
+     sticky offset, so padding the page and offsetting the bar put it a notch too low */
+  .v-app { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+  .v-bar { top: 0; padding-top: calc(env(safe-area-inset-top) + 12px); }
 
   /* dialogs as bottom sheets stop below the status bar, so their close button stays reachable */
   .m-modal { max-height: calc(100dvh - env(safe-area-inset-top) - 12px); }

@@ -231,25 +231,32 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   }, [account, refreshGroups])
 
   // The iPhone app resumes the page it already had, so a deploy only shows up after a cold start.
-  // On coming back, reload into the new build, but only when nothing unsaved would be lost.
+  // On coming back, look for a new build and reload into it, but only when nothing unsaved would
+  // be lost; otherwise wait for the next moment that's safe.
+  const updateReady = useRef(false)
+  const safeToReload = () => {
+    const s = latest.current
+    const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
+    return !typing && ((s.phase === 'intake' && s.messages.length <= 1) || s.phase === 'review' || s.phase === 'final')
+  }
   useEffect(() => {
     const entry = (html: string) => html.match(/src="(\/assets\/[^"]+\.js)"/)?.[1]
     const mine = entry(document.documentElement.outerHTML)
     if (!mine) return // the dev server
     const check = () => {
       if (document.visibilityState !== 'visible') return
-      const s = latest.current
-      const safe = (s.phase === 'intake' && s.messages.length <= 1) || s.phase === 'review' || s.phase === 'final'
-      const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
-      if (!safe || typing) return
+      if (updateReady.current) { if (safeToReload()) location.reload(); return }
       fetch('/', { cache: 'no-store' }).then(r => r.text()).then(html => {
         const live = entry(html)
-        if (live && live !== mine) location.reload()
+        if (!live || live === mine) return
+        updateReady.current = true
+        if (safeToReload()) location.reload()
       }).catch(() => {})
     }
     document.addEventListener('visibilitychange', check)
     return () => document.removeEventListener('visibilitychange', check)
   }, [])
+  useEffect(() => { if (updateReady.current && safeToReload()) location.reload() }, [state.phase])
 
   // Makes the group the first time it's needed.
   const ensureGroup = useCallback(async (): Promise<string> => {
