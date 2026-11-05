@@ -139,6 +139,15 @@ A native app built with Capacitor 8 (Swift Package Manager, so no CocoaPods). It
 
 `npm run ios` builds, syncs and opens the Xcode project. Run on a simulator or phone from there; a real phone or TestFlight needs a signing team (App → Signing & Capabilities). `capacitor.config.json` in `ios/` is generated, so run `npx cap sync ios` after a fresh clone. To try local changes in the app, run `npm run phone` and sync with `CAP_SERVER_URL=http://<mac-ip>:5173 npx cap sync ios`, then sync again without it before shipping.
 
+**TestFlight:** the App Store Connect app is *Wayfarer* (bundle `com.drishandutt.wayfarer`, team `DSR7239GNZ`). To ship a new build, archive and upload from `ios/App`; `ExportOptions.plist` bumps the build number on each upload:
+
+```bash
+xcodebuild -project App.xcodeproj -scheme App -configuration Release -destination 'generic/platform=iOS' -archivePath build/Wayfarer.xcarchive -allowProvisioningUpdates archive
+xcodebuild -exportArchive -archivePath build/Wayfarer.xcarchive -exportOptionsPlist ExportOptions.plist -exportPath build/export -allowProvisioningUpdates
+```
+
+Check `ios/App/App/capacitor.config.json` points at production before archiving: a `CAP_SERVER_URL` sync leaves it on your Mac.
+
 For the App Store, Apple can reject an app that's only a website (guideline 4.2), so a submission would want native extras such as push notifications, the share sheet or offline trips first.
 
 ---
