@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Wayfarer</title>
+  <!-- The iPhone app shows this when the site can't be reached (capacitor.config.ts errorPath) -->
+  <style>
+    :root { color-scheme: light dark; --bg: #f5f5f7; --ink: #111; --muted: #6e6e73; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1d1d1f; --ink: #f5f5f7; --muted: #a1a1a6; } }
+    body { margin: 0; min-height: 100dvh; display: grid; place-items: center; background: var(--bg); color: var(--ink);
+      font: 17px/1.4 -apple-system, system-ui, sans-serif; text-align: center; padding: 0 24px; box-sizing: border-box; }
+    h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.02em; }
+    p { color: var(--muted); margin: 0 0 24px; }
+    button { font-family: inherit; font-size: 17px; font-weight: 600; line-height: 1; color: #111; background: #ffd23f; border: 3px solid #111; border-radius: 26px;
+      padding: 15px 32px; box-shadow: 4px 4px 0 #111; }
+    button:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #111; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>You're offline</h1>
+    <p>Wayfarer needs the internet to load your trips.</p>
+    <button onclick="location.replace('https://wayfarer-production-3acc.up.railway.app')">Try again</button>
+  </main>
+</body>
+</html>

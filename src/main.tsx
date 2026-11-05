@@ -21,3 +21,7 @@ createRoot(document.getElementById('root')!).render(
     </ErrorBoundary>
   </StrictMode>,
 )
+
+// In the iPhone app, keep the launch screen up until the page has painted (see capacitor.config.ts)
+type NativeShell = { Capacitor?: { Plugins?: { SplashScreen?: { hide(): Promise<void> } } } }
+requestAnimationFrame(() => { (window as NativeShell).Capacitor?.Plugins?.SplashScreen?.hide().catch(() => {}) })

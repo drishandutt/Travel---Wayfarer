@@ -126,6 +126,21 @@ At 760px and below (`useIsMobile`) the layout switches to mobile-first (`src/com
 
 Tested at 375×812 and 320×568, with no sideways scrolling.
 
+### The iPhone app (`ios/`, `capacitor.config.ts`)
+
+A native app built with Capacitor 8 (Swift Package Manager, so no CocoaPods). It's a shell around the **live site**, not a bundled copy: sign-in is an `HttpOnly` cookie on `/api/money`, and trips and money stay live over `EventSource`, which both need the page and the API on one origin. Loading production keeps them first-party, so nothing in the web app changed for it, and **every push to `main` updates the app too**. Only native changes (icon, permissions, plugins, the shell itself) need a new build.
+
+- **Launch:** the splash (the icon on `#1d1d1f`) stays up until the page has painted. `src/main.tsx` hides it through the Capacitor bridge, which the shell injects into the remote page too; `launchShowDuration` caps it at 6s.
+- **Offline:** `public/offline.html` is bundled in the app (`server.errorPath`) and shown when the site can't be reached, with a *Try again* button.
+- **Notch:** `viewport-fit=cover` in `index.html` lets the existing `env(safe-area-inset-*)` CSS do the work (`ios.contentInset: 'never'`).
+- **Permissions** (`ios/App/App/Info.plist`): photo library and camera, for the vault and receipts.
+- **Icon and splash:** drawn by `scripts/make-ios-art.py` in the Memphis palette. Rerun it to change them.
+- **App ID:** `com.drishandutt.wayfarer`.
+
+`npm run ios` builds, syncs and opens the Xcode project. Run on a simulator or phone from there; a real phone or TestFlight needs a signing team (App → Signing & Capabilities). `capacitor.config.json` in `ios/` is generated, so run `npx cap sync ios` after a fresh clone. To try local changes in the app, run `npm run phone` and sync with `CAP_SERVER_URL=http://<mac-ip>:5173 npx cap sync ios`, then sync again without it before shipping.
+
+For the App Store, Apple can reject an app that's only a website (guideline 4.2), so a submission would want native extras such as push notifications, the share sheet or offline trips first.
+
 ---
 
 ## Planning together

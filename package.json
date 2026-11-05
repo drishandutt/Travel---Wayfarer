@@ -12,10 +12,14 @@
     "preview": "vite preview",
     "test": "node --import tsx --test \"server/**/*.test.ts\"",
     "phone": "concurrently -k -n web,api -c yellow,cyan \"vite --host\" \"npm:api\"",
-    "start": "node --import tsx server/index.ts"
+    "start": "node --import tsx server/index.ts",
+    "ios": "npm run build && cap sync ios && cap open ios"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/ios": "^8.6.0",
+    "@capacitor/splash-screen": "^8.0.2",
     "@electric-sql/pglite": "^0.5.15",
     "maplibre-gl": "^6.16.0",
     "pg": "^8.23.1",
@@ -25,6 +29,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.0",
     "@types/node": "^22.20.5",
     "@types/pg": "^8.23.1",
     "@types/react": "^18.3.12",
