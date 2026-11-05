@@ -4,6 +4,7 @@
 .deck-actions { position: absolute; top: 0; right: 4px; display: flex; gap: 6px; }
 .deck-cancel { position: relative; padding: 6px 13px; border-radius: 999px; border: 1px solid var(--line); background: var(--glass); backdrop-filter: blur(20px) saturate(1.4); color: var(--paper); font-size: 13px; font-weight: 500; }
 .deck-cancel:hover { background: var(--glass-hi); }
+.deck-head:has(.deck-cancel + .deck-cancel + .deck-cancel) h2 { padding-right: 250px; } /* Votes, Chat and Back to the plan */
 .deck-head:has(.deck-cancel) h2 { padding-right: 84px; } /* keep long labels clear of Cancel */
 .deck-head:has(.deck-cancel + .deck-cancel) h2 { padding-right: 180px; } /* Chat and Back to the plan */
 .deck-head h2 { margin: 2px 0 12px; font-family: var(--display); font-weight: 600; font-size: 24px; letter-spacing: -.025em; line-height: 1.1; }

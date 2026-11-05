@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { Account, Debt, GroupState, Member } from '../../money/types'
 import type { GroupHandle } from '../../money/hooks'
 import { fmtMoney } from '../../money/currency'
@@ -56,7 +57,8 @@ export function useEscape(fn: () => void) {
 
 export function Modal({ title, eyebrow, onClose, children, footer, wide }: { title: string; eyebrow?: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   useEscape(onClose)
-  return (
+  // on the body, so a dialog opened from an animated panel (the deck) isn't trapped under the top bar
+  return createPortal(
     <div className="m-modal-wrap" role="dialog" aria-modal="true" aria-label={title}>
       <div className="m-scrim" />
       <div className={`m-modal ${wide ? 'wide' : ''}`}>
@@ -70,7 +72,8 @@ export function Modal({ title, eyebrow, onClose, children, footer, wide }: { tit
         <div className="m-modal-body">{children}</div>
         {footer && <footer className="m-modal-foot">{footer}</footer>}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

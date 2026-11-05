@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Dispatch } from 'react'
+import { useEffect, useRef, useState, type Dispatch, type ReactNode } from 'react'
 import type { Place } from '../types'
 import type { Action, TripState } from '../state/tripStore'
 import type { DeckCard } from '../planner/core'
@@ -7,6 +7,7 @@ import { PLACE_COVERS } from '../data/placeCovers'
 import { getPhotos, type Photo } from '../services/photos'
 import { SocialVideos } from './SocialVideos'
 import { GroupChat } from './trip/GroupChat'
+import { Modal } from './money/parts'
 import { votingProgress } from '../trip/votes'
 import { Memphis } from './Memphis'
 import type { PlaceVote, TripNote, TripPerson, VoteValue } from '../trip/types'
@@ -23,6 +24,8 @@ export interface DeckGroup {
   onVote: (placeId: string, vote: VoteValue | null) => void
   onNote: (text: string) => void
   onClose?: () => void
+  onInvite?: () => void   // the admin, while nobody else has joined
+  ranking?: ReactNode     // the group's most liked, for phones (desktop shows it beside the deck)
 }
 
 const THRESHOLD = 110 // px of drag that counts as a decision
@@ -151,12 +154,16 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
   const progress = group ? votingProgress(state.sharedDeck, group.votes, group.people) : null
   const liked = group ? Object.values(state.picks).filter(v => v === 'like').length : state.deck.filter(c => state.picks[c.id] === 'like').length
 
+  // a ref, not just state: two taps before the next render would otherwise both count against
+  // the same card, and the one after it would be skipped without a vote
+  const busy = useRef(false)
   const decide = (dir: 'left' | 'right') => {
-    if (leaving || done) return
+    if (busy.current || leaving || done) return
+    busy.current = true
     const card = state.deck[state.deckIndex]
     setLeaving(dir)
     if (group && card) group.onVote(card.id, dir === 'right' ? 'like' : 'nope')
-    setTimeout(() => { dispatch({ type: 'swipe', like: dir === 'right' }); setLeaving(null) }, 260)
+    setTimeout(() => { dispatch({ type: 'swipe', like: dir === 'right' }); setLeaving(null); busy.current = false }, 260)
   }
 
   const undo = () => {
@@ -190,12 +197,16 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
   const ctaLabel = inGroup ? 'Review the group’s picks' : `Map my ${liked || ''} pick${liked === 1 ? '' : 's'}`
   const canMap = inGroup || liked > 0
   const stillVoting = progress?.waiting.filter(p => p.id !== group?.me) ?? []
+  // a group of one: the votes only count once someone else is on the trip
+  const alone = Boolean(group && !inGroup && group.onInvite)
+  const [votesOpen, setVotesOpen] = useState(false)
 
   return (
     <section className="deck-zone">
       <header className="deck-head">
         <h2>{done ? 'That’s the whole deck' : editing ? state.deckMode!.label : group ? 'Like or skip?' : 'Keep or skip?'}</h2>
         <div className="deck-actions">
+          {inGroup && group?.ranking && <button className="deck-cancel deck-votes" onClick={() => setVotesOpen(true)}>Votes</button>}
           {inGroup && group && (
             <button className="deck-cancel" onClick={() => setChatOpen(true)}>
               Chat{group.notes.length > notesRead && <i className="dot" aria-label="New messages" />}
@@ -215,10 +226,12 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
           <div className="deck-end">
             <Memphis layout="sprinkle" />
             <p>{group && !state.deck.length ? 'You’ve voted on every place. ' : ''}You {group ? 'liked' : 'kept'} <b>{liked}</b> place{liked === 1 ? '' : 's'}{editing ? '' : ` in ${city?.name}`}.</p>
+            {alone && <p className="m-note">No one else has joined yet, so these are only your picks. Friends sent a link count once they open it.</p>}
             {member && <p className="m-note">{stillVoting.length ? `Still voting: ${stillVoting.map(p => p.name).join(', ')}. ` : ''}{group!.adminName} will map the group’s favourites next.</p>}
             {editing
               ? <button className="cta" onClick={onPlan}>{liked ? `Add ${liked} to my trip` : 'Keep my plan as is'}</button>
               : !member && <button className="cta" disabled={!canMap} onClick={onPlan}>{ctaLabel}</button>}
+            {alone && <button className="ghost" onClick={group!.onInvite}>Invite friends</button>}
             {group?.onClose && <button className="cta" onClick={group.onClose}>Back to the plan</button>}
             <button className="ghost" onClick={undo}>Undo last</button>
           </div>
@@ -258,6 +271,9 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
         </div>
       )}
 
+      {votesOpen && group?.ranking && (
+        <Modal eyebrow={group.name} title="Most liked" onClose={() => setVotesOpen(false)}>{group.ranking}</Modal>
+      )}
       {chatOpen && group && (
         <GroupChat name={group.name} me={group.me} people={group.people} notes={group.notes} onNote={group.onNote} onClose={() => { setChatOpen(false); setNotesRead(group.notes.length) }} />
       )}

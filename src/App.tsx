@@ -230,6 +230,27 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     return () => document.removeEventListener('visibilitychange', wake)
   }, [account, refreshGroups])
 
+  // The iPhone app resumes the page it already had, so a deploy only shows up after a cold start.
+  // On coming back, reload into the new build, but only when nothing unsaved would be lost.
+  useEffect(() => {
+    const entry = (html: string) => html.match(/src="(\/assets\/[^"]+\.js)"/)?.[1]
+    const mine = entry(document.documentElement.outerHTML)
+    if (!mine) return // the dev server
+    const check = () => {
+      if (document.visibilityState !== 'visible') return
+      const s = latest.current
+      const safe = (s.phase === 'intake' && s.messages.length <= 1) || s.phase === 'review' || s.phase === 'final'
+      const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
+      if (!safe || typing) return
+      fetch('/', { cache: 'no-store' }).then(r => r.text()).then(html => {
+        const live = entry(html)
+        if (live && live !== mine) location.reload()
+      }).catch(() => {})
+    }
+    document.addEventListener('visibilitychange', check)
+    return () => document.removeEventListener('visibilitychange', check)
+  }, [])
+
   // Makes the group the first time it's needed.
   const ensureGroup = useCallback(async (): Promise<string> => {
     if (activeGroup) return activeGroup
@@ -478,6 +499,8 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     onNote: shared.postNote,
     // the deck someone opened over a plan closes back to it; one the admin opened waits for them
     onClose: member && state.shared?.phase !== 'swipe' ? () => shared.setVoting(false) : undefined,
+    onInvite: trip.role === 'owner' ? () => setInviteOpen(true) : undefined,
+    ranking: isMobile && !state.deckMode ? <GroupRanking state={state} trip={trip} /> : undefined,
   } : undefined
   const voteOn = trip ? { trip, onVote: shared.vote } : undefined
 
