@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { PGlite, types } from '@electric-sql/pglite'
 import pg from 'pg'
@@ -59,6 +60,7 @@ function pgDriver(url: string): Driver {
 }
 
 async function pgliteDriver(dataDir?: string): Promise<Driver> {
+  if (dataDir) mkdirSync(dataDir, { recursive: true }) // PGlite makes only the last folder, and ./data is gitignored
   const db = await PGlite.create(dataDir, { parsers: { [types.INT8]: Number } })
   const conn: Conn = { query: (sql, params) => db.query(sql, params), script: sql => db.exec(sql) }
   return { ...conn, exclusive: true, session: async () => ({ ...conn, release() {} }), close: () => db.close() }
