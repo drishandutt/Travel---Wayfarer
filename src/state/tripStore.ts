@@ -1,8 +1,9 @@
 import type { DayPlan, HotelScore, Leg, LngLat, Place, PlannerEvent, TripBrief } from '../types'
 import { applyGapFill, bestInsertIndex, buildDeck, findGapFill, orderDay, rebuildDay, withHotel, type DeckCard } from '../planner/core'
-import { cityById } from '../data/cities'
+import { cityById, tripCity } from '../data/cities'
 import { applyDeckPicks, applyEdit, planDeckRequest, type DeckRequest, type EditResult, type PlanSlice } from '../planner/edits'
 import { centroid } from '../planner/geo'
+import { existingSpot } from '../planner/customPlaces'
 import type { SharedPlan, VoteValue } from '../trip/types'
 
 // Trip lifecycle:  intake → swipe → planning → review → hotels → final
@@ -64,6 +65,7 @@ export type Action =
   | { type: 'swipe'; like: boolean }
   | { type: 'undo-swipe' }
   | { type: 'chat-edit'; text: string }
+  | { type: 'add-custom-place'; place: Place; day?: number; note?: string }
   | { type: 'undo' }
   | { type: 'finish-deck'; cancel?: boolean }
   | { type: 'shared-plan'; plan: SharedPlan; role: 'admin' | 'member'; version: number; votes: Record<string, VoteValue>; voting?: boolean }
@@ -230,7 +232,7 @@ function commit(s: TripState, res: EditResult): TripState {
 // A mini swipe deck over the live plan: routes stay on the map, nothing changes
 // until the traveller finishes, and finishing returns to where they were.
 function openEditDeck(s: TripState, req: DeckRequest): TripState {
-  const city = cityById(s.brief.destination)!
+  const city = tripCity(s.brief)!
   const first = city.places.find(p => p.id === req.cards[0].id)!
   // remember stated tastes on the trip; they lift matching places in every later pick
   const tastes = [...new Set([...(s.brief.tastes ?? []), ...req.tastes])]
@@ -260,10 +262,60 @@ function finishEditDeck(s: TripState, cancel: boolean): TripState {
   if (cancel) for (const c of s.deck) delete picks[c.id]
   const base: TripState = { ...s, phase: mode.returnPhase, deck: [], deckIndex: 0, deckMode: undefined, candidates, picks }
   if (!liked.length) {
-    const kept = mode.replaceId ? ` I kept ${cityById(s.brief.destination)?.places.find(p => p.id === mode.replaceId)?.name ?? 'your stop'}.` : ''
+    const kept = mode.replaceId ? ` I kept ${tripCity(s.brief)?.places.find(p => p.id === mode.replaceId)?.name ?? 'your stop'}.` : ''
     return { ...base, messages: [...base.messages, { id: uid(), role: 'ai', text: `${cancel ? 'Cancelled' : 'Nothing kept'} — your plan is unchanged.${kept}` }] }
   }
   return commit(base, applyDeckPicks(sliceOf(base), liked, mode.replaceId, mode.day))
+}
+
+// A place the travellers found themselves. It joins the trip's places for good (so edits, decks
+// and the planner all see it), and then lands wherever the trip has got to: kept for the deck
+// while briefing, next up in a deck being swiped, or straight into a day once there's a plan.
+function addCustomPlace(s: TripState, found: Place, day: number | undefined, note: string | undefined): TripState {
+  const city = tripCity(s.brief)
+  if (!city) return s
+  const say = (next: TripState, text: string): TripState =>
+    ({ ...next, messages: [...next.messages, { id: uid(), role: 'ai', text: note ? `${text} ${note}` : text }] })
+  const known = existingSpot(found, city)
+  const place = known ?? found
+  const brief = known ? s.brief : { ...s.brief, customPlaces: [...(s.brief.customPlaces ?? []), found] }
+  const where = found.custom?.address ? ` (${found.custom.address})` : ''
+  const videos = 'Open its pin for photos, reels and videos.'
+  const pin = (verdict: Candidate['verdict']) => ({ ...s.candidates, [place.id]: { place, verdict } })
+  const look = { center: place.coord, zoom: city.zoom + 2.2, key: seq++ }
+
+  if (s.days.some(d => d.stops.some(st => st.place.id === place.id))) {
+    return say({ ...s, brief, selectedPlace: place.id, camera: look }, `${place.name} is already in your plan.`)
+  }
+
+  if (s.phase === 'review' || s.phase === 'final') {
+    const picks = { ...s.picks }
+    delete picks[place.id] // asking for it outright overrides an earlier skip
+    const slice = { ...sliceOf(s), brief, picks }
+    const target = day === -1 ? s.days.length : day
+    const res = applyDeckPicks(slice, [place.id], undefined, target)
+    if (!res.changes.length) return say({ ...s, brief }, `I saved ${place.name}${where}, but couldn’t fit it into a day.`)
+    const done = commit({ ...s, brief, picks }, res)
+    const into = res.changes[0].match(/ to (Day \d+)$/)?.[1]
+    const what = `${known ? '' : 'your find '}${place.name}${where}`
+    return say({ ...done, messages: done.messages.slice(0, -1) }, `Added ${what}${into ? ` to ${into}` : ''}.${res.changes.length > 1 ? ` Also: ${res.changes.slice(1).join('; ')}.` : ''} ${videos}`)
+  }
+
+  if (s.phase === 'swipe') {
+    // next card up, so they see it straight away; in a group deck everyone gets to vote on it
+    const at = Math.min(s.deckIndex, s.deck.length)
+    const card = { id: place.id, why: 'You added this one', match: 1 }
+    const without = (deck: DeckCard[]) => deck.filter(c => c.id !== place.id)
+    const deck = [...without(s.deck).slice(0, at), card, ...without(s.deck).slice(at)]
+    const sharedDeck = s.deckMode ? s.sharedDeck : [card, ...without(s.sharedDeck)]
+    const picks = { ...s.picks }
+    delete picks[place.id]
+    return say({ ...s, brief, deck, sharedDeck, picks, candidates: pin('consider'), camera: look }, `Added ${place.name}${where} — it’s the next card. ${videos}`)
+  }
+
+  // still briefing (or mapping): it leads the deck when it's dealt
+  return say({ ...s, brief, candidates: pin('consider'), selectedPlace: null, camera: look },
+    `Saved ${place.name}${where}. It’ll be first in your deck${s.phase === 'intake' ? ' when you pick places' : ''}. ${videos}`)
 }
 
 function undo(s: TripState): TripState {
@@ -295,7 +347,7 @@ const UNDOABLE: Partial<Record<Action['type'], string>> = {
 // refuses their edits anyway; this keeps the screen from pretending one happened.
 const ADMIN_ONLY = new Set<Action['type']>([
   'chat', 'brief', 'phase', 'planner', 'choose-hotel', 'replan', 'remove-stop', 'move-stop', 'shift-stop', 'add-stop',
-  'optimize-day', 'fill-gap', 'saved', 'start-deck', 'chat-edit', 'undo', 'finish-deck',
+  'optimize-day', 'fill-gap', 'saved', 'start-deck', 'chat-edit', 'undo', 'finish-deck', 'add-custom-place',
 ])
 
 // What the group gets to see of this trip.
@@ -322,8 +374,8 @@ function resumable(p: SharedPlan): SharedPlan {
 }
 
 // The pins for a voting deck: what you've decided, and the card in front of you.
-function deckPins(deck: DeckCard[], picks: Record<string, VoteValue>, nextId: string | undefined, destination?: string): Record<string, Candidate> {
-  const city = cityById(destination)
+function deckPins(deck: DeckCard[], picks: Record<string, VoteValue>, nextId: string | undefined, brief: TripBrief): Record<string, Candidate> {
+  const city = tripCity(brief)
   const out: Record<string, Candidate> = {}
   for (const c of deck) {
     const place = city?.places.find(p => p.id === c.id)
@@ -335,7 +387,7 @@ function deckPins(deck: DeckCard[], picks: Record<string, VoteValue>, nextId: st
 }
 
 function receivePlan(s: TripState, a: Extract<Action, { type: 'shared-plan' }>, p: SharedPlan): TripState {
-  const city = cityById(p.brief.destination)
+  const city = tripCity(p.brief)
   const prev = s.shared
   // A deck opened because the admin is collecting votes closes when they move on. One a
   // person opened themselves over a finished plan stays open until they're done with it.
@@ -363,7 +415,7 @@ function receivePlan(s: TripState, a: Extract<Action, { type: 'shared-plan' }>, 
   if (sameDeck) return { ...base, phase: 'swipe', deck: s.deck, deckIndex: s.deckIndex, picks: s.picks, candidates: s.candidates }
   // otherwise it's just what you haven't decided yet: a vote only changes when you mean it to
   const deck = tiles.filter(c => !a.votes[c.id])
-  return { ...base, phase: 'swipe', deck, deckIndex: 0, picks: a.votes, candidates: deckPins(tiles, a.votes, deck[0]?.id, p.brief.destination) }
+  return { ...base, phase: 'swipe', deck, deckIndex: 0, picks: a.votes, candidates: deckPins(tiles, a.votes, deck[0]?.id, p.brief) }
 }
 
 export function reducer(s: TripState, a: Action): TripState {
@@ -429,7 +481,7 @@ function baseReducer(s: TripState, a: Action): TripState {
       })
     }
     case 'add-stop': {
-      const place = s.candidates[a.id]?.place ?? cityById(s.brief.destination)?.places.find(p => p.id === a.id)
+      const place = s.candidates[a.id]?.place ?? tripCity(s.brief)?.places.find(p => p.id === a.id)
       if (!place || dayOf(s, a.id) !== undefined) return s
       return editDays(s, [a.day], l => {
         const target = [...(l.get(a.day) ?? [])]
@@ -441,7 +493,7 @@ function baseReducer(s: TripState, a: Action): TripState {
       return editDays(s, [a.day], l => l.set(a.day, orderDay(l.get(a.day)!)))
     case 'fill-gap': {
       const day = s.days.find(d => d.day === a.day)
-      const city = cityById(s.brief.destination)
+      const city = tripCity(s.brief)
       if (!day || !city) return s
       const used = new Set(s.days.flatMap(d => d.stops.map(x => x.place.id)))
       const fill = findGapFill(day, city.places.filter(p => !used.has(p.id)), s.brief, 45, 9) // asked for explicitly: look further afield
@@ -459,7 +511,7 @@ function baseReducer(s: TripState, a: Action): TripState {
     }
     case 'restore': {
       const t = a.trip
-      const city = cityById(t.brief.destination)
+      const city = tripCity(t.brief)
       // Saved trips hold copies of places; refresh them from today's city data so
       // details added since (booking notes, new blurbs) show up on old trips too.
       const fresh = <P extends { id: string }>(p: P): P => (city?.places.find(x => x.id === p.id) as P | undefined) ?? p
@@ -483,6 +535,8 @@ function baseReducer(s: TripState, a: Action): TripState {
       return { ...s, tripId: a.id }
     case 'chat-edit':
       return chatEdit(s, a.text)
+    case 'add-custom-place':
+      return addCustomPlace(s, a.place, a.day, a.note)
     case 'undo':
       return undo(s)
     case 'finish-deck':
@@ -507,9 +561,12 @@ function baseReducer(s: TripState, a: Action): TripState {
       return a.role === 'admin' && plan === a.plan ? { ...next, shared: { ...next.shared!, synced: JSON.stringify(snapshotOf(next)) } } : next
     }
     case 'start-deck': {
-      const city = cityById(s.brief.destination)
+      const city = tripCity(s.brief)
       if (!city) return s
-      const deck = buildDeck(city.places, s.brief)
+      // the travellers' own finds lead the deck
+      const own = new Set(s.brief.customPlaces?.map(p => p.id))
+      const ranked = buildDeck(city.places, s.brief)
+      const deck = [...ranked.filter(c => own.has(c.id)).map(c => ({ ...c, why: 'You added this one', match: 1 })), ...ranked.filter(c => !own.has(c.id))]
       const first = city.places.find(p => p.id === deck[0]?.id)
       return {
         ...s,
@@ -526,7 +583,7 @@ function baseReducer(s: TripState, a: Action): TripState {
     }
     case 'swipe': {
       const card = s.deck[s.deckIndex]
-      const city = cityById(s.brief.destination)
+      const city = tripCity(s.brief)
       if (!card || !city) return s
       const byId = (id?: string) => city.places.find(p => p.id === id)
       const place = byId(card.id)

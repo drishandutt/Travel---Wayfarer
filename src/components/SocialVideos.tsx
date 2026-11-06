@@ -1,22 +1,23 @@
 import { useEffect, useState } from 'react'
 import type { Place } from '../types'
-import { CITIES } from '../data/cities'
+import { cityOfPlace } from '../data/cities'
 import { PLATFORM_NAME, embedUrl, getVideos, moreLinks, posterUrl, watchUrl, type PlaceVideos, type Platform, type Video } from '../services/videos'
 
 // The feed you reach by scrolling down a place's card or swipe tile.
 // `active` is false for tiles still waiting in the deck, so they load nothing.
-export function SocialVideos({ place, active = true }: { place: Place; active?: boolean }) {
+export function SocialVideos({ place, city: cityName, active = true }: { place: Place; city?: string; active?: boolean }) {
   const [data, setData] = useState<PlaceVideos | null>(null)
   const [only, setOnly] = useState<Platform | null>(null)
+
+  const city = cityName ?? cityOfPlace(place)?.name
 
   useEffect(() => {
     if (!active) return
     let live = true
-    getVideos(place.id).then(d => { if (live) setData(d) })
+    setData(null)
+    getVideos(place, city).then(d => { if (live) setData(d) })
     return () => { live = false }
-  }, [place.id, active])
-
-  const city = CITIES.find(c => c.places.some(x => x.id === place.id))?.name
+  }, [place.id, city, active])
   const videos = data?.videos ?? []
   const platforms = (Object.keys(PLATFORM_NAME) as Platform[]).filter(p => videos.some(v => v.platform === p))
   const shown = only ? videos.filter(v => v.platform === only) : videos
@@ -25,7 +26,8 @@ export function SocialVideos({ place, active = true }: { place: Place; active?: 
     <section className="social">
       <h4><span>Reels &amp; videos</span><i aria-hidden="true">↓</i></h4>
       {!data && <div className="sv-loading" />}
-      {data && !videos.length && <p className="sv-none">No clips saved for this spot yet. See what people are posting:</p>}
+      {!data && place.custom && <p className="sv-none">Looking for reels and videos of {place.name}…</p>}
+      {data && !videos.length && <p className="sv-none">{place.custom ? 'I couldn’t find clips that name this spot.' : 'No clips saved for this spot yet.'} See what people are posting:</p>}
       {platforms.length > 1 && (
         <div className="sv-chips">
           <button className={only ? '' : 'on'} aria-pressed={!only} onClick={() => setOnly(null)}>All</button>
@@ -74,7 +76,7 @@ function VideoItem({ video }: { video: Video }) {
       <div className="sv-info">
         <div className="sv-by">
           <span className={`sv-badge ${video.platform}`}>{video.platform === 'youtube' && video.short ? 'Short' : PLATFORM_NAME[video.platform]}</span>
-          <b>{video.by}</b>
+          {video.by && <b>{video.by}</b>}
           {video.views && <small>{video.views} views</small>}
           <a href={watchUrl(video)} target="_blank" rel="noreferrer">Open ↗</a>
         </div>

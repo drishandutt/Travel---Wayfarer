@@ -21,6 +21,7 @@ export interface TripBrief {
   tastes?: string[]             // remembered preferences, e.g. ['traditional', 'japanese']
   open?: string[]               // questions answered "you choose" (or not caught): don't ask again
   moneyGroupId?: string         // the shared-expenses group this trip is connected to
+  customPlaces?: Place[]        // places the travellers found themselves and added from chat
 }
 
 export type PlaceKind = 'sight' | 'food' | 'cafe' | 'bar' | 'park' | 'museum' | 'market' | 'viewpoint'
@@ -37,6 +38,14 @@ export interface Place {
   bestAt?: 'morning' | 'midday' | 'evening' | 'night'
   book?: string                 // set when it should be booked ahead, with the why
   keywords?: string[]           // cuisine & style words people search by ("tempura", "street food")
+  custom?: PlaceSource          // set on places the travellers added themselves
+}
+
+// Where a traveller's own place came from: a maps link they shared, or a name they typed.
+export interface PlaceSource {
+  from: 'google' | 'apple' | 'osm' | 'waze' | 'coords' | 'name'
+  url?: string                  // the link they shared, to open it again
+  address?: string              // short, e.g. "Yoyogi, Shibuya"
 }
 
 export interface Hotel {

@@ -126,7 +126,7 @@ input { font: inherit; }
 @keyframes slideL { from { transform: translateX(-30px); opacity: 0; } }
 @keyframes slideR { from { transform: translateX(30px); opacity: 0; } }
 .messages { flex: 1; overflow-y: auto; padding: 4px 18px 16px; display: flex; flex-direction: column; gap: 8px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
-.msg { max-width: 86%; padding: 10px 14px; border-radius: 20px; line-height: 1.42; font-size: 14.5px; animation: msgIn .45s var(--ease) both; }
+.msg { max-width: 86%; overflow-wrap: anywhere; padding: 10px 14px; border-radius: 20px; line-height: 1.42; font-size: 14.5px; animation: msgIn .45s var(--ease) both; }
 @keyframes msgIn { from { transform: translateY(6px); opacity: 0; } }
 .msg.ai { background: rgba(var(--paper-rgb), .08); border-bottom-left-radius: 6px; }
 .msg.user { align-self: flex-end; background: var(--paper); color: var(--ink); border-bottom-right-radius: 6px; }
@@ -361,6 +361,9 @@ input { font: inherit; }
 .place-card p { margin: 0 0 8px; color: var(--paper-dim); line-height: 1.45; }
 .pc-meta { display: flex; gap: 10px; font-size: 12.5px; color: var(--paper-faint); }
 .pc-meta .kind { color: var(--paper-dim); text-transform: capitalize; }
+.pc-meta .kind.mine, .dc-meta .kind.mine { padding: 1px 8px; border-radius: 999px; background: rgba(var(--amber-rgb), .16); color: var(--amber); text-transform: none; font-weight: 600; }
+.pc-source { display: inline-block; margin: -2px 0 8px; font-size: 12.5px; color: var(--paper-dim); text-decoration: none; }
+.pc-source:hover { color: var(--paper); text-decoration: underline; }
 .pc-actions { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .pc-status { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--paper); }
 .pc-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }

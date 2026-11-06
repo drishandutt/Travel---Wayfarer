@@ -11,12 +11,16 @@ import { runIntake, type IntakeRequest } from './intake'
 import { planWithClaude } from './planAgent'
 import { hotelsWithClaude } from './hotelAgent'
 import { closeMoneyDb, moneyApi } from './money/routes'
+import { clientIp, overLimit } from './money/auth'
+import { PlaceError, placeVideos, resolvePlace, videoLookupCached, type ResolveRequest } from './places'
 
 // Minimal API server. The browser holds no secrets: the Anthropic key lives here.
 //   GET  /api/health   -> { claude, model, money }
 //   POST /api/intake   -> { reply, brief }
 //   POST /api/plan     -> text/event-stream of PlannerEvent
 //   POST /api/hotels   -> text/event-stream of PlannerEvent
+//   POST /api/places/resolve -> { place, note? }  a traveller's own place, from a maps link or a name
+//   GET  /api/places/videos  -> PlaceVideos       reels & videos of a place, by name and city
 //   /api/money/*       -> shared expenses (server/money/routes.ts)
 
 // In production this one server also serves the built site, on the host's PORT.
@@ -101,6 +105,24 @@ const server = createServer(async (req, res) => {
       const money = await moneyApi()
       if (!money) return json(res, 503, { error: 'Money tracking isn’t set up on this server yet.', code: 'no-storage' })
       return await money(req, res, url)
+    }
+    // Before the check below too: these work without Claude, just with less detail.
+    if (req.method === 'POST' && url.pathname === '/api/places/resolve') {
+      if (overLimit(`place:${clientIp(req)}`, 40, 3_600_000)) return json(res, 429, { error: 'That’s a lot of places in a short while. Try again in a bit.' })
+      try {
+        return json(res, 200, await resolvePlace(await readJson<ResolveRequest>(req), abortOnClose(res).signal))
+      } catch (err) {
+        if (err instanceof PlaceError) return json(res, 422, { error: err.message })
+        throw err
+      }
+    }
+    if (req.method === 'GET' && url.pathname === '/api/places/videos') {
+      const q = { name: (url.searchParams.get('name') ?? '').slice(0, 120).trim(), city: (url.searchParams.get('city') ?? '').slice(0, 60).trim(), area: url.searchParams.get('area')?.slice(0, 120) || undefined }
+      if (!q.name || !q.city) return json(res, 400, { error: 'name and city are required' })
+      // each fresh lookup can run a web search, so fresh ones are limited; cached ones are free
+      if (!videoLookupCached(q) && overLimit(`videos:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'Too many lookups. Try again in a bit.' })
+      res.setHeader('Cache-Control', 'private, max-age=3600')
+      return json(res, 200, await placeVideos(q))
     }
     if (!brainEnabled && url.pathname.startsWith('/api/')) {
       return json(res, 503, { error: 'Claude is not configured. Set ANTHROPIC_API_KEY in .env.' })

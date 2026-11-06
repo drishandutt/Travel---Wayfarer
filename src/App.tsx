@@ -5,6 +5,7 @@ import { converse, isReady, nextField } from './planner/intake'
 import { MockPlanner } from './planner/mockPlanner'
 import { RemotePlanner } from './planner/remotePlanner'
 import { claudeIntake, detectBrain, type BrainStatus } from './planner/brain'
+import { customPlaceRequest, isFind, resolveCustomPlace, type CustomPlaceRequest } from './planner/customPlaces'
 import type { Place, PlannerEvent } from './types'
 import { MapCanvas } from './components/MapCanvas'
 import { ChatPanel, inertIf, type ChatGroup } from './components/ChatPanel'
@@ -305,9 +306,38 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     }
   }, [])
 
+  // A place they found themselves, typed by name or shared from a maps app: look it up, then
+  // add it to wherever the trip has got to. Still drawing: it waits for the draft, like edits do.
+  const pendingFinds = useRef<CustomPlaceRequest[]>([])
+  const addFind = async (req: CustomPlaceRequest): Promise<boolean> => {
+    setTyping(true)
+    try {
+      const { place, note } = await resolveCustomPlace(req, latest.current.brief)
+      dispatch({ type: 'add-custom-place', place, day: req.day, note })
+    } catch (e) {
+      // no server to ask: carry on as if it were any other message
+      if (e instanceof TypeError) return false
+      dispatch({ type: 'chat', role: 'ai', text: (e as Error).message })
+    } finally {
+      setTyping(false)
+    }
+    return true
+  }
+
   const send = async (text: string) => {
     dispatch({ type: 'chat', role: 'user', text })
     const s = latest.current
+
+    const find = customPlaceRequest(text)
+    if (find && isFind(find, s.brief)) {
+      if (!s.brief.destination) {
+        if (find.link) { dispatch({ type: 'chat', role: 'ai', text: 'Nice find! Which city is the trip in? Tell me, then send the link again and I’ll add it.' }); return }
+      } else if (s.phase === 'planning' || s.phase === 'hotels') {
+        pendingFinds.current.push(find)
+        dispatch({ type: 'chat', role: 'ai', text: 'Got it — I’ll add that place as soon as this draft finishes drawing.' })
+        return
+      } else if (await addFind(find)) return
+    }
 
     // Once there is a plan, every message is a live edit to it — never a restart.
     if (s.phase === 'review' || s.phase === 'final') {
@@ -348,6 +378,11 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   // Edits typed while the planner was still drawing.
   const pendingEdits = useRef<string[]>([])
   useEffect(() => {
+    if ((state.phase === 'review' || state.phase === 'final') && pendingFinds.current.length) {
+      const finds = pendingFinds.current
+      pendingFinds.current = []
+      ;(async () => { for (const f of finds) await addFind(f) })()
+    }
     if ((state.phase === 'review' || state.phase === 'final') && pendingEdits.current.length) {
       const text = pendingEdits.current.join(', ')
       pendingEdits.current = []

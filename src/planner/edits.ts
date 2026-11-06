@@ -1,6 +1,6 @@
 import type { City, DayPlan, HotelScore, Place, TripBrief } from '../types'
 import type { Candidate } from '../state/tripStore'
-import { CITIES, cityById } from '../data/cities'
+import { CITIES, tripCity } from '../data/cities'
 import { PACE, bestInsertIndex, buildDay, groupDays, hotelLegs, orderDay, rebalanceDays, scoreHotel, scorePlace, type DeckCard } from './core'
 import { centroid, fmtClock, haversineKm } from './geo'
 import { resolveBudgetTier } from './intake'
@@ -82,7 +82,7 @@ function pool(d: Draft): Place[] {
 }
 
 // Place names mentioned in a phrase, best match first.
-function findPlaces(phrase: string, places: Place[], minScore = 0.5): Place[] {
+export function findPlaces(phrase: string, places: Place[], minScore = 0.5): Place[] {
   const have = new Set(words(phrase))
   const flat = ` ${words(phrase).join(' ')} `
   return places
@@ -599,7 +599,7 @@ function clauses(text: string): string[] {
 }
 
 export function applyEdit(plan: PlanSlice, text: string): EditResult {
-  const city = cityById(plan.brief.destination)!
+  const city = tripCity(plan.brief)!
   currentHotelId = plan.hotel?.hotel.id
   const d: Draft = {
     city,
@@ -714,7 +714,7 @@ const titleCase = (s: string) => s.replace(/\b[a-z]/g, c => c.toUpperCase())
 
 function draftOf(plan: PlanSlice): Draft {
   return {
-    city: cityById(plan.brief.destination)!,
+    city: tripCity(plan.brief)!,
     brief: plan.brief,
     lists: plan.days.map(day => day.stops.map(s => s.place)),
     starts: plan.days.map(day => day.stops[0]?.arrive),
@@ -730,7 +730,7 @@ function draftOf(plan: PlanSlice): Draft {
 // `force`: last resort for a message no edit understood — browse if it names any food/style/category.
 export function planDeckRequest(plan: PlanSlice, text: string, force = false): DeckRequest | null {
   const t = norm(text)
-  const city = cityById(plan.brief.destination)
+  const city = tripCity(plan.brief)
   if (!city) return null
   const d = draftOf(plan)
   const planned = d.lists.flat()

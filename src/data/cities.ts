@@ -1,4 +1,4 @@
-import type { City } from '../types'
+import type { City, Place, TripBrief } from '../types'
 
 // Hand-curated seed data. In production this is replaced by a places provider
 // (Google Places / Foursquare / OSM) behind the same `City` shape.
@@ -140,4 +140,32 @@ export function findCity(text: string): City | undefined {
 
 export function cityById(id?: string): City | undefined {
   return CITIES.find(c => c.id === id)
+}
+
+// The city as one trip sees it: everything we know there, plus the places its travellers
+// added themselves. Same object for the same brief, so it's cheap to call anywhere.
+const withCustom = new WeakMap<object, City>()
+export function tripCity(brief: TripBrief): City | undefined {
+  const city = cityById(brief.destination)
+  const own = brief.customPlaces
+  if (!city || !own?.length) return city
+  let out = withCustom.get(own)
+  if (out?.id !== city.id) {
+    // a trip that moved city leaves the last city's finds behind
+    const here = own.filter(p => !city.places.some(x => x.id === p.id) && roughKm(p.coord, city.center) <= NEARBY_KM)
+    out = { ...city, places: [...city.places, ...here] }
+    withCustom.set(own, out)
+  }
+  return out
+}
+
+// How far out a traveller's own place can be and still belong to the city (day trips included).
+export const NEARBY_KM = 120
+const roughKm = (a: [number, number], b: [number, number]) =>
+  Math.hypot((a[0] - b[0]) * 111 * Math.cos((a[1] * Math.PI) / 180), (a[1] - b[1]) * 111)
+
+// The city a place belongs to: the one that lists it, or for a traveller's own find, the one it's in.
+export function cityOfPlace(p: Pick<Place, 'id' | 'coord'>): City | undefined {
+  return CITIES.find(c => c.places.some(x => x.id === p.id))
+    ?? CITIES.map(c => ({ c, km: roughKm(p.coord, c.center) })).filter(x => x.km <= NEARBY_KM).sort((a, b) => a.km - b.km)[0]?.c
 }

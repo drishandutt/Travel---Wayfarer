@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Place } from '../../types'
 import type { TripState } from '../../state/tripStore'
-import { cityById } from '../../data/cities'
+import { tripCity } from '../../data/cities'
 import { PACE } from '../../planner/core'
 import { defaultPicks, rankDeck, rejectedPlaces, votingProgress, type PlaceTally } from '../../trip/votes'
 import type { SharedTrip } from '../../trip/types'
@@ -34,7 +34,7 @@ function Row({ place, tally, trip, chosen, onToggle }: { place: Place; tally: Pl
 
 // Most liked so far, for anyone to look at while the votes come in.
 export function GroupRanking({ state, trip }: { state: TripState; trip: SharedTrip }) {
-  const city = cityById(state.brief.destination)
+  const city = tripCity(state.brief)
   const deck = state.sharedDeck
   const ranked = useMemo(() => rankDeck(deck, trip.votes).filter(t => t.likes.length || t.nopes.length).slice(0, 15), [deck, trip.votes])
   const progress = votingProgress(deck, trip.votes, trip.people)
@@ -54,7 +54,7 @@ export function GroupRanking({ state, trip }: { state: TripState; trip: SharedTr
 
 // The admin's last word: most liked places are ticked to start with, and they can change any of them.
 export function GroupPicks({ state, trip, onClose, onConfirm }: { state: TripState; trip: SharedTrip; onClose: () => void; onConfirm: (liked: string[], rejected: string[]) => void }) {
-  const city = cityById(state.brief.destination)
+  const city = tripCity(state.brief)
   const deck = state.sharedDeck
   const capacity = planCapacity(state)
   const ranked = useMemo(() => rankDeck(deck, trip.votes), [deck, trip.votes])

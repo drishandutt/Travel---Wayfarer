@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type ReactNode } from 'reac
 import type { Place } from '../types'
 import type { Action, TripState } from '../state/tripStore'
 import type { DeckCard } from '../planner/core'
-import { CITIES, cityById } from '../data/cities'
+import { cityOfPlace, tripCity } from '../data/cities'
 import { PLACE_COVERS } from '../data/placeCovers'
 import { getPhotos, type Photo } from '../services/photos'
 import { SocialVideos } from './SocialVideos'
@@ -33,7 +33,7 @@ const AREA_KINDS = ['sight', 'viewpoint', 'park']
 
 // same lookup options as the place card, so both share one cached result
 export const photosFor = (p: Place) =>
-  getPhotos(p.id, p.name, p.coord, { allowArea: AREA_KINDS.includes(p.kind), context: CITIES.find(c => c.places.some(x => x.id === p.id))?.name, lead: PLACE_COVERS[p.id] })
+  getPhotos(p.id, p.name, p.coord, { allowArea: AREA_KINDS.includes(p.kind), context: cityOfPlace(p)?.name, lead: PLACE_COVERS[p.id] })
 
 export function usePhotos(place?: Place) {
   const lead = place && PLACE_COVERS[place.id] // a hand-picked photo needn't wait for the lookup
@@ -123,7 +123,7 @@ function Card({ place, card, top, leaving, onRelease, likedBy, voting }: {
           </div>
           <div className="dc-body">
             <div className="dc-meta">
-              <span className="kind">{place.kind}</span>
+              {place.custom ? <span className="kind mine">Your find</span> : <span className="kind">{place.kind}</span>}
               <span>{place.minutes} min</span>
               <span>{place.price ? '$'.repeat(place.price) : 'Free'}</span>
             </div>
@@ -139,7 +139,7 @@ function Card({ place, card, top, leaving, onRelease, likedBy, voting }: {
 }
 
 export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: { state: TripState; dispatch: Dispatch<Action>; onPlan: () => void; onCancel: () => void; group?: DeckGroup }) {
-  const city = cityById(state.brief.destination)
+  const city = tripCity(state.brief)
   const [leaving, setLeaving] = useState<'left' | 'right' | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const [notesRead, setNotesRead] = useState(shared?.notes.length ?? 0)
@@ -282,7 +282,7 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
 }
 
 export function PicksPanel({ state }: { state: TripState }) {
-  const city = cityById(state.brief.destination)
+  const city = tripCity(state.brief)
   const liked = state.deck.filter(c => state.picks[c.id] === 'like').map(c => city?.places.find(p => p.id === c.id)).filter(Boolean) as Place[]
   const editing = Boolean(state.deckMode)
   const target = editing ? state.deck.length : (state.brief.days ?? 3) * (state.brief.pace === 'slow' ? 4 : state.brief.pace === 'packed' ? 6 : 5)

@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import type { City, DayPlan, Place, PlannerEvent, TripBrief } from '../src/types'
-import { cityById } from '../src/data/cities'
+import { tripCity } from '../src/data/cities'
 import { centroid, estimateTravel, fmtClock } from '../src/planner/geo'
 import { PACE, buildDay } from '../src/planner/core'
 import { resolveBudgetTier } from '../src/planner/intake'
@@ -121,7 +121,7 @@ function parseClock(hhmm: string): number | undefined {
 }
 
 export async function* planWithClaude(brief: TripBrief, signal: AbortSignal, picks?: Picks): AsyncGenerator<PlannerEvent> {
-  const base = cityById(brief.destination)
+  const base = tripCity(brief)
   if (!base) throw new Error(`No map data for "${brief.destination}".`)
   // With swipe picks, Claude plans only what the traveller kept.
   const city: City = picks ? { ...base, places: base.places.filter(p => picks.liked.includes(p.id)) } : base

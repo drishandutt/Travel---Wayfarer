@@ -1,0 +1,476 @@
+import { z } from 'zod'
+import type { City, LngLat, Place, PlaceKind, PlaceSource, Vibe } from '../src/types'
+import type { PlaceVideos, Video } from '../src/services/videos'
+import { NEARBY_KM, cityById } from '../src/data/cities'
+import { mapsHost, parseCoords, parseMapsLink, type MapsLink } from '../src/planner/customPlaces'
+import { haversineKm } from '../src/planner/geo'
+import { FALLBACK, MODEL, brainEnabled, client, textOf } from './claude'
+
+// Travellers' own places: find what they shared or typed, and the reels and videos of it.
+//   resolvePlace  a maps link (Google, Apple, OpenStreetMap, Waze, bare coordinates) or a name
+//                 → a Place, located with OpenStreetMap and, with Claude on, described by it
+//   placeVideos   YouTube from its search page (or the Data API with YOUTUBE_API_KEY), and
+//                 Instagram reels and TikToks through Claude's web search, since neither has
+//                 an open search to ask
+
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
+const VIBES: Vibe[] = ['food', 'culture', 'nightlife', 'nature', 'art', 'shopping', 'relaxed', 'adventure', 'romantic', 'history']
+const KINDS: PlaceKind[] = ['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint']
+
+export class PlaceError extends Error {}
+
+// ── links ────────────────────────────────────────────────────────────────────
+
+// Short links (maps.app.goo.gl, maps.apple/p/…) only say where they go when followed. Only maps
+// hosts are ever fetched, hop by hop, so a link can't send this server anywhere else.
+export async function expandLink(url: string, signal?: AbortSignal): Promise<MapsLink & { url: string }> {
+  let current = url
+  for (let hop = 0; hop < 6; hop++) {
+    const u = new URL(current)
+    // Google asks for cookie consent in the EU before redirecting; the place is in `continue`
+    if (/^consent\.google\./.test(u.hostname)) {
+      const next = u.searchParams.get('continue')
+      if (!next) break
+      current = next
+      continue
+    }
+    const parsed = parseMapsLink(current)
+    if (!parsed) break
+    if (!parsed.short && (parsed.coord || parsed.name)) return { ...parsed, url: current }
+    const res = await fetch(current, { redirect: 'manual', headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en' }, signal: anySignal(signal, 8000) })
+    const location = res.headers.get('location')
+    if (location && res.status >= 300 && res.status < 400) {
+      current = new URL(location, current).toString()
+      continue
+    }
+    if (res.ok) {
+      const fromPage = readPlacePage(await res.text())
+      if (fromPage.coord || fromPage.name) return { ...parsed, ...fromPage, short: false, url: current }
+    }
+    break
+  }
+  const parsed = parseMapsLink(current)
+  if (parsed && (parsed.coord || parsed.name)) return { ...parsed, url: current }
+  throw new PlaceError('That link didn’t lead to a place I could read. Try sharing it again, or just type the place’s name.')
+}
+
+// A maps page that didn't redirect still names the place in its meta tags, or links to itself in full.
+export function readPlacePage(html: string): { name?: string; coord?: LngLat } {
+  const meta = (prop: string) => html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, 'i'))?.[1]
+    ?? html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, 'i'))?.[1]
+  const lat = Number(meta('place:location:latitude'))
+  const lng = Number(meta('place:location:longitude'))
+  const full = html.match(/https:\/\/(?:www\.)?google\.[a-z.]+\/maps\/place\/[^"'\s\\<>]+|https:\/\/maps\.apple\.com\/(?:place)?\?[^"'\s\\<>]+/)?.[0]
+  const inner = full ? parseMapsLink(full.replace(/&amp;/g, '&')) : undefined
+  const coord: LngLat | undefined = Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng) ? [lng, lat] : inner?.coord
+  const title = meta('og:title')?.replace(/&amp;/g, '&').replace(/&#39;/g, '’').replace(/\s*[-–·|]\s*(?:Google Maps|Apple Maps)\s*$/i, '').trim()
+  return { coord, name: inner?.name ?? (title && !/^(?:Google|Apple) Maps$/i.test(title) ? title : undefined) }
+}
+
+// ── OpenStreetMap ────────────────────────────────────────────────────────────
+
+interface OsmHit {
+  lat: string
+  lon: string
+  name?: string
+  display_name: string
+  category?: string
+  type?: string
+  importance?: number
+  address?: Record<string, string>
+  namedetails?: Record<string, string> | null
+  extratags?: Record<string, string> | null
+}
+
+// Nominatim allows one request a second and asks to be told who's calling.
+let lastCall = 0
+let queue: Promise<unknown> = Promise.resolve()
+function nominatim<T>(path: 'search' | 'reverse', params: Record<string, string>, signal?: AbortSignal): Promise<T> {
+  const run = queue.then(async () => {
+    const wait = lastCall + 1100 - Date.now()
+    if (wait > 0) await new Promise(r => setTimeout(r, wait))
+    lastCall = Date.now()
+    const q = new URLSearchParams({ format: 'jsonv2', addressdetails: '1', namedetails: '1', extratags: '1', 'accept-language': 'en', ...params })
+    const res = await fetch(`https://nominatim.openstreetmap.org/${path}?${q}`, { headers: { 'User-Agent': 'Wayfarer trip planner (custom places)' }, signal: anySignal(signal, 8000) })
+    if (!res.ok) throw new PlaceError(`The map lookup is busy right now (OpenStreetMap ${res.status}). Try again in a moment.`)
+    return res.json() as Promise<T>
+  })
+  queue = run.catch(() => {})
+  return run
+}
+
+const hitCoord = (h: OsmHit): LngLat => [Number(h.lon), Number(h.lat)]
+const hitName = (h: OsmHit) => h.namedetails?.['name:en'] ?? h.name ?? h.namedetails?.name
+
+function box(c: LngLat, dLng: number, dLat: number) {
+  return { viewbox: [c[0] - dLng, c[1] + dLat, c[0] + dLng, c[1] - dLat].map(n => n.toFixed(5)).join(','), bounded: '1' }
+}
+
+async function searchName(name: string, near: LngLat, radius: 'spot' | 'city', city: City, signal?: AbortSignal): Promise<OsmHit | undefined> {
+  const area = radius === 'spot' ? box(near, 0.006, 0.005) : box(near, 0.6, 0.45)
+  const hits = await nominatim<OsmHit[]>('search', { q: name, limit: '5', ...area }, signal)
+  // OpenStreetMap ranks by fame, so "Sintra Palace" would be whichever palace is best known:
+  // the words they typed, in the place's own name first, decide before fame does
+  const ranked = hits
+    .map(h => ({ h, km: haversineKm(hitCoord(h), near), words: wordsMatched(name, h) }))
+    .filter(x => (radius === 'spot' ? x.km < 0.4 : true))
+    .sort((a, b) => (radius === 'spot' ? a.km - b.km : b.words - a.words || (b.h.importance ?? 0) - (a.h.importance ?? 0)))
+  if (ranked.length || radius === 'spot') return ranked[0]?.h
+  // not in the city's box: perhaps a day trip, so ask again by name and city and keep it if it's in reach
+  const wider = await nominatim<OsmHit[]>('search', { q: `${name}, ${city.name}`, limit: '3' }, signal)
+  return wider.find(h => haversineKm(hitCoord(h), city.center) <= NEARBY_KM)
+}
+
+function wordsMatched(query: string, h: OsmHit): number {
+  const own = fold([hitName(h), h.name].join(' '))
+  const all = fold(h.display_name)
+  return fold(query).split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3).reduce((n, w) => n + (own.includes(w) ? 2 : all.includes(w) ? 1 : 0), 0)
+}
+
+// The map's own spelling when it's the same place in a script they can read, so "fuunji"
+// stays theirs but "sintra palace" becomes "Sintra National Palace".
+function displayName(typed: string | undefined, hit: OsmHit | undefined): string | undefined {
+  const own = hit && hitName(hit)
+  if (own && /^[\p{Script=Latin}\P{L}]+$/u.test(own) && (!typed || mentions(own, typed))) return own
+  return typed && typed === typed.toLowerCase() ? typed.replace(/(^|\s)\p{L}/gu, c => c.toUpperCase()) : typed
+}
+
+// ── what kind of place it is ─────────────────────────────────────────────────
+
+interface Shape { kind: PlaceKind; tags: Vibe[]; label: string }
+
+export function shapeOf(category = '', type = '', extra: Record<string, string> = {}): Shape {
+  const t = type.replace(/_/g, ' ')
+  if (category === 'amenity') {
+    if (['restaurant', 'fast_food', 'food_court'].includes(type)) return { kind: 'food', tags: ['food'], label: extra.cuisine ? `${extra.cuisine.split(';')[0].replace(/_/g, ' ')} restaurant` : t }
+    if (['cafe', 'ice_cream'].includes(type)) return { kind: 'cafe', tags: ['food', 'relaxed'], label: t }
+    if (['bar', 'pub', 'biergarten', 'nightclub'].includes(type)) return { kind: 'bar', tags: ['nightlife'], label: t }
+    if (type === 'marketplace') return { kind: 'market', tags: ['food', 'shopping'], label: 'market' }
+    if (type === 'place_of_worship') return { kind: 'sight', tags: ['culture', 'history'], label: extra.religion === 'shinto' ? 'shrine' : extra.religion === 'buddhist' ? 'temple' : 'place of worship' }
+    if (['theatre', 'arts_centre', 'cinema'].includes(type)) return { kind: 'sight', tags: ['art', 'culture'], label: t }
+  }
+  if (category === 'tourism') {
+    if (['museum', 'gallery'].includes(type)) return { kind: 'museum', tags: ['art', 'culture'], label: t }
+    if (type === 'viewpoint') return { kind: 'viewpoint', tags: ['romantic'], label: 'viewpoint' }
+    if (['theme_park', 'zoo', 'aquarium'].includes(type)) return { kind: 'sight', tags: ['adventure'], label: t }
+  }
+  if (category === 'leisure' && ['park', 'garden', 'nature_reserve'].includes(type)) return { kind: 'park', tags: ['nature', 'relaxed'], label: t }
+  if (category === 'natural') return type === 'peak' ? { kind: 'viewpoint', tags: ['nature', 'adventure'], label: 'peak' } : { kind: 'park', tags: ['nature'], label: t }
+  if (category === 'historic') return { kind: 'sight', tags: ['history', 'culture'], label: t === 'yes' ? 'historic site' : t }
+  if (category === 'shop') return { kind: 'sight', tags: ['shopping'], label: type === 'yes' ? 'shop' : `${t} shop` }
+  return { kind: 'sight', tags: ['culture'], label: category === 'tourism' && type === 'attraction' ? 'sight' : 'spot' }
+}
+
+const DEFAULTS: Record<PlaceKind, Pick<Place, 'minutes' | 'price' | 'bestAt'>> = {
+  food: { minutes: 60, price: 2, bestAt: 'evening' },
+  cafe: { minutes: 45, price: 1, bestAt: 'midday' },
+  bar: { minutes: 90, price: 2, bestAt: 'night' },
+  museum: { minutes: 90, price: 2, bestAt: 'midday' },
+  park: { minutes: 60, price: 0, bestAt: 'morning' },
+  viewpoint: { minutes: 45, price: 0, bestAt: 'evening' },
+  market: { minutes: 60, price: 1, bestAt: 'midday' },
+  sight: { minutes: 60, price: 1, bestAt: 'midday' },
+}
+
+function shortAddress(a: Record<string, string> = {}): string | undefined {
+  const local = a.neighbourhood ?? a.quarter ?? a.suburb ?? a.city_district
+  const wider = a.city_district && a.city_district !== local ? a.city_district : a.city ?? a.town
+  return [local, wider].filter(Boolean).join(', ') || undefined
+}
+
+// ── Claude's read on it (optional) ───────────────────────────────────────────
+
+const DESCRIBE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['kind', 'tags', 'price', 'minutes', 'best_at', 'blurb', 'keywords'],
+  properties: {
+    kind: { type: 'string', enum: KINDS },
+    tags: { type: 'array', items: { type: 'string', enum: VIBES } },
+    price: { type: 'integer' },
+    minutes: { type: 'integer' },
+    best_at: { type: 'string', enum: ['morning', 'midday', 'evening', 'night'] },
+    blurb: { type: 'string' },
+    keywords: { type: 'array', items: { type: 'string' } },
+  },
+} as const
+
+const Described = z.object({
+  kind: z.enum(KINDS as [PlaceKind, ...PlaceKind[]]),
+  tags: z.array(z.enum(VIBES as [Vibe, ...Vibe[]])),
+  price: z.number().int(),
+  minutes: z.number().int(),
+  best_at: z.enum(['morning', 'midday', 'evening', 'night']),
+  blurb: z.string(),
+  keywords: z.array(z.string()),
+})
+
+async function describe(p: Place, city: City, osm: string, signal?: AbortSignal): Promise<Partial<Place>> {
+  const response = await client.beta.messages.create({
+    ...FALLBACK,
+    model: MODEL,
+    max_tokens: 4000,
+    system: `You describe a place a traveller found themselves and added to their ${city.name} trip, for a trip planner. Use what you know about the place itself; if you don't recognise it, describe only what its map data says and keep it plain. Never invent awards, dishes or history. Blurb: one short line, under 60 characters, in the style "Solo-booth tonkotsu, open late." Price: 0 free to 3 splurge. Minutes: a typical visit. Keywords: up to 6 lowercase words people would search by (cuisine, style), or none. Tags: 1-3 that truly fit.`,
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: DESCRIBE_SCHEMA } },
+    messages: [{ role: 'user', content: `Name: ${p.name}\nWhere: ${p.custom?.address ?? city.name}, ${city.name}\nMap data: ${osm}` }],
+  }, { signal: anySignal(signal, 20_000) })
+  if (response.stop_reason !== 'end_turn') return {}
+  const d = Described.parse(JSON.parse(textOf(response)))
+  return {
+    kind: d.kind,
+    tags: d.tags.length ? [...new Set(d.tags)].slice(0, 3) : p.tags,
+    price: Math.max(0, Math.min(3, d.price)) as Place['price'],
+    minutes: Math.max(15, Math.min(240, d.minutes)),
+    bestAt: d.best_at,
+    blurb: d.blurb.trim().slice(0, 90) || p.blurb,
+    keywords: d.keywords.map(k => k.toLowerCase().trim()).filter(Boolean).slice(0, 6),
+  }
+}
+
+// ── resolve ──────────────────────────────────────────────────────────────────
+
+export interface ResolveRequest { link?: string; name?: string; city?: string }
+
+export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal): Promise<{ place: Place; note?: string }> {
+  const city = cityById(req.city)
+  if (!city) throw new PlaceError('Tell me which city the trip is in first, then send the place again.')
+  const typed = req.name?.trim().slice(0, 120) || undefined
+
+  let source: PlaceSource = { from: 'name' }
+  let name = typed
+  let coord: LngLat | undefined
+  if (req.link) {
+    if (!mapsHost(req.link)) throw new PlaceError('I can read links from Google Maps, Apple Maps, OpenStreetMap and Waze.')
+    const link = await expandLink(req.link, signal)
+    source = { from: link.from, url: req.link }
+    coord = link.coord
+    // the words that came with a shared link are usually its name; the link's own name is better still
+    name = link.name ?? typed
+  } else if (typed && parseCoords(typed)) {
+    coord = parseCoords(typed)
+    source = { from: 'coords' }
+    name = undefined
+  }
+  if (!name && !coord) throw new PlaceError('Which place? Send its name or a link from your maps app.')
+
+  let hit: OsmHit | undefined
+  if (coord && name) hit = await searchName(name, coord, 'spot', city, signal)
+  if (coord && !hit) {
+    const rev = await nominatim<OsmHit & { error?: string }>('reverse', { lat: coord[1].toFixed(6), lon: coord[0].toFixed(6), zoom: '18' }, signal)
+    if (!rev.error) hit = rev
+  }
+  if (!coord && name) {
+    hit = await searchName(name, city.center, 'city', city, signal)
+    if (!hit) throw new PlaceError(`I couldn’t find “${name}” on the map around ${city.name}. A link from Google Maps or Apple Maps always works, or try its full name.`)
+    coord = hitCoord(hit)
+  }
+  coord = coord!
+  name = displayName(name, hit) ?? hit?.address?.road
+  if (!name) throw new PlaceError('I found the spot but not what it’s called. Send it with its name, e.g. “add Fuunji ramen”.')
+
+  const km = haversineKm(coord, city.center)
+  if (km > NEARBY_KM) throw new PlaceError(`${name} is about ${Math.round(km)} km from ${city.name}, too far to fit into this trip.`)
+
+  const shape = shapeOf(hit?.category, hit?.type, hit?.extratags ?? {})
+  const address = shortAddress(hit?.address)
+  const place: Place = {
+    id: `my-${slug(name)}-${Math.round(coord[0] * 1e4).toString(36)}${Math.round(coord[1] * 1e4).toString(36)}`.replace(/--+/g, '-'),
+    name: name.slice(0, 80),
+    kind: shape.kind,
+    coord: [Number(coord[0].toFixed(6)), Number(coord[1].toFixed(6))],
+    tags: shape.tags,
+    ...DEFAULTS[shape.kind],
+    blurb: `Your find: ${article(shape.label)} ${shape.label}${address ? ` in ${address}` : ''}.`,
+    keywords: hit?.extratags?.cuisine?.split(';').map(c => c.replace(/_/g, ' ')).slice(0, 4),
+    custom: { ...source, ...(address ? { address } : {}) },
+  }
+
+  let note: string | undefined
+  if (km > 25) note = `It’s about ${Math.round(km)} km out of ${city.name}, so it may want a day of its own.`
+  if (brainEnabled) {
+    const osm = hit ? `${hit.category}/${hit.type}; ${Object.entries(hit.extratags ?? {}).filter(([k]) => /cuisine|opening_hours|description|religion|website/.test(k)).map(([k, v]) => `${k}=${v}`).join('; ')}` : 'none'
+    try {
+      Object.assign(place, await describe(place, city, osm, signal))
+    } catch (err) {
+      console.warn('[places] describing', place.name, (err as Error).message)
+    }
+  }
+  return { place, note }
+}
+
+const slug = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'place'
+const article = (w: string) => (/^[aeiou]/i.test(w) ? 'an' : 'a')
+
+// ── reels & videos ───────────────────────────────────────────────────────────
+
+const FILLER = new Set(['the', 'and', 'of', 'de', 'da', 'do', 'at', 'in', 'cafe', 'café', 'bar', 'restaurant', 'ramen', 'sushi', 'coffee', 'shop', 'store', 'market', 'park', 'museum', 'temple', 'shrine', 'tokyo', 'lisbon', 'lisboa', 'japan', 'portugal'])
+const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
+// A clip only counts if it names the place: its own words, not just "ramen" or the city.
+export function mentions(text: string, name: string): boolean {
+  const t = fold(text)
+  const tokens = fold(name).split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3 && !FILLER.has(w))
+  if (!tokens.length) return t.includes(fold(name).trim())
+  return tokens.some(w => t.includes(w))
+}
+
+interface VideoQuery { name: string; city: string; area?: string }
+
+const cache = new Map<string, { at: number; value: Promise<PlaceVideos> }>()
+const DAY_MS = 86_400_000
+
+export function placeVideos(q: VideoQuery): Promise<PlaceVideos> {
+  const key = fold(`${q.name}|${q.city}`)
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.at < DAY_MS) return hit.value
+  if (cache.size > 500) cache.delete(cache.keys().next().value!)
+  const value = findVideos(q)
+  cache.set(key, { at: Date.now(), value })
+  // a failed lookup isn't kept, so it's tried again next time
+  value.then(v => { if (!v.videos.length) cache.delete(key) }, () => cache.delete(key))
+  return value
+}
+
+export const videoLookupCached = (q: VideoQuery) => {
+  const hit = cache.get(fold(`${q.name}|${q.city}`))
+  return Boolean(hit && Date.now() - hit.at < DAY_MS)
+}
+
+async function findVideos(q: VideoQuery): Promise<PlaceVideos> {
+  const [yt, social] = await Promise.all([
+    youtube(q).catch(err => { console.warn('[videos] youtube:', (err as Error).message); return [] as Video[] }),
+    brainEnabled ? socialWithClaude(q).catch(err => { console.warn('[videos] social:', (err as Error).message); return [] as Video[] }) : Promise.resolve([] as Video[]),
+  ])
+  // mixed platforms read better than a block of each
+  const lanes: Video[][] = [
+    social.filter(v => v.platform === 'instagram'),
+    yt.filter(v => !v.short),
+    social.filter(v => v.platform === 'tiktok'),
+    yt.filter(v => v.short),
+  ]
+  const videos: Video[] = []
+  for (let i = 0; videos.length < 12 && lanes.some(l => l.length > i); i++) for (const l of lanes) if (l[i] && videos.length < 12) videos.push(l[i])
+  return { videos }
+}
+
+async function youtube(q: VideoQuery): Promise<Video[]> {
+  const query = `${q.name} ${q.city}`
+  const key = process.env.YOUTUBE_API_KEY
+  if (key) {
+    const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '15', q: query, key })
+    const res = await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) throw new Error(`YouTube API ${res.status}`)
+    const data = await res.json() as { items?: { id: { videoId?: string }; snippet: { title: string; channelTitle: string } }[] }
+    return (data.items ?? [])
+      .filter(i => i.id.videoId && mentions(i.snippet.title, q.name))
+      .sort((a, b) => Number(mentions(b.snippet.title, q.city)) - Number(mentions(a.snippet.title, q.city)))
+      .slice(0, 6)
+      .map(i => ({ platform: 'youtube' as const, id: i.id.videoId!, title: unescapeHtml(i.snippet.title), by: i.snippet.channelTitle }))
+  }
+  const res = await fetch(`https://www.youtube.com/results?${new URLSearchParams({ search_query: query, hl: 'en', gl: 'US' })}`, {
+    headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en-US,en', Cookie: 'CONSENT=YES+1; SOCS=CAI' },
+    signal: AbortSignal.timeout(8000),
+  })
+  if (!res.ok) throw new Error(`YouTube ${res.status}`)
+  // a chain's other branches name it too, so clips that also name the city come first
+  const found = parseYouTube(await res.text()).filter(v => mentions(v.title, q.name))
+  return [...found.filter(v => mentions(v.title, q.city)), ...found.filter(v => !mentions(v.title, q.city))].slice(0, 6)
+}
+
+// YouTube's results page carries its data as one JSON blob: long videos are `videoRenderer`s,
+// Shorts are `shortsLockupViewModel`s.
+export function parseYouTube(html: string): Video[] {
+  const blob = html.match(/var ytInitialData = (\{.*?\});<\/script>/s)?.[1]
+  if (!blob) return []
+  const out: Video[] = []
+  const seen = new Set<string>()
+  const walk = (o: unknown): void => {
+    if (!o || typeof o !== 'object') return
+    if (Array.isArray(o)) { o.forEach(walk); return }
+    const r = o as Record<string, any>
+    const v = r.videoRenderer
+    if (v?.videoId && !seen.has(v.videoId)) {
+      seen.add(v.videoId)
+      out.push({ platform: 'youtube', id: v.videoId, title: v.title?.runs?.[0]?.text ?? '', by: v.ownerText?.runs?.[0]?.text ?? '', views: v.shortViewCountText?.simpleText })
+    }
+    const s = r.shortsLockupViewModel
+    const sid = s?.onTap?.innertubeCommand?.reelWatchEndpoint?.videoId
+    if (sid && !seen.has(sid)) {
+      seen.add(sid)
+      out.push({ platform: 'youtube', id: sid, short: true, title: s.overlayMetadata?.primaryText?.content ?? '', by: '', views: s.overlayMetadata?.secondaryText?.content?.replace(/\s*views?$/i, '') })
+    }
+    for (const k in r) if (k !== 'videoRenderer' && k !== 'shortsLockupViewModel') walk(r[k])
+  }
+  try { walk(JSON.parse(blob)) } catch { return [] }
+  return out.filter(v => v.title)
+}
+
+const TIKTOK_RE = /https?:\/\/(?:www\.)?tiktok\.com\/@([\w.-]+)\/video\/(\d{8,})/g
+const REEL_RE = /https?:\/\/(?:www\.)?instagram\.com\/(?:[\w.]+\/)?reels?\/([\w-]{6,})/g
+
+// Instagram and TikTok have no open search, so Claude searches the web for them. Only links in
+// the search results themselves are used, never ones written by the model.
+async function socialWithClaude(q: VideoQuery): Promise<Video[]> {
+  const messages: import('@anthropic-ai/sdk').default.Beta.BetaMessageParam[] = [{
+    role: 'user',
+    content: `Find Instagram reels and TikTok videos about this specific place: ${q.name}${q.area ? ` (${q.area})` : ''} in ${q.city}. Search Instagram and TikTok separately, using the place's name with the city. Then reply "done".`,
+  }]
+  const results = new Map<string, string>() // url → title, from the search results
+  for (let turn = 0; turn < 3; turn++) {
+    const response = await client.beta.messages.create({
+      ...FALLBACK,
+      model: MODEL,
+      max_tokens: 4000,
+      output_config: { effort: 'low' },
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4, allowed_domains: ['instagram.com', 'tiktok.com'] }],
+      messages,
+    }, { signal: AbortSignal.timeout(60_000) })
+    collectResults(response.content, results)
+    if (response.stop_reason !== 'pause_turn') break
+    messages.push({ role: 'assistant', content: response.content })
+  }
+
+  const reels: Video[] = []
+  const tiktoks: { id: string; by: string; title: string }[] = []
+  for (const [url, title] of results) {
+    for (const m of url.matchAll(REEL_RE)) {
+      if (!reels.some(r => r.id === m[1]) && mentions(`${title} ${url}`, q.name)) reels.push({ platform: 'instagram', id: m[1], ...instagramByline(title) })
+    }
+    for (const m of url.matchAll(TIKTOK_RE)) if (!tiktoks.some(t => t.id === m[2])) tiktoks.push({ id: m[2], by: m[1], title })
+  }
+  // TikTok's oEmbed gives the real caption (it answers for any id, so it isn't proof the video is still up)
+  const checked = await Promise.all(tiktoks.slice(0, 8).map(async t => {
+    const res = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(`https://www.tiktok.com/@${t.by}/video/${t.id}`)}`, { signal: AbortSignal.timeout(6000) }).catch(() => null)
+    if (!res?.ok) return null
+    const o = await res.json().catch(() => null) as { title?: string; author_unique_id?: string } | null
+    const title = o?.title?.trim() || t.title
+    return o && mentions(`${title} ${t.title}`, q.name) ? { platform: 'tiktok' as const, id: t.id, by: o.author_unique_id ?? t.by, title: clip(title) } : null
+  }))
+  return [...reels.slice(0, 5), ...checked.filter((v): v is NonNullable<typeof v> => Boolean(v)).slice(0, 5)]
+}
+
+function collectResults(content: unknown, into: Map<string, string>) {
+  const walk = (o: unknown): void => {
+    if (!o || typeof o !== 'object') return
+    if (Array.isArray(o)) { o.forEach(walk); return }
+    const r = o as Record<string, unknown>
+    if (r.type === 'web_search_result' && typeof r.url === 'string') into.set(r.url, typeof r.title === 'string' ? r.title : '')
+    for (const k in r) walk(r[k])
+  }
+  walk(content)
+}
+
+// Instagram result titles look like `Name (@handle) • Instagram reel` or `handle on Instagram: "caption"`.
+function instagramByline(title: string): { by: string; title: string } {
+  const handle = title.match(/@([\w.]{2,30})/)?.[1] ?? title.match(/^([\w.]{2,30}) on Instagram/)?.[1] ?? ''
+  const caption = title.match(/[:：]\s*["“](.+?)["”]?\s*$/)?.[1] ?? title.replace(/\s*[•|·-]\s*Instagram.*$/i, '').replace(/\(@[\w.]+\)/, '')
+  return { by: handle, title: clip(unescapeHtml(caption.trim()) || 'Instagram reel') }
+}
+
+const clip = (s: string) => (s.length > 120 ? `${s.slice(0, 117).trimEnd()}…` : s)
+const unescapeHtml = (s: string) => s.replace(/&amp;/g, '&').replace(/&#39;|&#x27;/g, '’').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+
+function anySignal(signal: AbortSignal | undefined, ms: number): AbortSignal {
+  return signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms)
+}
+

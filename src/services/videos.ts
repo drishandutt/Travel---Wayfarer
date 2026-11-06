@@ -1,7 +1,7 @@
 // Reels and videos of a place, played through each platform's own embed player.
-// The list is curated and checked ahead of time (`src/data/videos.ts`), because
-// Instagram has no open search to ask live. Swap for the Instagram Graph API and
-// YouTube Data API later; callers only see PlaceVideos.
+// Known places have a list curated and checked ahead of time (`src/data/videos.ts`); any other
+// place, such as one a traveller added, is searched for live (`server/places.ts`). Callers only
+// see PlaceVideos.
 
 export type Platform = 'instagram' | 'youtube' | 'tiktok'
 
@@ -9,7 +9,7 @@ export interface Video {
   platform: Platform
   id: string           // reel shortcode or video id
   title: string
-  by: string           // creator
+  by: string           // creator; empty when the platform doesn't say (YouTube Shorts in search)
   views?: string       // as the platform shows it, e.g. "36K"
   short?: boolean      // a portrait YouTube Short
 }
@@ -24,12 +24,29 @@ export const PLATFORM_NAME: Record<Platform, string> = { instagram: 'Instagram',
 let library: Promise<Record<string, PlaceVideos>> | undefined
 
 // Loaded on first use, so the list stays out of the main bundle.
-export function getVideos(placeId: string): Promise<PlaceVideos> {
+function curated(placeId: string): Promise<PlaceVideos> {
   library ??= import('../data/videos').then(m => m.VIDEOS)
   return library.then(all => all[placeId] ?? { videos: [] }).catch(() => {
     library = undefined // offline or a stale chunk: try again next time
     return { videos: [] }
   })
+}
+
+// Places we hold no clips for (the ones travellers add themselves, mostly) are looked up live
+// on the server, once per place per visit.
+const live = new Map<string, Promise<PlaceVideos>>()
+
+export async function getVideos(place: { id: string; name: string; custom?: { address?: string } }, city?: string): Promise<PlaceVideos> {
+  const held = await curated(place.id)
+  if (held.videos.length || !city) return held
+  let found = live.get(place.id)
+  if (!found) {
+    const q = new URLSearchParams({ name: place.name, city, ...(place.custom?.address ? { area: place.custom.address } : {}) })
+    found = fetch(`/api/places/videos?${q}`).then(r => (r.ok ? r.json() as Promise<PlaceVideos> : { videos: [] }))
+    live.set(place.id, found)
+    found.then(v => { if (!v.videos.length) live.delete(place.id) }, () => live.delete(place.id))
+  }
+  return found.catch(() => ({ videos: [] }))
 }
 
 export function embedUrl(v: Video): string {

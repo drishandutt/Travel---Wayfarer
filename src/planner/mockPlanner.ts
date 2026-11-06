@@ -1,5 +1,5 @@
 import type { City, DayPlan, PlannerEvent, TripBrief } from '../types'
-import { cityById } from '../data/cities'
+import { tripCity } from '../data/cities'
 import { centroid, fmtClock } from './geo'
 import { resolveBudgetTier } from './intake'
 import { sleep, type PlannerEngine, type Picks } from './engine'
@@ -13,7 +13,7 @@ export class MockPlanner implements PlannerEngine {
   }
 
   async *planItinerary(brief: TripBrief, signal: AbortSignal, picks?: Picks): AsyncGenerator<PlannerEvent> {
-    const city = cityById(brief.destination) as City
+    const city = tripCity(brief) as City
     const days = Math.min(brief.days ?? 3, picks ? Math.max(1, picks.liked.length) : Infinity)
     const pace = PACE[brief.pace ?? 'balanced']
     const tier = resolveBudgetTier(brief)
@@ -91,7 +91,7 @@ export class MockPlanner implements PlannerEngine {
   }
 
   async *findHotels(brief: TripBrief, days: DayPlan[], signal: AbortSignal): AsyncGenerator<PlannerEvent> {
-    const city = cityById(brief.destination) as City
+    const city = tripCity(brief) as City
     const all = days.flatMap(d => d.stops.map(s => s.place.coord))
     const gravity = centroid(all)
     yield { type: 'thought', text: `Finding the centre of gravity of your ${all.length} stops…` }

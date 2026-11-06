@@ -9,6 +9,8 @@ import { cityById } from '../data/cities'
 import { HOTEL_PHOTOS } from '../data/hotelPhotos'
 import { PLACE_COVERS } from '../data/placeCovers'
 
+const SOURCE_NAME: Partial<Record<string, string>> = { google: 'Google Maps', apple: 'Apple Maps', osm: 'OpenStreetMap', waze: 'Waze' }
+
 // Floating card for whichever pin was clicked: photos, details, and the edits
 // that make sense for it (add / move / remove a place, or pick a hotel as base).
 export function PlaceCard({ state, dispatch, onLogExpense, voteOn }: { state: TripState; dispatch: Dispatch<Action>; onLogExpense: (place: Place, day?: number) => void; voteOn?: { trip: SharedTrip; onVote: (placeId: string, vote: 'like' | 'nope' | null) => void } }) {
@@ -55,12 +57,14 @@ export function PlaceCard({ state, dispatch, onLogExpense, voteOn }: { state: Tr
       <button className="close" aria-label="Close" onClick={close}>×</button>
       <PhotoGallery id={p.id} name={p.name} coord={p.coord} allowArea={['sight', 'viewpoint', 'park'].includes(p.kind)} context={cityById(state.brief.destination)?.name} nearbyLabel="Nearby" lead={PLACE_COVERS[p.id]} />
       <div className="pc-meta">
+        {p.custom && <span className="kind mine">Your find</span>}
         <span className="kind">{p.kind}</span>
         <span>{p.minutes} min</span>
         <span>{p.price ? '$'.repeat(p.price) : 'Free'}</span>
       </div>
       <h3>{p.name}</h3>
       <p>{p.blurb}</p>
+      {p.custom?.url && <a className="pc-source" href={p.custom.url} target="_blank" rel="noreferrer">Open in {SOURCE_NAME[p.custom.from] ?? 'maps'} ↗</a>}
 
       {voteOn && planned && <PlaceVotes placeId={p.id} trip={voteOn.trip} onVote={voteOn.onVote} />}
       {planned && !editable && day && stop && (
@@ -102,7 +106,7 @@ export function PlaceCard({ state, dispatch, onLogExpense, voteOn }: { state: Tr
           )}
         </div>
       )}
-      <SocialVideos place={p} />
+      <SocialVideos place={p} city={cityById(state.brief.destination)?.name} />
     </div>
   )
 }

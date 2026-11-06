@@ -76,6 +76,15 @@ Big changes are handled the same way. "Add a day" regroups by neighbourhood and 
 
 **Questions & tastes.** Places carry cuisine/style `keywords` (tempura, sushi, izakaya, street food, pastry, traditional…). Questions and preferences ("some good places to eat? I like traditional Japanese food", "craving ramen", "any good sushi near day 2?", "where should we eat tonight?") open a matching deck: places with those keywords first, near a day or place if one is named, evening spots for "tonight". The reply names matching places already on the plan. Stated tastes are remembered on the trip (`brief.tastes`) and lift matching places in every later suggestion; the first chat picks them up too. A message that isn't an edit but names a food, style or kind of place is tried as a deck before falling back to the help text. Direct instructions ("I want to add a day", "add more food") are still applied as edits.
 
+**Your own places.** Travellers can add places they researched themselves, from chat, at any stage (`src/planner/customPlaces.ts`, `server/places.ts`):
+
+- **How to add one:** type it (“add Fuunji ramen”, “add Cafe Kitsune to day 2”, “I want to go to Tasca do Chico”), or paste a link shared from Google Maps (full or `maps.app.goo.gl`), Apple Maps (`maps.apple.com` or `maps.apple/p/…`), OpenStreetMap or Waze, with or without words around it. Bare coordinates work too.
+- **What counts:** a name we already know is a normal edit (“add golden gai”), and a kind of food or place (“add ramen”, “I want to try street food”) opens a deck as before. A loose phrasing (“I want to go to …”) needs a name with a capital letter, so ordinary chat isn’t mistaken for a place.
+- **Finding it:** the server follows short links (only to maps hosts, hop by hop), reads the pin from the link, and looks it up on OpenStreetMap’s Nominatim (free, one request a second): near the pin for a link, around the city for a name, ranked by how well the name matches before how famous a place is. Anything more than 120 km from the trip’s city is refused. The kind (restaurant, bar, museum, park…) comes from its OpenStreetMap category; with Claude on, Claude also writes the blurb, tags, price, visit length and best time.
+- **Where it goes:** the place is stored on the trip (`brief.customPlaces`), so it syncs to the group, survives reloads and saved trips, and every edit, deck and planner sees it through `tripCity(brief)`. While briefing, it’s saved and leads the deck. While swiping, it’s the next card (and goes to the group’s vote). With a plan, it goes straight into the day asked for, or the nearest one, and is undoable. While a plan is still drawing, it waits until the draft is ready. The same spot sent twice is only added once.
+- **On the map:** its pin card and tile say **Your find**, with a link back to the maps app it came from.
+- **Reels & videos:** places without a curated feed are searched live (`GET /api/places/videos`, cached a day per place). YouTube comes from its search page (or the Data API when `YOUTUBE_API_KEY` is set). Instagram reels and TikToks come from Claude’s web search, limited to those two sites, using only links found in the search results, never ones the model writes; TikTok’s oEmbed supplies the real caption. A clip is kept only if its title names the place, and ones that also name the city come first. Without Claude, the feed shows YouTube plus the links to search Instagram and TikTok. Lookups are rate limited per visitor, since each can run a web search.
+
 Every edit, from chat or from buttons, goes on an **undo stack** (↺ in the panel footer, or type "undo"). Requests typed while a plan is still drawing are queued and applied the moment it's ready.
 
 The interpreter is rule-based and offline. It is the seam for an LLM with edit tools later: same input (request + plan), same output (`EditResult`).
@@ -322,6 +331,7 @@ server/
   intake.ts                Chat → TripBrief via structured output
   planAgent.ts             Claude tool loop → PlannerEvents
   hotelAgent.ts            Hotel scoring + Claude's pick
+  places.ts                Travellers' own places: maps links, OpenStreetMap lookup, live reels & videos
   money/
     routes.ts              Money API: validation, permissions, live streams
     store.ts               Groups, people, expenses, payments (each change one transaction)
@@ -344,6 +354,7 @@ src/
     engine.ts              PlannerEngine interface: the swap point
     core.ts                Shared scheduling + hotel scoring (used by server agent and offline planner)
     edits.ts               Live plan editing from chat (clauses → operations → re-timed plan)
+    customPlaces.ts        Reading a find from chat and maps links (shared with the server)
     insights.ts            Costs, stats, book-ahead, packing, .ics / text export
     mockPlanner.ts         Offline heuristic planner (no key needed)
     remotePlanner.ts       SSE client for the Claude planner
@@ -371,7 +382,7 @@ src/
   state/persistence.ts     Autosave + My trips (localStorage)
   services/photos.ts       Wikipedia / Commons photo lookup
   services/weather.ts      Open-Meteo forecast / same-dates-last-year
-  services/videos.ts       Video types, embed and watch URLs, "more on" links
+  services/videos.ts       Video types, curated or live lookup, embed and watch URLs, "more on" links
   components/
     MapCanvas.tsx          MapLibre map: HTML markers, animated GeoJSON arcs, camera
     ChatPanel.tsx          Conversation + "Map my trip"
@@ -403,7 +414,8 @@ src/
 | Travel time | Distance heuristic (walk ≤ 1.4 km, else transit) | Routing API (Google Routes / Mapbox / OSRM) via `estimateTravel` |
 | Route geometry | Bezier arcs | Real polylines from the routing API |
 | Photos | ✅ Wikipedia / Commons (free) | Google Places / Foursquare photos for restaurants and hotels |
-| Reels & videos | Curated snapshot in `data/videos.ts`. Instagram has no open search, so reels come from its public `instagram.com/popular/<topic>` grids; YouTube and TikTok come from search. Each was kept only if its title or caption names the place and it loads: YouTube's oEmbed confirms embedding is allowed, Instagram's embed page reports dead reels, but TikTok's oEmbed accepts any id, so check TikToks in the player itself. Clips get deleted over time, so re-check it now and then, and curate new cities when you add them | Instagram Graph API + YouTube Data API behind `getVideos` |
+| Reels & videos | Curated snapshot in `data/videos.ts`. Instagram has no open search, so reels come from its public `instagram.com/popular/<topic>` grids; YouTube and TikTok come from search. Each was kept only if its title or caption names the place and it loads: YouTube's oEmbed confirms embedding is allowed, Instagram's embed page reports dead reels, but TikTok's oEmbed accepts any id, so check TikToks in the player itself. Clips get deleted over time, so re-check it now and then, and curate new cities when you add them. Places with no curated clips (travellers’ own) are searched live: see *Your own places* | Instagram Graph API + YouTube Data API behind `getVideos` |
+| Travellers’ own places | ✅ OpenStreetMap Nominatim, from a maps link or a name; Claude describes them | Google Places for richer details and opening hours |
 | Hotels | Seed list | Booking / Amadeus / Hotelbeds availability + price for the trip dates |
 | Basemap | CARTO Dark Matter (no key) | MapTiler / Mapbox style with 3D buildings |
 
