@@ -13,9 +13,10 @@ import { hotelsWithClaude } from './hotelAgent'
 import { closeMoneyDb, moneyApi } from './money/routes'
 import { clientIp, overLimit } from './money/auth'
 import { PlaceError, placeVideos, resolvePlace, videoLookupCached, type ResolveRequest } from './places'
+import { openaiEnabled } from './openai'
 
 // Minimal API server. The browser holds no secrets: the Anthropic key lives here.
-//   GET  /api/health   -> { claude, model, money }
+//   GET  /api/health   -> { claude, model, money, openai }
 //   POST /api/intake   -> { reply, brief }
 //   POST /api/plan     -> text/event-stream of PlannerEvent
 //   POST /api/hotels   -> text/event-stream of PlannerEvent
@@ -98,7 +99,7 @@ const server = createServer(async (req, res) => {
     // inside the try: a malformed path like "//" throws here, and must not stop the server
     const url = new URL(req.url ?? '/', 'http://localhost')
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(await moneyApi()) })
+      return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(await moneyApi()), openai: openaiEnabled })
     }
     // Before the check below: shared expenses have nothing to do with Claude and must work without a key.
     if (url.pathname.startsWith('/api/money/')) {

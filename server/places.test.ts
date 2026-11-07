@@ -5,7 +5,7 @@ import { cityOfPlace, tripCity } from '../src/data/cities'
 import { reducer, initialState, type TripState } from '../src/state/tripStore'
 import { buildDay } from '../src/planner/core'
 import type { Place, TripBrief } from '../src/types'
-import { mentions, parseYouTube, readPlacePage, shapeOf } from './places'
+import { mentions, openAIResults, parseYouTube, readPlacePage, shapeOf } from './places'
 
 const tokyo: TripBrief = { destination: 'tokyo', days: 2, vibes: ['food'] }
 
@@ -75,6 +75,25 @@ describe('reading a find from chat', () => {
 })
 
 describe('kinds and clips', () => {
+  it('keeps only OpenAI clips the search actually returned', () => {
+    const output = [
+      { type: 'web_search_call', action: { type: 'search', sources: [
+        { type: 'url', url: 'https://www.instagram.com/reel/AbCdEf123/' },
+        { type: 'url', url: 'https://www.tiktok.com/@ramenfan/video/7322560044573248799' },
+      ] } },
+      { type: 'message', content: [{ type: 'output_text', text: '', annotations: [{ type: 'url_citation', url: 'https://www.instagram.com/reel/XyZ987654/', title: 'Fuunji queue (@tokyoeats) • Instagram reel' }] }] },
+    ]
+    const text = JSON.stringify({ clips: [
+      { url: 'https://www.instagram.com/reel/AbCdEf123/?igsh=x', creator: '@noodlehunter', caption: 'Fuunji tsukemen' },
+      { url: 'https://www.tiktok.com/@ramenfan/video/7322560044573248799', creator: 'ramenfan', caption: 'Fuunji!' },
+      { url: 'https://www.instagram.com/reel/MadeUp00001/', creator: 'x', caption: 'Fuunji made up' },
+    ] })
+    const r = openAIResults(output, text)
+    assert.equal(r.get('https://www.instagram.com/reel/AbCdEf123/?igsh=x'), 'noodlehunter on Instagram: "Fuunji tsukemen"')
+    assert.equal(r.get('https://www.tiktok.com/@ramenfan/video/7322560044573248799'), 'Fuunji!')
+    assert.equal(r.get('https://www.instagram.com/reel/XyZ987654/'), 'Fuunji queue (@tokyoeats) • Instagram reel')
+    assert.ok(![...r.keys()].some(u => u.includes('MadeUp')), 'a link the model wrote itself is dropped')
+  })
   it('maps OpenStreetMap categories to place kinds', () => {
     assert.equal(shapeOf('amenity', 'restaurant', { cuisine: 'ramen' }).label, 'ramen restaurant')
     assert.equal(shapeOf('amenity', 'bar').kind, 'bar')

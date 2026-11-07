@@ -5,13 +5,15 @@ import { NEARBY_KM, cityById } from '../src/data/cities'
 import { mapsHost, parseCoords, parseMapsLink, type MapsLink } from '../src/planner/customPlaces'
 import { haversineKm } from '../src/planner/geo'
 import { FALLBACK, MODEL, brainEnabled, client, textOf } from './claude'
+import { OPENAI_MODEL, openai } from './openai'
 
 // Travellers' own places: find what they shared or typed, and the reels and videos of it.
 //   resolvePlace  a maps link (Google, Apple, OpenStreetMap, Waze, bare coordinates) or a name
-//                 → a Place, located with OpenStreetMap and, with Claude on, described by it
+//                 → a Place, located with OpenStreetMap and described by Claude (or OpenAI)
 //   placeVideos   YouTube from its search page (or the Data API with YOUTUBE_API_KEY), and
-//                 Instagram reels and TikToks through Claude's web search, since neither has
-//                 an open search to ask
+//                 Instagram reels and TikToks through Claude's (or OpenAI's) web search, since
+//                 neither has an open search to ask. Claude when ANTHROPIC_API_KEY is set,
+//                 otherwise OpenAI when OPENAI_API_KEY is
 
 const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
 const VIBES: Vibe[] = ['food', 'culture', 'nightlife', 'nature', 'art', 'shopping', 'relaxed', 'adventure', 'romantic', 'history']
@@ -205,17 +207,34 @@ const Described = z.object({
   keywords: z.array(z.string()),
 })
 
+const describeBrief = (city: City) => `You describe a place a traveller found themselves and added to their ${city.name} trip, for a trip planner. Use what you know about the place itself; if you don't recognise it, describe only what its map data says and keep it plain. Never invent awards, dishes or history. Blurb: one short line, under 60 characters, in the style "Solo-booth tonkotsu, open late." Price: 0 free to 3 splurge. Minutes: a typical visit. Keywords: up to 6 lowercase words people would search by (cuisine, style), or none. Tags: 1-3 that truly fit.`
+
 async function describe(p: Place, city: City, osm: string, signal?: AbortSignal): Promise<Partial<Place>> {
-  const response = await client.beta.messages.create({
-    ...FALLBACK,
-    model: MODEL,
-    max_tokens: 4000,
-    system: `You describe a place a traveller found themselves and added to their ${city.name} trip, for a trip planner. Use what you know about the place itself; if you don't recognise it, describe only what its map data says and keep it plain. Never invent awards, dishes or history. Blurb: one short line, under 60 characters, in the style "Solo-booth tonkotsu, open late." Price: 0 free to 3 splurge. Minutes: a typical visit. Keywords: up to 6 lowercase words people would search by (cuisine, style), or none. Tags: 1-3 that truly fit.`,
-    output_config: { effort: 'low', format: { type: 'json_schema', schema: DESCRIBE_SCHEMA } },
-    messages: [{ role: 'user', content: `Name: ${p.name}\nWhere: ${p.custom?.address ?? city.name}, ${city.name}\nMap data: ${osm}` }],
-  }, { signal: anySignal(signal, 20_000) })
-  if (response.stop_reason !== 'end_turn') return {}
-  const d = Described.parse(JSON.parse(textOf(response)))
+  const about = `Name: ${p.name}\nWhere: ${p.custom?.address ?? city.name}, ${city.name}\nMap data: ${osm}`
+  let json: string
+  if (brainEnabled) {
+    const response = await client.beta.messages.create({
+      ...FALLBACK,
+      model: MODEL,
+      max_tokens: 4000,
+      system: describeBrief(city),
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: DESCRIBE_SCHEMA } },
+      messages: [{ role: 'user', content: about }],
+    }, { signal: anySignal(signal, 20_000) })
+    if (response.stop_reason !== 'end_turn') return {}
+    json = textOf(response)
+  } else if (openai) {
+    const response = await openai.responses.create({
+      model: OPENAI_MODEL,
+      reasoning: { effort: 'low' },
+      instructions: describeBrief(city),
+      input: about,
+      text: { format: { type: 'json_schema', name: 'place', strict: true, schema: DESCRIBE_SCHEMA as unknown as Record<string, unknown> } },
+    }, { signal: anySignal(signal, 20_000) })
+    if (response.status !== 'completed') return {}
+    json = response.output_text
+  } else return {}
+  const d = Described.parse(JSON.parse(json))
   return {
     kind: d.kind,
     tags: d.tags.length ? [...new Set(d.tags)].slice(0, 3) : p.tags,
@@ -287,7 +306,7 @@ export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal): P
 
   let note: string | undefined
   if (km > 25) note = `It’s about ${Math.round(km)} km out of ${city.name}, so it may want a day of its own.`
-  if (brainEnabled) {
+  if (brainEnabled || openai) {
     const osm = hit ? `${hit.category}/${hit.type}; ${Object.entries(hit.extratags ?? {}).filter(([k]) => /cuisine|opening_hours|description|religion|website/.test(k)).map(([k, v]) => `${k}=${v}`).join('; ')}` : 'none'
     try {
       Object.assign(place, await describe(place, city, osm, signal))
@@ -339,7 +358,7 @@ export const videoLookupCached = (q: VideoQuery) => {
 async function findVideos(q: VideoQuery): Promise<PlaceVideos> {
   const [yt, social] = await Promise.all([
     youtube(q).catch(err => { console.warn('[videos] youtube:', (err as Error).message); return [] as Video[] }),
-    brainEnabled ? socialWithClaude(q).catch(err => { console.warn('[videos] social:', (err as Error).message); return [] as Video[] }) : Promise.resolve([] as Video[]),
+    (brainEnabled ? socialWithClaude(q) : openai ? socialWithOpenAI(q) : Promise.resolve([])).catch(err => { console.warn('[videos] social:', (err as Error).message); return [] as Video[] }),
   ])
   // mixed platforms read better than a block of each
   const lanes: Video[][] = [
@@ -408,12 +427,14 @@ export function parseYouTube(html: string): Video[] {
 const TIKTOK_RE = /https?:\/\/(?:www\.)?tiktok\.com\/@([\w.-]+)\/video\/(\d{8,})/g
 const REEL_RE = /https?:\/\/(?:www\.)?instagram\.com\/(?:[\w.]+\/)?reels?\/([\w-]{6,})/g
 
-// Instagram and TikTok have no open search, so Claude searches the web for them. Only links in
-// the search results themselves are used, never ones written by the model.
+// Instagram and TikTok have no open search, so Claude or OpenAI searches the web for them. Only
+// links in the search results themselves are used, never ones written by the model.
+const socialAsk = (q: VideoQuery) => `Find Instagram reels and TikTok videos about this specific place: ${q.name}${q.area ? ` (${q.area})` : ''} in ${q.city}. Search Instagram and TikTok separately, using the place's name with the city.`
+
 async function socialWithClaude(q: VideoQuery): Promise<Video[]> {
   const messages: import('@anthropic-ai/sdk').default.Beta.BetaMessageParam[] = [{
     role: 'user',
-    content: `Find Instagram reels and TikTok videos about this specific place: ${q.name}${q.area ? ` (${q.area})` : ''} in ${q.city}. Search Instagram and TikTok separately, using the place's name with the city. Then reply "done".`,
+    content: `${socialAsk(q)} Then reply "done".`,
   }]
   const results = new Map<string, string>() // url → title, from the search results
   for (let turn = 0; turn < 3; turn++) {
@@ -429,7 +450,75 @@ async function socialWithClaude(q: VideoQuery): Promise<Video[]> {
     if (response.stop_reason !== 'pause_turn') break
     messages.push({ role: 'assistant', content: response.content })
   }
+  return clipsFrom(results, q)
+}
 
+const CLIPS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['clips'],
+  properties: {
+    clips: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['url', 'creator', 'caption'],
+        properties: { url: { type: 'string' }, creator: { type: 'string' }, caption: { type: 'string' } },
+      },
+    },
+  },
+}
+
+const Clips = z.object({ clips: z.array(z.object({ url: z.string(), creator: z.string(), caption: z.string() })) })
+
+// OpenAI's sources carry no titles, so it reports each clip's caption and creator; a clip only
+// counts if its reel or video id is among the pages the search actually returned.
+async function socialWithOpenAI(q: VideoQuery): Promise<Video[]> {
+  const response = await openai!.responses.create({
+    model: OPENAI_MODEL,
+    reasoning: { effort: 'low' },
+    tools: [{ type: 'web_search', filters: { allowed_domains: ['instagram.com', 'tiktok.com'] } }],
+    include: ['web_search_call.action.sources'],
+    input: `${socialAsk(q)} List every reel or video you found that is about this place, with its exact URL from the search results, the creator's handle, and its caption.`,
+    text: { format: { type: 'json_schema', name: 'clips', strict: true, schema: CLIPS_SCHEMA } },
+  }, { signal: AbortSignal.timeout(90_000) })
+
+  return clipsFrom(openAIResults(response.output, response.status === 'completed' ? response.output_text : null), q)
+}
+
+// url → title for each clip: what the model reported, kept only when the search returned that clip.
+export function openAIResults(output: unknown, text: string | null): Map<string, string> {
+  const found = new Map<string, string>()
+  collectOpenAISources(output, found)
+  const seen = new Set([...found.keys()].flatMap(clipIds))
+  const results = new Map<string, string>()
+  for (const c of text ? Clips.parse(JSON.parse(text)).clips : []) {
+    if (!clipIds(c.url).some(id => seen.has(id))) continue
+    const handle = c.creator.replace(/^@/, '')
+    results.set(c.url, /instagram\.com/.test(c.url) ? `${handle} on Instagram: "${c.caption}"` : c.caption)
+  }
+  for (const [url, title] of found) if (!results.has(url) && title) results.set(url, title)
+  return results
+}
+
+// web_search_call sources and the answer's url_citation annotations: the pages the search returned.
+function collectOpenAISources(output: unknown, into: Map<string, string>) {
+  const walk = (o: unknown): void => {
+    if (!o || typeof o !== 'object') return
+    if (Array.isArray(o)) { o.forEach(walk); return }
+    const r = o as Record<string, unknown>
+    if ((r.type === 'url' || r.type === 'url_citation') && typeof r.url === 'string') {
+      into.set(r.url, typeof r.title === 'string' ? r.title : into.get(r.url) ?? '')
+    }
+    for (const k in r) walk(r[k])
+  }
+  walk(output)
+}
+
+const clipIds = (url: string) => [...url.matchAll(REEL_RE)].map(m => `ig:${m[1]}`).concat([...url.matchAll(TIKTOK_RE)].map(m => `tt:${m[2]}`))
+
+async function clipsFrom(results: Map<string, string>, q: VideoQuery): Promise<Video[]> {
   const reels: Video[] = []
   const tiktoks: { id: string; by: string; title: string }[] = []
   for (const [url, title] of results) {
