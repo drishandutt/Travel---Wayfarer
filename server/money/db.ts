@@ -285,6 +285,49 @@ export const MIGRATIONS = [`
       REVOKE ALL ON vault_images, vault_shares, vault_places FROM anon, authenticated;
     END IF;
   END $$;
+`, `
+  -- Dev tools (server/dev): every log line and error, from the server and from browsers.
+  CREATE TABLE dev_logs (
+    id BIGSERIAL PRIMARY KEY,
+    at BIGINT NOT NULL,
+    level TEXT NOT NULL,
+    source TEXT NOT NULL,
+    message TEXT NOT NULL,
+    detail TEXT,
+    user_id TEXT,
+    url TEXT,
+    agent TEXT
+  );
+  CREATE INDEX dev_logs_at ON dev_logs(at DESC);
+  CREATE INDEX dev_logs_level ON dev_logs(level, at DESC);
+
+  -- Signed-in sessions for sites that hide posts behind a login (Instagram, X, LinkedIn…),
+  -- used by the link reader. One row per site; cookies is the JSON list the browser takes.
+  CREATE TABLE dev_cookies (
+    domain TEXT PRIMARY KEY,
+    cookies TEXT NOT NULL,
+    source TEXT NOT NULL,
+    updated_at BIGINT NOT NULL
+  );
+
+  -- Tokens for the cookie-sync Chrome extension. Only a hash is kept.
+  CREATE TABLE dev_tokens (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    last_used_at BIGINT
+  );
+
+  ALTER TABLE dev_logs ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE dev_cookies ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE dev_tokens ENABLE ROW LEVEL SECURITY;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON dev_logs, dev_cookies, dev_tokens FROM anon, authenticated;
+    END IF;
+  END $$;
 `]
 
 // A transaction is one connection, and one connection runs one query at a time: reads that

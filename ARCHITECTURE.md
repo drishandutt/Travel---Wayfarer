@@ -153,6 +153,7 @@ A native app built with Capacitor 8 (Swift Package Manager, so no CocoaPods). It
 - **Permissions** (`ios/App/App/Info.plist`): photo library and camera, for the vault and receipts.
 - **Icon and splash:** drawn by `scripts/make-ios-art.py` in the Memphis palette. Rerun it to change them.
 - **App ID:** `com.drishandutt.wayfarer`.
+- **Share sheet:** the `ShareExtension` target (`ios/App/ShareExtension`, `com.drishandutt.wayfarer.share`) puts Wayfarer in the share sheet of Instagram, YouTube, X, LinkedIn, Safari, Maps and the rest. It takes the link (or the first link in shared text), opens the app at `wayfarer://share?url=…&text=…` and closes. The app picks that up through `@capacitor/app` (`appUrlOpen`, or `getLaunchUrl` on a cold start). If iOS won't let it open the app, it copies the link instead and says to paste it into chat. Being a native target, a change to it needs a new build; the rest of sharing is web code and ships with every push.
 
 `npm run ios` builds, syncs and opens the Xcode project. Run on a simulator or phone from there; a real phone or TestFlight needs a signing team (App → Signing & Capabilities). `capacitor.config.json` in `ios/` is generated, so run `npx cap sync ios` after a fresh clone. To try local changes in the app, run `npm run phone` and sync with `CAP_SERVER_URL=http://<mac-ip>:5173 npx cap sync ios`, then sync again without it before shipping.
 
@@ -268,6 +269,24 @@ Tests: `server/money/vault.test.ts` covers who sees what, the upload checks, the
 
 ---
 
+## Sharing links into Wayfarer
+
+A reel, video, post, web search, page or map shared to Wayfarer is read for the places it's about, and the traveller picks which trip they go in. It arrives from the iPhone's share sheet (above), from a `?share=<url>&text=` link, or pasted into chat (any link that isn't a maps link).
+
+- **Reading** (`server/share/read.ts`, `POST /api/money/share/read`): maps links are one place, read as before (`server/places.ts`). Anything else opens in a headless Chromium (`server/share/browser.ts`, Playwright) with that site's saved session, so Instagram, X and LinkedIn show the post rather than a login page. The page's title, description (YouTube's full description too) and visible text go to Claude, or OpenAI without a Claude key, which names the places in it with their city and why the post likes them. Web searches aren't opened (search engines answer servers with a robot check), so the query itself is answered. Without a browser it falls back to the page's HTML; without an AI key it can read the link but not pick out places, and says so.
+- **Safety:** a link can't make the server open a private or internal address. Every host is resolved first, every request the page makes is checked, and the browser runs one context per link that's thrown away afterwards.
+- **Adding** (`src/components/share/ShareSheet.tsx`, `App.tsx`): the sheet lists the places, ticked, and the trips they can go in: the one on screen, the group trips you run, and your saved trips. The one with most of the places' city comes first, and places from another city can't be ticked. Choosing a trip that isn't open opens it, waits for its plan, then adds each place the way a place typed into chat is added (`resolvePlace`), so it lands in the deck or a day as usual.
+- **Logins** come from the dev tools (below).
+
+## Dev tools
+
+For the app's owner only: the email addresses in `WAYFARER_DEV_EMAILS` (comma-separated), or the built-in list in `server/dev/routes.ts` when that's unset. In dev with nothing set, anyone signed in. They open from **My trips → Dev tools**, or at `/?dev`. New tools go in as new tabs (`src/components/dev/DevTools.tsx`).
+
+- **Logs:** every server console line (`server/dev/log.ts` wraps `console.*`, and uncaught errors and rejections), every refused or failed API call, and from every browser and the iPhone app: uncaught errors, failed promises, console output and unreachable API calls (`src/dev/logger.ts`, sent in batches to `POST /api/money/dev/log`, rate-limited per visitor). They're kept in `dev_logs` for 30 days, up to 200,000 lines. Filter by level, source and text; tap a line for its stack, page, user and device.
+- **Sessions:** the signed-in cookies the link reader uses, one set per site (`dev_cookies`, migration 3). Paste a cookie export (JSON), a cookies.txt or a `Cookie:` header, or let the extension keep them fresh. The values never come back out of the API; the tab shows which sites are signed in and when the login expires.
+- **Link reader:** reads a link fresh and shows the places and exactly what the AI was given.
+- **Extension:** tokens for the **cookie-sync** Chrome extension (`tools/cookie-sync`, load unpacked). It sends a site's cookies to `PUT /api/money/dev/cookies` with its token whenever they change, when Chrome starts and every half hour, and only for sites that Chrome is signed in to. A token can set sessions and nothing else; only its hash is stored.
+
 ## How days get their routes
 
 Stops are grouped by area first (`kmeans` in `geo.ts`), then two passes in `src/planner/core.ts` judge the routes that come out. `groupDays` runs all of this from four different starting stops and keeps the most comfortable trip, because trading stops afterwards can't always undo a poor start:
@@ -300,6 +319,8 @@ The sun/moon button in the top bar switches themes. First-time visitors follow t
 Live at **https://wayfarer-production-3acc.up.railway.app**, in the personal Railway workspace ("drishandutt's Projects", project `wayfarer`). In production one Node server (`server/index.ts`) serves the built site from `dist/` and the API, on Railway's `PORT`.
 
 The build, start, health check and restart settings live in the `wayfarer` service's own settings on Railway, not in the repo: build `npm run build`, start `NODE_ENV=production node --import tsx server/index.ts`, health check `/api/health` with a 60s timeout, and restart on failure up to 5 times. Railway's old config file, `railway.json`, is deprecated and stops being read on 2026-12-01, so the repo no longer has one. Its replacement, Infrastructure as Code (`.railway/railway.ts`), isn't applied on push, so it would need its own apply step. Change these settings in the dashboard (service → Settings). Railway CLI 4.35's `railway environment edit` answered "No changes to apply" and saved nothing.
+
+`railpack.json` adds Debian's Chromium to the image for the link reader (`/usr/bin/chromium`; `CHROMIUM_PATH` overrides). `/api/health` reports `linkReader: "browser"` when it's found, `"fetch"` when not.
 
 Every push to `main` on GitHub (`drishandutt/Travel---Wayfarer`) deploys. A deploy that fails its health check never takes traffic, and the previous one stays live. To deploy the local folder without pushing, use the Railway CLI, which is signed in to the personal account:
 

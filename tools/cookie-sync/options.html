@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wayfarer cookie sync</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fff; --fg: #1d1d1f; --dim: #6e6e73; --line: #d2d2d7; --ok: #0b7d70; --bad: #c8102e; --cta: #ffd23f; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1d1d1f; --fg: #f5f5f7; --dim: #a1a1a6; --line: #3a3a3c; --ok: #2ed3c0; --bad: #ff5d73; } }
+  body { margin: 0; padding: 16px; width: 360px; max-width: 100%; box-sizing: border-box; font: 14px/1.45 -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  p { margin: 0 0 12px; color: var(--dim); font-size: 12.5px; }
+  label { display: block; margin-bottom: 10px; font-size: 12.5px; color: var(--dim); }
+  input[type=text], input[type=password], input[type=url] { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--fg); font: inherit; }
+  ul { list-style: none; margin: 0 0 12px; padding: 0; border: 1px solid var(--line); border-radius: 10px; }
+  li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; }
+  li + li { border-top: 1px solid var(--line); }
+  li span { flex: 1; }
+  li small { font-size: 11.5px; color: var(--dim); text-align: right; max-width: 170px; }
+  small.ok { color: var(--ok); } small.bad { color: var(--bad); }
+  .row { display: flex; gap: 8px; }
+  button { flex: 1; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--fg); font: inherit; font-weight: 600; cursor: pointer; }
+  button.cta { background: var(--cta); color: #1d1d1f; border-color: transparent; }
+  #msg { min-height: 18px; margin-top: 8px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+  <h1>Wayfarer cookie sync</h1>
+  <p>Sends your signed-in sessions for these sites to Wayfarer’s link reader, so it can open the posts you share. Make a token in Wayfarer → Dev tools → Extension.</p>
+  <label>Wayfarer address <input id="server" type="url" placeholder="https://…"></label>
+  <label>Token <input id="token" type="password" placeholder="wfdev_…" autocomplete="off"></label>
+  <ul id="sites"></ul>
+  <div class="row">
+    <button id="save" class="cta">Save and sync</button>
+    <button id="sync">Sync now</button>
+  </div>
+  <div id="msg" role="status"></div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

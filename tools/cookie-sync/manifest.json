@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Wayfarer cookie sync",
+  "version": "1.0.0",
+  "description": "Keeps the Wayfarer link reader signed in to Instagram, X, LinkedIn and the rest, by sending those sites' session cookies to your Wayfarer server.",
+  "permissions": ["cookies", "storage", "alarms"],
+  "host_permissions": [
+    "https://*.instagram.com/*",
+    "https://*.x.com/*",
+    "https://*.twitter.com/*",
+    "https://*.linkedin.com/*",
+    "https://*.tiktok.com/*",
+    "https://*.facebook.com/*",
+    "https://*.threads.net/*",
+    "https://*.threads.com/*",
+    "https://*.youtube.com/*",
+    "https://wayfarer-production-3acc.up.railway.app/*",
+    "http://localhost/*"
+  ],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Wayfarer cookie sync", "default_popup": "options.html" },
+  "options_page": "options.html"
+}

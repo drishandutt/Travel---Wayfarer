@@ -34,11 +34,13 @@ interface Props {
   onNewTrip: () => void
   // a clean slate; only offered while there's something on screen to clear
   onStartOver?: () => void
+  // only for the app's owner
+  onDevTools?: () => void
   email: string | null
   onSignOut: () => void
 }
 
-function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut'>) {
+function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut, onDevTools }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut' | 'onDevTools'>) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   // A trip you run for a group is listed as the group. Anything else stays reachable on its
@@ -82,6 +84,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOp
           {email && (
             <div className="trips-account">
               <small>{email}</small>
+              {onDevTools && <button onClick={() => { setOpen(false); onDevTools() }}>Dev tools</button>}
               <button onClick={() => { setOpen(false); onSignOut() }}>Sign out</button>
             </div>
           )}
@@ -91,7 +94,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOp
   )
 }
 
-export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleTheme, onMoney, onPhotos, moneyBadge, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, email, onSignOut }: Props) {
+export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleTheme, onMoney, onPhotos, moneyBadge, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, email, onSignOut }: Props) {
   const b = state.brief
   const city = cityById(b.destination)
   const at = STEPS.findIndex(s => s.id === state.phase)
@@ -112,7 +115,7 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleT
             aria-label={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'Offline planner'}
             title={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'No ANTHROPIC_API_KEY on the server: using the offline planner'} />
         )}
-        <TripsMenu trips={trips} current={state.tripId} onOpen={onOpen} onDelete={onDelete} groups={groups} activeGroup={activeGroup} onOpenGroup={onOpenGroup} onNewTrip={onNewTrip} email={email} onSignOut={onSignOut} />
+        <TripsMenu trips={trips} current={state.tripId} onOpen={onOpen} onDelete={onDelete} groups={groups} activeGroup={activeGroup} onOpenGroup={onOpenGroup} onNewTrip={onNewTrip} email={email} onSignOut={onSignOut} onDevTools={onDevTools} />
         <button className="money-btn" onClick={onMoney} aria-label={moneyBadge ? `Money: ${moneyBadge.net > 0 ? 'you are owed' : 'you owe'} ${fmtMoney(Math.abs(moneyBadge.net), moneyBadge.currency)}` : 'Money'}>
           Money
           {moneyBadge && <span className={`money-amt ${moneyBadge.net > 0 ? 'pos' : 'neg'}`}>{moneyBadge.net > 0 ? '+' : '−'}{fmtMoney(Math.abs(moneyBadge.net), moneyBadge.currency, { compact: true })}</span>}

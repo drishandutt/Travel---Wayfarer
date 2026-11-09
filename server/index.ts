@@ -15,6 +15,11 @@ import { clientIp, overLimit } from './money/auth'
 import { PlaceError, placeVideos, resolvePlace, traceSocial, videoLookupCached, type ResolveRequest } from './places'
 import { openaiEnabled } from './openai'
 import { AgentError, agentEnabled, agentTurn } from './agent'
+import { captureServerConsole, flush as flushLogs } from './dev/log'
+import { chromiumPath, closeBrowser } from './share/browser'
+
+// first, so nothing logged from here on is missed
+captureServerConsole()
 
 // Minimal API server. The browser holds no secrets: the Anthropic key lives here.
 //   GET  /api/health   -> { claude, model, money, openai, agent }
@@ -24,7 +29,8 @@ import { AgentError, agentEnabled, agentTurn } from './agent'
 //   POST /api/hotels   -> text/event-stream of PlannerEvent
 //   POST /api/places/resolve -> { place, note? }  a traveller's own place, from a maps link or a name
 //   GET  /api/places/videos  -> PlaceVideos       reels & videos of a place, by name and city
-//   /api/money/*       -> shared expenses (server/money/routes.ts)
+//   /api/money/*       -> shared expenses (server/money/routes.ts), the photo vault, reading
+//                         shared links (/share/read) and the dev tools (/dev/*, server/dev)
 
 // In production this one server also serves the built site, on the host's PORT.
 const PRODUCTION = process.env.NODE_ENV === 'production'
@@ -101,7 +107,7 @@ const server = createServer(async (req, res) => {
     // inside the try: a malformed path like "//" throws here, and must not stop the server
     const url = new URL(req.url ?? '/', 'http://localhost')
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(await moneyApi()), openai: openaiEnabled, agent: agentEnabled() })
+      return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(await moneyApi()), openai: openaiEnabled, agent: agentEnabled(), linkReader: chromiumPath() ? 'browser' : 'fetch' })
     }
     // Before the check below: shared expenses have nothing to do with Claude and must work without a key.
     if (url.pathname.startsWith('/api/money/')) {
@@ -164,7 +170,7 @@ const server = createServer(async (req, res) => {
     }
     json(res, 404, { error: 'Not found' })
   } catch (err) {
-    console.error('[api]', err)
+    console.error('[api]', req.method, req.url, err)
     if (!res.headersSent) json(res, 500, { error: describeError(err) })
   }
 })
@@ -185,7 +191,7 @@ function shutdown(signal: string) {
   server.close()
   server.closeAllConnections() // live-sync streams would otherwise hold the close open
   // a transaction still in flight is rolled back by the database, so nothing half-written stays
-  void Promise.race([closeMoneyDb(), new Promise(r => setTimeout(r, 3000))]).finally(() => process.exit(0))
+  void Promise.race([flushLogs().then(() => Promise.all([closeMoneyDb(), closeBrowser()])), new Promise(r => setTimeout(r, 3000))]).finally(() => process.exit(0))
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))

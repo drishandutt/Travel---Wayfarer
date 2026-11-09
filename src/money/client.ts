@@ -21,6 +21,7 @@ export async function api<T = Record<string, unknown>>(method: string, path: str
       body: raw ?? (body !== undefined ? JSON.stringify(body) : undefined),
     })
   } catch {
+    console.warn(`[api] couldn’t reach ${method} ${BASE}${path}`)
     throw new NetworkError()
   }
   // the dev proxy answers 500/502 with no JSON when the API server isn't running

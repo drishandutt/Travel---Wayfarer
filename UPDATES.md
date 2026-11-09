@@ -4,6 +4,8 @@ Raw notes on feature ideas as they come up. The organised master list is [FEATUR
 
 ## 2026-11-09
 
+- **Share to Wayfarer.** Instagram reels, YouTube videos, X and LinkedIn posts, web searches, pages and map links can be shared to Wayfarer from the iPhone's share sheet, or pasted into chat. The server opens the link in a headless browser (signed in where the site needs it), the AI picks out the places, and you choose which of your trips they go into. They're added automatically.
+- **Dev tools** (owner only, from My trips): every log line and error from the server, browsers and the iPhone app; the signed-in sessions the link reader uses; a link-reader tester; and tokens for a new **cookie-sync Chrome extension** (`tools/cookie-sync`) that keeps those sessions fresh by itself.
 - **Start over** is in the top bar now, not at the bottom of the itinerary. It asks first, and the plan so far stays in My trips.
 - Every trip gets its own **Money** and **Photos**, created the first time its itinerary is approved. The trip's dashboard opens them directly, scoped to that trip only. Money and Photos in the top bar show everything together: what you owe and are owed across all trips, and every photo with its filters. Each trip is listed there as a link into its own space.
 - With an LLM connected (Claude, or OpenAI), the trip chat becomes an assistant that acts on the trip through an allowlist of tools: plan edits, adding your own places, videos, the money summary, logging expenses and inviting or removing people. Money and people changes ask for a tap first. Without an LLM the chat works as before.

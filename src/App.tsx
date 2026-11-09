@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { initialState, isMember, reducer, type SavedTrip, type TripState } from './state/tripStore'
-import { deleteTrip, loadCurrent, loadPanels, loadTrips, localCopyOf, saveCurrent, savePanels, saveTrip, setTripScope, snapshot, type PanelPrefs } from './state/persistence'
+import { deleteTrip, groupCopyOf, loadCurrent, loadPanels, loadTrips, localCopyOf, saveCurrent, savePanels, saveTrip, setTripScope, snapshot, type PanelPrefs } from './state/persistence'
 import { converse, isReady, nextField } from './planner/intake'
 import { MockPlanner } from './planner/mockPlanner'
 import { RemotePlanner } from './planner/remotePlanner'
 import { claudeIntake, detectBrain, type BrainStatus } from './planner/brain'
-import { customPlaceRequest, isFind, resolveCustomPlace, type CustomPlaceRequest } from './planner/customPlaces'
+import { customPlaceRequest, isFind, mapsHost, resolveCustomPlace, type CustomPlaceRequest } from './planner/customPlaces'
 import { runAgent } from './agent/run'
 import type { Place, PlannerEvent } from './types'
 import { MapCanvas } from './components/MapCanvas'
@@ -32,11 +32,20 @@ import type { GroupState, GroupSummary } from './money/types'
 import { useSharedTrip } from './trip/useSharedTrip'
 import { myVotes } from './trip/votes'
 import type { SharedTrip } from './trip/types'
-import { cityById } from './data/cities'
+import { cityById, findCity } from './data/cities'
+import { ShareSheet, type Shared, type ShareTarget } from './components/share/ShareSheet'
+import { DevTools } from './components/dev/DevTools'
+import type { FoundPlace } from './share/types'
 import { useTheme } from './state/theme'
 import { MobileSheet, sheetHeights, useIsMobile, type Snap } from './components/MobileSheet'
 import { BedIcon, ChatIcon, ChevronIcon, RouteIcon } from './components/Icons'
 import { Memphis } from './components/Memphis'
+
+// The native shell's App plugin (Capacitor), when running in the iPhone app.
+type NativeApp = { Capacitor?: { Plugins?: { App?: {
+  getLaunchUrl?: () => Promise<{ url?: string } | undefined>
+  addListener?: (event: 'appUrlOpen', fn: (e: { url: string }) => void) => Promise<{ remove: () => void }> | { remove: () => void }
+} } } }
 
 // Everyone signs in first. Someone following an invite link then joins that group.
 export default function App() {
@@ -166,6 +175,34 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   }, [state.phase, isMobile])
   // Tapping a pin opens its card; drop the sheet out of the way.
   useEffect(() => { if (isMobile && state.selectedPlace) setSnap('peek') }, [state.selectedPlace])
+  // ── links shared to Wayfarer: the iPhone's share sheet, a ?share= link, or one pasted into chat ──
+  const [incoming, setIncoming] = useState<Shared | null>(() => {
+    const q = new URLSearchParams(location.search)
+    return q.get('share') ? { url: q.get('share')!, text: q.get('text') ?? undefined } : null
+  })
+  useEffect(() => {
+    if (new URLSearchParams(location.search).has('share')) history.replaceState(null, '', location.pathname)
+    // the share extension opens the app at wayfarer://share?url=…&text=…
+    const fromAppUrl = (raw: string | undefined) => {
+      if (!raw?.startsWith('wayfarer://share')) return
+      const q = new URL(raw.replace('wayfarer://share', 'https://x/share')).searchParams
+      if (q.get('url')) setIncoming({ url: q.get('url')!, text: q.get('text') ?? undefined })
+    }
+    const app = (window as NativeApp).Capacitor?.Plugins?.App
+    if (!app) return
+    app.getLaunchUrl?.().then(r => fromAppUrl(r?.url)).catch(() => {})
+    const sub = app.addListener?.('appUrlOpen', e => fromAppUrl(e.url))
+    return () => { void Promise.resolve(sub).then(h => h?.remove()).catch(() => {}) }
+  }, [])
+
+  // the dev tools, for the app's owner only
+  const [devAdmin, setDevAdmin] = useState(false)
+  const [devOpen, setDevOpen] = useState(() => new URLSearchParams(location.search).has('dev'))
+  useEffect(() => {
+    if (!account) return
+    api<{ admin: boolean }>('GET', '/dev/me').then(r => setDevAdmin(r.admin)).catch(() => {})
+  }, [account])
+
   const [brain, setBrain] = useState<BrainStatus | null>(null)
   useEffect(() => { detectBrain().then(setBrain) }, [])
   // Claude on the server when configured; otherwise the offline heuristic planner.
@@ -359,6 +396,14 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   const send = async (text: string) => {
     const s = latest.current
     dispatch({ type: 'chat', role: 'user', text })
+
+    // a reel, video, post or page: read it for places, then ask which trip they go in
+    const link = text.match(/\bhttps?:\/\/[^\s<>"']+/i)?.[0]
+    if (link && account && !member && !mapsHost(link)) {
+      dispatch({ type: 'chat', role: 'ai', text: 'Let me look at that link for places.' })
+      setIncoming({ url: link, text: text.replace(link, ' ').trim() || undefined })
+      return
+    }
 
     if (brain?.agent && !member && (s.phase === 'review' || s.phase === 'final') && await askAgent(text, s.messages)) return
 
@@ -563,6 +608,60 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   }
   const canStartOver = !member && !state.deckMode && (state.phase !== 'intake' || state.messages.some(m => m.role === 'user'))
 
+  // Where shared places can go: the trip on screen, the group trips you run, and your saved trips.
+  const shareTargets = useMemo<ShareTarget[]>(() => {
+    const out: ShareTarget[] = []
+    const cityName = (id?: string) => cityById(id)?.name
+    const onScreen = !member && state.brief.destination
+    if (onScreen) {
+      const g = groups?.find(x => x.id === activeGroup)
+      out.push({ key: 'current', name: g?.name ?? `${cityName(state.brief.destination)} trip`, cityId: state.brief.destination, detail: state.days.length ? `${state.days.length} day${state.days.length === 1 ? '' : 's'} planned` : 'Still planning', current: true })
+    }
+    for (const g of groups ?? []) {
+      if (g.role !== 'owner' || (onScreen && g.id === activeGroup)) continue
+      const copy = groupCopyOf(trips, g.id)
+      out.push({ key: `group:${g.id}`, name: g.name, cityId: copy?.brief.destination ?? (g.city ? findCity(g.city)?.id : undefined), detail: `Shared · ${g.memberCount} ${g.memberCount === 1 ? 'person' : 'people'}`, current: false })
+    }
+    for (const t of trips) {
+      if (onScreen && t.id === state.tripId) continue
+      const g = groups?.find(x => x.id === t.brief.moneyGroupId)
+      if (g?.role === 'owner' && groupCopyOf(trips, g.id)?.id === t.id) continue // listed as its group
+      out.push({ key: `trip:${t.id}`, name: t.name, cityId: t.brief.destination, detail: `Saved ${new Date(t.savedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · ${t.days.reduce((n, d) => n + d.stops.length, 0)} stops`, current: false })
+    }
+    return out
+  }, [member, state.brief.destination, state.days.length, state.tripId, activeGroup, groups, trips])
+
+  // Opens the chosen trip if it isn't on screen, then adds each place once it has loaded.
+  const [shareQueue, setShareQueue] = useState<{ key: string; reqs: CustomPlaceRequest[] } | null>(null)
+  const addShared = (target: ShareTarget, places: FoundPlace[]) => {
+    setIncoming(null)
+    const reqs = places.map(p => (p.link ? { link: p.link } : { name: p.name }))
+    if (target.key.startsWith('trip:')) {
+      const saved = trips.find(t => t.id === target.key.slice(5))
+      if (saved) openTrip(saved)
+      setShareQueue({ key: target.key, reqs })
+    } else if (target.key.startsWith('group:')) {
+      openShared(target.key.slice(6))
+      setShareQueue({ key: target.key, reqs })
+    } else setShareQueue({ key: 'current', reqs })
+    if (isMobile) { setSheetTab('chat'); setSnap('half') }
+  }
+  useEffect(() => {
+    if (!shareQueue) return
+    const k = shareQueue.key
+    const here = k === 'current' || (k.startsWith('trip:') && state.tripId === k.slice(5)) || (k.startsWith('group:') && activeGroup === k.slice(6) && state.shared?.role === 'admin')
+    // a group's plan arrives from the server, and a draft still drawing gets finished first
+    if (!here || !state.brief.destination || state.phase === 'planning' || state.phase === 'hotels') return
+    const { reqs } = shareQueue
+    setShareQueue(null)
+    dispatch({ type: 'chat', role: 'ai', text: `Adding ${reqs.length} place${reqs.length === 1 ? '' : 's'} from the link you shared.` })
+    ;(async () => {
+      for (const r of reqs) {
+        if (!(await addFind(r))) dispatch({ type: 'chat', role: 'ai', text: `I couldn’t reach the server to add ${r.name ?? 'that place'}.` })
+      }
+    })()
+  }, [shareQueue, state.tripId, state.brief.destination, state.phase, state.shared?.role, activeGroup])
+
   const signOut = async () => {
     const unsent = unsentCount()
     if (unsent && !confirm(`You have ${unsent} change${unsent > 1 ? 's' : ''} that ${unsent > 1 ? 'haven’t' : 'hasn’t'} synced yet. Signing out discards ${unsent > 1 ? 'them' : 'it'}. Sign out anyway?`)) return
@@ -683,7 +782,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       <div className="vignette" />
 
       <TopBar state={state} brain={brain} trips={trips} onOpen={openTrip} onDelete={removeTrip} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} moneyBadge={moneyBadge} onPhotos={() => setVaultOpen({})}
-        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} email={account?.email ?? null} onSignOut={signOut} />
+        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} email={account?.email ?? null} onSignOut={signOut} />
 
       {newGroup && (
         <div className="trip-nudge" role="status">
@@ -755,6 +854,9 @@ function TripApp({ acct }: { acct: AccountHandle }) {
 
       {moneyOpen && <MoneyApp acct={acct} trip={moneyTrip} scope={moneyOpen.scope} prefill={moneyOpen.prefill} onClose={() => { setMoneyOpen(null); refreshGroups().catch(() => {}) }} />}
       {vaultOpen && <VaultApp acct={acct} scope={vaultOpen.scope} onClose={() => setVaultOpen(null)} />}
+
+      {incoming && <ShareSheet shared={incoming} targets={shareTargets} signedIn={Boolean(account)} onAdd={addShared} onClose={() => setIncoming(null)} onDevTools={devAdmin ? () => { setIncoming(null); setDevOpen(true) } : undefined} />}
+      {devOpen && devAdmin && <DevTools onClose={() => { setDevOpen(false); if (new URLSearchParams(location.search).has('dev')) history.replaceState(null, '', location.pathname) }} />}
 
       {inviteOpen && trip && <InviteFriends trip={trip} tripSize={state.brief.travelers ?? 2} onClose={() => setInviteOpen(false)} onChanged={() => { shared.refresh(); refreshGroups().catch(() => {}) }} />}
 

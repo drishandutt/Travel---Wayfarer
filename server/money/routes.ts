@@ -15,6 +15,8 @@ import { registerVaultRoutes, vaultLimitsFromEnv, type VaultOptions } from '../v
 import { vaultStorageFromEnv } from '../vault/storage'
 import * as vault from '../vault/store'
 import { MAX_ORIGINAL_BYTES } from '../../src/vault/types'
+import { registerDevRoutes } from '../dev/routes'
+import { attachLogDb } from '../dev/log'
 
 // The money API: accounts, groups, expenses, settling up, and a live stream per group.
 // The server trusts nothing it can work out itself: splits, balances and who may see
@@ -505,6 +507,7 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
   })
 
   registerVaultRoutes(db, vaultOpts, route, readBody, needUser)
+  registerDevRoutes(db, route, readBody, needUser)
 
   return async function handle(req: IncomingMessage, res: ServerResponse, url: URL) {
     try {
@@ -519,11 +522,14 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
       send(res, 404, { error: 'Not found' })
     } catch (err) {
       if (res.headersSent) { res.end(); return }
+      // refusals are kept for the dev tools too, except the everyday "not signed in"
+      if (err instanceof HttpError && err.status !== 401 && !url.pathname.endsWith('/dev/log')) console.warn(`[money] ${err.status} ${req.method} ${url.pathname}: ${err.message}`)
       if (err instanceof HttpError) return send(res, err.status, { error: err.message, ...(err.data ?? {}) as object })
+      if (err instanceof ZodError) console.warn(`[money] 400 ${req.method} ${url.pathname}: ${err.issues[0]?.path.join('.')} ${err.issues[0]?.message}`)
       if (err instanceof ZodError) return send(res, 400, { error: err.issues[0]?.message ?? 'Check what you entered' })
       if (err instanceof SplitError) return send(res, 422, { error: err.message, code: err.code, delta: err.delta })
       if (err instanceof URIError) return send(res, 400, { error: 'Bad address' })
-      console.error('[money]', err)
+      console.error('[money]', req.method, url.pathname, err)
       send(res, 500, { error: 'Something went wrong on our side' })
     }
   }
@@ -549,6 +555,7 @@ export function moneyApi(): Promise<MoneyApi | null> {
       }
       await importSqliteOnce(db)
       openDb = db
+      attachLogDb(db)
       const storage = vaultStorageFromEnv(MAX_ORIGINAL_BYTES)
       if (!storage) console.warn('[vault] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are unset: the photo vault is off.')
       return createMoneyApi(db, { storage, geocode: process.env.VAULT_GEOCODE === 'off' ? null : vault.nominatim(), limits: vaultLimitsFromEnv() })
@@ -566,6 +573,7 @@ export function moneyApi(): Promise<MoneyApi | null> {
 export async function closeMoneyDb() {
   const db = openDb
   openDb = null
+  attachLogDb(null)
   api = undefined
   await db?.close()
 }
