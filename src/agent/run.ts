@@ -178,10 +178,10 @@ const TOOLS: Record<keyof typeof AGENT_TOOLS, (a: Record<string, any>, host: Age
   undo: async (_, host) =>
     edit(host, { type: 'undo' }, (before, after) => lastAi(before, after) || 'Nothing to undo.'),
 
-  async add_own_place({ name, link, day }, host) {
+  async add_own_place({ name, link, kind, day }, host) {
     if (!name && !link) return 'Error: give a name or a maps link.'
     const s = host.state()
-    const { place, note } = await resolveCustomPlace({ name: name ?? undefined, link: link ?? undefined, day: day ?? undefined }, s.brief)
+    const { place, note } = await resolveCustomPlace({ name: name ?? undefined, link: link ?? undefined, kind: kind ?? undefined, day: day ?? undefined }, s.brief)
     host.dispatch({ type: 'add-custom-place', place, day: day ?? undefined, note })
     await settle()
     return `${lastAi(s, host.state())} (place id ${place.id})`

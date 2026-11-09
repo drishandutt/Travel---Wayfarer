@@ -73,8 +73,8 @@ export const AGENT_TOOLS = {
   },
   add_own_place: {
     risk: 'edit',
-    description: 'Add a place that is not in the catalog: by its name, or by a Google Maps / Apple Maps / OpenStreetMap / Waze link the traveller shared, or both. Optionally into a day. If a link alone comes back without a name, ask the traveller what the place is called, then call again with that name and the same link (the link gives the exact spot).',
-    args: z.strictObject({ name: nullable(z.string().max(120)), link: nullable(z.string().max(2000)), day: nullable(day) }),
+    description: 'Add a real place that is not in the catalog: by its name, or by a Google Maps / Apple Maps / OpenStreetMap / Waze link the traveller shared, or both. Give kind (one or two words, e.g. "nightclub", "ramen", "jazz bar") when you know it: it tells the place apart from others with the same name. Use the name as it is known locally, without notes in brackets. Optionally into a day. If a link alone comes back without a name, ask the traveller what the place is called, then call again with that name and the same link (the link gives the exact spot).',
+    args: z.strictObject({ name: nullable(z.string().max(120)), link: nullable(z.string().max(2000)), kind: nullable(z.string().max(40)), day: nullable(day) }),
   },
 
   // ── money and people (asks first) ──

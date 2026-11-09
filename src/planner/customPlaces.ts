@@ -13,6 +13,7 @@ export interface CustomPlaceRequest {
   name?: string     // what they called it, or the text that came with a link
   day?: number      // "… to day 2"; -1 for the last day
   loose?: boolean   // "I want to go to …" rather than "add …": only a find if it reads like a name
+  kind?: string     // what sort of place it is ("nightclub"), to tell it from others of the same name
 }
 
 // What a maps link says on its face. Short links say nothing until they're followed.
@@ -228,7 +229,7 @@ export async function resolveCustomPlace(req: CustomPlaceRequest, brief: TripBri
   const res = await fetch('/api/places/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ link: req.link, name: req.name, city: brief.destination, vibes: brief.vibes }),
+    body: JSON.stringify({ link: req.link, name: req.name, kind: req.kind, city: brief.destination, vibes: brief.vibes }),
   })
   const body = await res.json().catch(() => ({})) as { place?: Place; note?: string; error?: string }
   if (!res.ok || !body.place) throw new Error(body.error ?? `Couldn’t look that place up (error ${res.status}).`)

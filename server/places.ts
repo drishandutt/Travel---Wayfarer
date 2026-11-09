@@ -109,7 +109,7 @@ function box(c: LngLat, dLng: number, dLat: number) {
   return { viewbox: [c[0] - dLng, c[1] + dLat, c[0] + dLng, c[1] - dLat].map(n => n.toFixed(5)).join(','), bounded: '1' }
 }
 
-async function searchName(name: string, near: LngLat, radius: 'spot' | 'city', city: City, signal?: AbortSignal): Promise<OsmHit | undefined> {
+async function searchName(name: string, near: LngLat, radius: 'spot' | 'city', city: City, signal?: AbortSignal, widen = true): Promise<OsmHit | undefined> {
   const area = radius === 'spot' ? box(near, 0.006, 0.005) : box(near, 0.6, 0.45)
   const hits = await nominatim<OsmHit[]>('search', { q: name, limit: '5', ...area }, signal)
   // OpenStreetMap ranks by fame, so "Sintra Palace" would be whichever palace is best known:
@@ -118,10 +118,42 @@ async function searchName(name: string, near: LngLat, radius: 'spot' | 'city', c
     .map(h => ({ h, km: haversineKm(hitCoord(h), near), words: wordsMatched(name, h) }))
     .filter(x => (radius === 'spot' ? x.km < 0.4 : true))
     .sort((a, b) => (radius === 'spot' ? a.km - b.km : b.words - a.words || (b.h.importance ?? 0) - (a.h.importance ?? 0)))
-  if (ranked.length || radius === 'spot') return ranked[0]?.h
+  if (ranked.length || radius === 'spot' || !widen) return ranked[0]?.h
   // not in the city's box: perhaps a day trip, so ask again by name and city and keep it if it's in reach
   const wider = await nominatim<OsmHit[]>('search', { q: `${name}, ${city.name}`, limit: '3' }, signal)
   return wider.find(h => haversineKm(hitCoord(h), city.center) <= NEARBY_KM)
+}
+
+// The ways a typed name can be put to the map: "ATOM (Atom Shinjuku)" is "ATOM", "Atom Shinjuku",
+// and, since many places carry their city in their name, "ATOM Tokyo".
+export function nameVariants(name: string, city: string): string[] {
+  const inner = name.match(/\(([^)]+)\)/)?.[1]?.trim()
+  const outer = name.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim()
+  const bare = [outer, inner].filter((s): s is string => Boolean(s) && !fold(s!).includes(fold(city)))
+  const all = [name.trim(), outer, inner, ...bare.map(s => `${s} ${city}`)]
+  return [...new Set(all.filter((s): s is string => Boolean(s && s.length > 1)))].slice(0, 5)
+}
+
+// Does the map call it what they asked for? "nightclub" for amenity=nightclub, "club" too.
+export function isKind(h: Pick<OsmHit, 'category' | 'type'>, kind: string | undefined): boolean {
+  const k = fold(kind ?? '').replace(/[^a-z ]/g, ' ').split(/\s+/).filter(w => w.length >= 3).map(w => w.replace(/s$/, ''))
+  const t = fold(`${h.type ?? ''}`)
+  return k.length > 0 && t.length > 0 && k.some(w => t.includes(w) || w.includes(t))
+}
+
+// By name alone, across the city: the first hit whose own name carries every word they typed and,
+// when they said what it is, is that kind of place; otherwise the best of what came back.
+async function findByName(name: string, kind: string | undefined, city: City, signal?: AbortSignal): Promise<OsmHit | undefined> {
+  let best: OsmHit | undefined
+  for (const v of nameVariants(name, city.name)) {
+    const hit = await searchName(v, city.center, 'city', city, signal, false)
+    if (!hit) continue
+    const whole = wordsMatched(v, hit) >= 2 * fold(v).split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3).length
+    if (kind ? isKind(hit, kind) : whole) return hit
+    if (!best || (kind && isKind(hit, kind))) best = hit
+  }
+  // not in the city's box: perhaps a day trip
+  return best ?? searchName(name, city.center, 'city', city, signal)
 }
 
 function wordsMatched(query: string, h: OsmHit): number {
@@ -249,7 +281,7 @@ async function describe(p: Place, city: City, osm: string, signal?: AbortSignal)
 
 // ── resolve ──────────────────────────────────────────────────────────────────
 
-export interface ResolveRequest { link?: string; name?: string; city?: string }
+export interface ResolveRequest { link?: string; name?: string; city?: string; kind?: string }
 
 export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal): Promise<{ place: Place; note?: string }> {
   const city = cityById(req.city)
@@ -280,7 +312,7 @@ export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal): P
     if (!rev.error) hit = rev
   }
   if (!coord && name) {
-    hit = await searchName(name, city.center, 'city', city, signal)
+    hit = await findByName(name, req.kind?.slice(0, 40), city, signal)
     if (!hit) throw new PlaceError(`I couldn’t find “${name}” on the map around ${city.name}. A link from Google Maps or Apple Maps always works, or try its full name.`)
     coord = hitCoord(hit)
   }

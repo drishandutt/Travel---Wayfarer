@@ -5,9 +5,23 @@ import { cityOfPlace, tripCity } from '../src/data/cities'
 import { reducer, initialState, type TripState } from '../src/state/tripStore'
 import { buildDay } from '../src/planner/core'
 import type { Place, TripBrief } from '../src/types'
-import { mentions, openAIResults, parseYouTube, readPlacePage, shapeOf } from './places'
+import { isKind, mentions, nameVariants, openAIResults, parseYouTube, readPlacePage, shapeOf } from './places'
 
 const tokyo: TripBrief = { destination: 'tokyo', days: 2, vibes: ['food'] }
+
+describe('finding a place by name', () => {
+  it('tries a name with a note in brackets each way, and with the city', () => {
+    assert.deepEqual(nameVariants('ATOM (Atom Shinjuku)', 'Tokyo'), ['ATOM (Atom Shinjuku)', 'ATOM', 'Atom Shinjuku', 'ATOM Tokyo', 'Atom Shinjuku Tokyo'])
+    assert.deepEqual(nameVariants('Fuunji', 'Tokyo'), ['Fuunji', 'Fuunji Tokyo'])
+    assert.deepEqual(nameVariants('Atom Tokyo', 'Tokyo'), ['Atom Tokyo'])
+  })
+  it('tells a nightclub from a hairdresser of the same name', () => {
+    assert.ok(isKind({ category: 'amenity', type: 'nightclub' }, 'nightclub'))
+    assert.ok(isKind({ category: 'amenity', type: 'nightclub' }, 'clubs'))
+    assert.ok(!isKind({ category: 'shop', type: 'hairdresser' }, 'nightclub'))
+    assert.ok(!isKind({ category: 'amenity', type: 'nightclub' }, undefined))
+  })
+})
 
 describe('maps links', () => {
   it('reads the pin from a full Google Maps place link, not where the map was looking', () => {
