@@ -160,6 +160,22 @@ const london: City = {
   credit: 'Places from Wikivoyage (CC BY-SA 4.0) and Wikidata',
 }
 
+// How well known each hand-picked place is (London's comes from Wikidata): what a first-timer
+// must see near 1, what only locals go to near 0. Read against the trip's familiarity slider.
+const FAME: Record<string, number> = {
+  'tk-sensoji': 0.95, 'tk-skytree': 0.9, 'tk-shibuya': 0.95, 'tk-meiji': 0.85, 'tk-tsukiji': 0.85, 'tk-teamlab': 0.85,
+  'tk-harajuku': 0.8, 'tk-akihabara': 0.8, 'tk-ginza': 0.75, 'tk-ueno': 0.7, 'tk-golden-gai': 0.7, 'tk-ichiran': 0.7,
+  'tk-omoide': 0.6, 'tk-gyoen': 0.6, 'tk-odaiba': 0.6, 'tk-ameyoko': 0.55, 'tk-sushi-ginza': 0.55, 'tk-mori': 0.5,
+  'tk-asakusa-tempura': 0.45, 'tk-hamarikyu': 0.4, 'tk-nakameguro': 0.4, 'tk-shimokita': 0.35, 'tk-nonbei': 0.35,
+  'tk-kappabashi': 0.25, 'tk-yanaka': 0.2, 'tk-nezu': 0.2, 'tk-kagurazaka': 0.15, 'tk-jimbocho': 0.1,
+  'ls-belem-tower': 0.95, 'ls-jeronimos': 0.9, 'ls-pasteis': 0.9, 'ls-tram28': 0.85, 'ls-castelo': 0.85, 'ls-comercio': 0.8,
+  'ls-alfama': 0.8, 'ls-timeout': 0.75, 'ls-bairro': 0.7, 'ls-lxfactory': 0.65, 'ls-pinkstreet': 0.65, 'ls-chiado': 0.65,
+  'ls-fado': 0.6, 'ls-maat': 0.55, 'ls-graca': 0.5, 'ls-gulbenkian': 0.45, 'ls-azulejo': 0.4, 'ls-ginjinha': 0.4,
+  'ls-catarina': 0.35, 'ls-cervejaria': 0.35, 'ls-principe': 0.3, 'ls-eduardo': 0.3, 'ls-ladra': 0.25, 'ls-estrela': 0.2,
+  'ls-ourique': 0.15,
+}
+for (const c of [tokyo, lisbon]) for (const p of c.places) if (FAME[p.id] !== undefined) p.rank = FAME[p.id]
+
 export const CITIES: City[] = [tokyo, lisbon, london]
 
 export function findCity(text: string): City | undefined {

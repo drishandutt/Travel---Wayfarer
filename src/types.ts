@@ -17,6 +17,7 @@ export interface TripBrief {
   budgetTier?: BudgetTier
   budgetAmount?: number         // total, in USD
   pace?: 'slow' | 'balanced' | 'packed'
+  familiarity?: number          // 0 first time there … 1 knows it like a local: must-sees vs hidden gems
   startDate?: string            // ISO yyyy-mm-dd, set on the trip dashboard
   tastes?: string[]             // remembered preferences, e.g. ['traditional', 'japanese']
   open?: string[]               // questions answered "you choose" (or not caught): don't ask again
@@ -39,7 +40,7 @@ export interface Place {
   book?: string                 // set when it should be booked ahead, with the why
   keywords?: string[]           // cuisine & style words people search by ("tempura", "street food")
   custom?: PlaceSource          // set on places the travellers added themselves
-  rank?: number                 // 0..1, how well known it is; unset on the hand-picked cities, where every place is a headliner
+  rank?: number                 // 0..1, how well known it is: 1 is on every first-timer's list, 0 only locals know
 }
 
 // Where a traveller's own place came from: a maps link they shared, or a name they typed.

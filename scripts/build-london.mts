@@ -152,7 +152,10 @@ function tagsOf(l: Listing, kind: PlaceKind): Vibe[] {
   if (/\b(romantic|candle|sunset|rooftop|views?)\b/.test(s)) t.add('romantic')
   if (/\b(climb|zip|kayak|boat|cycling|bike|escape room|go-?kart|thrill)\b/.test(s)) t.add('adventure')
   if (kind === 'park' || /\b(quiet|peaceful|relax|calm|tranquil|spa)\b/.test(s)) t.add('relaxed')
-  if (!t.size) t.add(kind === 'food' ? 'food' : 'culture')
+  // somewhere to eat or drink is that, whatever its walls are: the café in a crypt isn't culture
+  if (kind === 'food' || kind === 'cafe' || kind === 'bar') for (const v of ['culture', 'history', 'art', 'shopping', 'nature', 'adventure'] as Vibe[]) t.delete(v)
+  if (!t.size) t.add(kind === 'bar' ? 'nightlife' : 'culture')
+  if (kind === 'food' || kind === 'cafe') t.add('food')
   return [...t].slice(0, 3)
 }
 

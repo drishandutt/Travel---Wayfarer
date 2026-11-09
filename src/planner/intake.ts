@@ -122,7 +122,7 @@ export function nextQuestion(b: TripBrief): string {
     case 'budget':
       return 'Last one: rough budget? A number works, or just “cheap”, “comfortable” or “splurge”.'
     default:
-      return 'That’s everything. Hit “Pick places” when you’re ready.'
+      return `That’s everything. Tell me how well you know ${cityById(b.destination)?.name ?? 'the city'} below, then hit “Pick places”.`
   }
 }
 

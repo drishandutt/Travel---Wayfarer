@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { cityById, findCity, tripCity } from '../src/data/cities'
-import { buildDeck, shortlist, SHORTLIST } from '../src/planner/core'
+import { buildDeck, scorePlace, shortlist, SHORTLIST } from '../src/planner/core'
 import { MockPlanner } from '../src/planner/mockPlanner'
 import { applyEdit, type PlanSlice } from '../src/planner/edits'
 import { contextOf, runTool } from '../src/agent/run'
@@ -85,6 +85,23 @@ describe('London', () => {
     const text = contextOf({ ...initialState, brief, phase: 'review', days: [] }, null)
     assert.match(text, /the best 150 of \d+ for this trip; search_places finds the rest/)
     assert.ok(text.length < 39_000)
+  })
+})
+
+describe('how well they know the city', () => {
+  const fame = (days: DayPlan[]) => { const s = days.flatMap(d => d.stops.map(x => x.place.rank ?? 0)); return s.reduce((a, b) => a + b, 0) / s.length }
+  for (const city of ['london', 'tokyo', 'lisbon']) {
+    it(`gives a first-timer the famous places and a local the quieter ones in ${city}`, async () => {
+      const b = { destination: city, days: 2, vibes: ['culture' as const], travelers: 2 }
+      const first = await plan({ ...b, familiarity: 0 })
+      const local = await plan({ ...b, familiarity: 1 })
+      assert.ok(fame(first) - fame(local) > 0.12, `first-timer ${fame(first).toFixed(2)} vs local ${fame(local).toFixed(2)}`)
+    })
+  }
+  it('says why on the swipe card', () => {
+    const b = { ...brief, destination: 'tokyo', familiarity: 1 }
+    assert.equal(scorePlace(cityById('tokyo')!.places.find(p => p.id === 'tk-yanaka')!, { ...b, vibes: [] }).why, 'off the tourist trail')
+    assert.equal(scorePlace(cityById('tokyo')!.places.find(p => p.id === 'tk-sensoji')!, { ...b, vibes: [], familiarity: 0 }).why, 'a must on a first visit')
   })
 })
 

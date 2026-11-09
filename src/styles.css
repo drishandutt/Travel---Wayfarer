@@ -142,6 +142,17 @@ input { font: inherit; }
 .quick-replies { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; animation: msgIn .35s var(--ease) both; }
 .quick-replies button { min-height: 34px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--paper); font-size: 13px; transition: background .2s; }
 .quick-replies button:hover { background: rgba(var(--paper-rgb), .08); }
+.trip-slider { padding: 14px 16px 12px; border-radius: 18px; background: rgba(var(--paper-rgb), .06); border: 1px solid var(--line); animation: msgIn .35s var(--ease) both; }
+.trip-slider label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 10px; }
+.trip-slider input[type=range] { width: 100%; height: 28px; margin: 0; background: transparent; appearance: none; -webkit-appearance: none; cursor: pointer; touch-action: pan-y; }
+.trip-slider input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 99px; background: linear-gradient(to right, var(--amber-fill) var(--fill), rgba(var(--paper-rgb), .14) var(--fill)); }
+.trip-slider input[type=range]::-moz-range-track { height: 6px; border-radius: 99px; background: linear-gradient(to right, var(--amber-fill) var(--fill), rgba(var(--paper-rgb), .14) var(--fill)); }
+.trip-slider input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; margin-top: -9px; border-radius: 50%; background: var(--paper); border: 2px solid var(--ink); box-shadow: 0 1px 4px rgba(var(--shadow-rgb), .3); }
+.trip-slider input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--paper); border: 2px solid var(--ink); }
+.trip-slider input[type=range]:focus-visible { outline: 2px solid var(--amber-fill); outline-offset: 4px; border-radius: 8px; }
+.trip-slider-ends { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--paper-faint); margin-top: 2px; }
+.trip-slider-now { margin: 8px 0 0; font-size: 13px; color: var(--paper-dim); line-height: 1.4; }
+.trip-slider-now b { color: var(--paper); font-weight: 600; }
 .composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
 .composer input { flex: 1; padding: 11px 16px; border-radius: 999px; border: 1px solid var(--line); background: rgba(var(--paper-rgb), .06); color: var(--paper); outline: none; transition: border-color .2s; }
 .composer input:focus { border-color: var(--line-2); }

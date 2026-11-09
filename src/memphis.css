@@ -84,6 +84,11 @@
 .suggestions button { border: 2px dashed var(--m-edge); background: transparent; }
 .suggestions button:nth-child(1):hover { border-color: var(--m-pink); } .suggestions button:nth-child(2):hover { border-color: var(--m-teal); }
 .quick-replies button { border: 2px solid var(--m-edge); }
+.trip-slider { border: 2px solid var(--m-edge); }
+.trip-slider input[type=range]::-webkit-slider-runnable-track { border: 2px solid var(--m-ink); height: 10px; background: linear-gradient(to right, var(--m-yellow) var(--fill), transparent var(--fill)); }
+.trip-slider input[type=range]::-moz-range-track { border: 2px solid var(--m-ink); height: 10px; background: linear-gradient(to right, var(--m-yellow) var(--fill), transparent var(--fill)); }
+.trip-slider input[type=range]::-webkit-slider-thumb { margin-top: -9px; background: var(--m-pink); border: 2px solid var(--m-ink); box-shadow: 2px 2px 0 var(--m-ink); }
+.trip-slider input[type=range]::-moz-range-thumb { background: var(--m-pink); border: 2px solid var(--m-ink); box-shadow: 2px 2px 0 var(--m-ink); }
 .quick-replies button:nth-child(4n+1):hover { background: var(--m-yellow); color: var(--m-ink); }
 .quick-replies button:nth-child(4n+2):hover { background: var(--m-pink); color: var(--m-ink); }
 .quick-replies button:nth-child(4n+3):hover { background: var(--m-teal); color: var(--m-ink); }

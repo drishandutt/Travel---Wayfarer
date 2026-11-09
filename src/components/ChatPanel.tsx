@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatMessage, TripState } from '../state/tripStore'
 import { ChevronIcon, SendIcon } from './Icons'
 import { QUICK_REPLIES, nextField } from '../planner/intake'
+import { SLIDERS, stepOf, valueOf, type BriefSlider } from '../planner/sliders'
+import { cityById } from '../data/cities'
+import type { TripBrief } from '../types'
 import type { TripNote, TripPerson } from '../trip/types'
 import { Avatar } from './money/parts'
 
@@ -37,6 +40,7 @@ interface Props {
   invitePrompt?: { onYes: () => void; onNo: () => void }
   confirm?: { question: string; yes: string; onYes: () => void; onNo: () => void }   // the assistant asking before a money or people change
   onInvite?: () => void
+  onBrief?: (patch: Partial<TripBrief>) => void   // a slider moved
 }
 
 // Message ids start with the time they were made, which is enough to slot the group's own
@@ -60,7 +64,7 @@ function threadOf(messages: ChatMessage[], notes: TripNote[]): (ChatMessage | Tr
   return out
 }
 
-export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, onCollapse, onFocusInput, group, onNote, invitePrompt, confirm, onInvite }: Props) {
+export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, onCollapse, onFocusInput, group, onNote, invitePrompt, confirm, onInvite, onBrief }: Props) {
   const [text, setText] = useState('')
   const [toGroup, setToGroup] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -85,6 +89,9 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
   // tap-to-answer chips for the question on screen (not over the opening examples)
   const field = !member && !locked && !typing && state.messages.length > 1 ? nextField(state.brief) : undefined
   const replies = field && QUICK_REPLIES[field]
+  // once the basic questions are answered, the sliders tune the rest
+  const cityName = cityById(state.brief.destination)?.name
+  const tuning = !member && !locked && !typing && !field && cityName && onBrief && state.messages.length > 1
   const thread = useMemo(() => threadOf(state.messages, group?.notes ?? []), [state.messages, group?.notes])
   const canApply = !member && (state.phase === 'review' || state.phase === 'final')
   const joined = group?.people.filter(p => p.joined).length ?? 0
@@ -147,6 +154,9 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
             </div>
           </>
         )}
+        {tuning && !confirm && SLIDERS.map(s => (
+          <TripSlider key={s.key} slider={s} city={cityName} value={state.brief[s.key]} onChange={v => onBrief({ [s.key]: v })} />
+        ))}
         {invitePrompt && (
           <div className="quick-replies">
             <button onClick={invitePrompt.onYes}>Yes, add my friends</button>
@@ -197,6 +207,26 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
         <button type="submit" aria-label="Send" disabled={!text.trim()}><SendIcon /></button>
       </form>
     </section>
+  )
+}
+
+// One question answered by dragging: five steps, each saying what it does to the plan.
+function TripSlider({ slider, city, value, onChange }: { slider: BriefSlider; city: string; value: number | undefined; onChange: (v: number) => void }) {
+  const n = slider.stops.length
+  const step = stepOf(value, n)
+  const stop = slider.stops[step]
+  return (
+    <div className="trip-slider" style={{ '--fill': `${(step / (n - 1)) * 100}%` } as React.CSSProperties}>
+      <label htmlFor={`slider-${slider.key}`}>{slider.question(city)}</label>
+      <input
+        id={`slider-${slider.key}`}
+        type="range" min={0} max={n - 1} step={1} value={step}
+        aria-valuetext={`${stop.label}: ${stop.effect}`}
+        onChange={e => onChange(valueOf(Number(e.target.value), n))}
+      />
+      <div className="trip-slider-ends" aria-hidden><span>{slider.ends[0]}</span><span>{slider.ends[1]}</span></div>
+      <p className="trip-slider-now"><b>{stop.label}.</b> {stop.effect}.</p>
+    </div>
   )
 }
 

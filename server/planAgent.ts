@@ -74,8 +74,15 @@ Be decisive: do not ask the user questions, and do not write prose outside tool 
 
 function catalogLines(city: City): string {
   return city.places
-    .map(p => `${p.id} | ${p.name} | ${p.kind} | ${p.tags.join(',')} | price ${p.price}/3 | ${p.minutes} min | best ${p.bestAt ?? 'any'} | ${p.blurb}`)
+    .map(p => `${p.id} | ${p.name} | ${p.kind} | ${p.tags.join(',')} | price ${p.price}/3 | ${p.minutes} min | best ${p.bestAt ?? 'any'} | fame ${p.rank?.toFixed(1) ?? '?'} | ${p.blurb}`)
     .join('\n')
+}
+
+function familiarityText(x: number): string {
+  return x < 0.2 ? 'first time there: plan the famous must-sees (high fame in the catalog)'
+    : x < 0.45 ? 'been before: the big names they missed, plus some local favourites'
+    : x < 0.7 ? 'knows it fairly well: favour local favourites over the famous sights'
+    : 'knows it like a local: skip the famous sights, plan hidden gems (low fame in the catalog)'
 }
 
 function briefText(brief: TripBrief): string {
@@ -85,6 +92,7 @@ function briefText(brief: TripBrief): string {
     `Travellers: ${brief.travelers ?? 2}`,
     `Vibe: ${brief.vibes.join(', ') || 'a bit of everything'}`,
     `Budget: ${brief.budgetAmount ? `$${brief.budgetAmount} total` : ''} (${resolveBudgetTier(brief)} tier)`,
+    ...(brief.familiarity !== undefined ? [`Knows the city: ${familiarityText(brief.familiarity)}`] : []),
     `Pace: ${brief.pace ?? 'balanced'} (~${pace.perDay} stops/day, ${pace.buffer} min buffers, default start ${fmtClock(pace.start)})`,
   ].join('\n')
 }
@@ -142,7 +150,7 @@ export async function* planWithClaude(brief: TripBrief, signal: AbortSignal, pic
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     {
       role: 'user',
-      content: `Trip brief:\n${briefText(brief)}\n\n${picks ? 'The traveller hand-picked every place below by swiping: keep all of them in shortlist_places unless one truly cannot fit.\n\n' : ''}Catalog (id | name | kind | tags | price | visit length | best time | note):\n${catalogLines(city)}\n\nPlan all ${totalDays} days.`,
+      content: `Trip brief:\n${briefText(brief)}\n\n${picks ? 'The traveller hand-picked every place below by swiping: keep all of them in shortlist_places unless one truly cannot fit.\n\n' : ''}Catalog (id | name | kind | tags | price | visit length | best time | fame 0-1 | note):\n${catalogLines(city)}\n\nPlan all ${totalDays} days.`,
     },
   ]
   const committed = new Map<number, DayPlan>()

@@ -713,7 +713,8 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         onYes: () => { setInvitePrompt(false); openInvite() },
         onNo: () => { setInvitePrompt(false); dispatch({ type: 'chat', role: 'ai', text: 'No problem. You can invite them later.' }) },
       } : undefined}
-      onInvite={account && !member ? openInvite : undefined} />
+      onInvite={account && !member ? openInvite : undefined}
+      onBrief={patch => dispatch({ type: 'brief', brief: { ...latest.current.brief, ...patch } })} />
   )
   const journalEl = state.phase === 'intake' ? null : (
         <aside className={`panel journal ${journalCollapsed ? 'collapsed' : ''}`} aria-hidden={journalCollapsed} {...inertIf(journalCollapsed)}>

@@ -28,9 +28,22 @@ export function scorePlace(p: Place, brief: TripBrief): { score: number; why: st
   // remembered tastes ("traditional", "japanese") pull matching places up everywhere
   const loved = (brief.tastes ?? []).filter(t => p.keywords?.includes(t))
   score += loved.length * 1.5
-  // in a city with thousands of places, the famous ones lead (the hand-picked cities leave this unset)
-  if (p.rank !== undefined) score += p.rank * 4
+  // How well known a place should be for this traveller: a first-timer wants the famous top band;
+  // someone who knows the city wants the broad middle, places people who care know of but the
+  // coach tours don't. Not the very bottom: places nobody has written about at all are as often
+  // forgettable as hidden.
+  const local = brief.familiarity ?? 0
+  if (p.rank !== undefined) {
+    const lo = 0.8 - 0.55 * local
+    const hi = 1 - 0.4 * local
+    const off = p.rank < lo ? lo - p.rank : p.rank > hi ? p.rank - hi : 0
+    score += 4 * Math.max(0, 1 - off * 2.5)
+  }
+  const gem = local >= 0.6 && p.rank !== undefined && p.rank <= 0.4
+  const icon = local <= 0.4 && p.rank !== undefined && p.rank >= 0.8
   const why = loved.length ? `your kind of thing: ${loved.join(' + ')}`
+    : gem ? 'off the tourist trail'
+    : icon ? 'a must on a first visit'
     : hits.length ? `matches ${hits.join(' + ')}`
     : tier === 'shoestring' && p.price >= 3 ? 'over budget' : brief.vibes.length ? 'weak vibe match' : 'a local favourite'
   return { score, why }

@@ -4,6 +4,7 @@ Raw notes on feature ideas as they come up. The organised master list is [FEATUR
 
 ## 2026-11-09
 
+- **How well do you know the city?** A slider in the chat, after the trip questions, from *First time here* (all the must-sees) to *Basically a local* (hidden gems, none of the obvious). Every place now has a fame score (London's from Wikidata, Tokyo's and Lisbon's set by hand), and the planner, swipe deck and assistant aim at the band that fits. Sliders are defined in `src/planner/sliders.ts`, so more can follow.
 - **Reels and videos load once per place.** The first search for a place's clips is kept in the database (shared by every traveller, surviving restarts and deploys) and on the device for a week, so opening it again is instant. Clips over a week old still show at once and are refreshed in the background. The swipe deck also starts the next card's search early.
 - **London**, the first city built from public data rather than by hand: about 1,600 sights, museums, parks, markets, restaurants and bars from Wikivoyage's London guides, ranked by how well known they are on Wikidata, plus 30 hotels across three budgets. `npx tsx scripts/build-london.mts` rebuilds it. With that many places, the planner, swipe deck and assistant each weigh a shortlist of the best matches for the trip, and the assistant can search the rest.
 - The assistant picks a real place itself when asked for a kind the app doesn't list (a nightclub, say), and chooses the day when you leave it open.
