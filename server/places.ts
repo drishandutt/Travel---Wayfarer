@@ -6,6 +6,7 @@ import { mapsHost, parseCoords, parseMapsLink, type MapsLink } from '../src/plan
 import { haversineKm } from '../src/planner/geo'
 import { FALLBACK, MODEL, brainEnabled, client, textOf } from './claude'
 import { OPENAI_MODEL, openai } from './openai'
+import type { Db } from './money/db'
 
 // Travellers' own places: find what they shared or typed, and the reels and videos of it.
 //   resolvePlace  a maps link (Google, Apple, OpenStreetMap, Waze, bare coordinates) or a name
@@ -371,24 +372,80 @@ export function mentions(text: string, name: string): boolean {
 
 interface VideoQuery { name: string; city: string; area?: string }
 
-const cache = new Map<string, { at: number; value: Promise<PlaceVideos> }>()
+// Searching for a place's clips takes many seconds (YouTube, then a web search for reels and
+// TikToks), so whatever is found is kept: in memory, and in the database so a restart or a
+// deploy doesn't forget it and every traveller shares it. Clips kept a week are still served
+// at once, and searched for again in the background in case newer ones have appeared. Finding
+// nothing is remembered for a few hours only, in case the search itself was having a bad day.
 const DAY_MS = 86_400_000
+const FRESH_MS = 7 * DAY_MS
+const KEEP_MS = 60 * DAY_MS
+const EMPTY_MS = 6 * 3_600_000
 
-export function placeVideos(q: VideoQuery): Promise<PlaceVideos> {
-  const key = fold(`${q.name}|${q.city}`)
-  const hit = cache.get(key)
-  if (hit && Date.now() - hit.at < DAY_MS) return hit.value
-  if (cache.size > 500) cache.delete(cache.keys().next().value!)
-  const value = findVideos(q)
-  cache.set(key, { at: Date.now(), value })
-  // a failed lookup isn't kept, so it's tried again next time
-  value.then(v => { if (!v.videos.length) cache.delete(key) }, () => cache.delete(key))
-  return value
+interface Held { at: number; value: PlaceVideos }
+const memory = new Map<string, Held>()
+const running = new Map<string, Promise<PlaceVideos>>()
+let videoDb: Db | null = null
+
+export function attachVideoDb(db: Db | null) { videoDb = db }
+
+const videoKey = (q: VideoQuery) => fold(`${q.name.trim()}|${q.city.trim()}`)
+const usable = (h: Held | undefined, now = Date.now()) => Boolean(h && now - h.at < (h.value.videos.length ? KEEP_MS : EMPTY_MS))
+
+function remember(key: string, held: Held) {
+  memory.delete(key)
+  if (memory.size >= 2000) memory.delete(memory.keys().next().value!)
+  memory.set(key, held)
 }
 
-export const videoLookupCached = (q: VideoQuery) => {
-  const hit = cache.get(fold(`${q.name}|${q.city}`))
-  return Boolean(hit && Date.now() - hit.at < DAY_MS)
+async function stored(key: string): Promise<Held | undefined> {
+  const mem = memory.get(key)
+  if (mem || !videoDb) return mem
+  try {
+    const row = await videoDb.one<{ videos: string; found_at: number }>('SELECT videos, found_at FROM place_videos WHERE key = ?', key)
+    if (!row) return undefined
+    const held = { at: row.found_at, value: JSON.parse(row.videos) as PlaceVideos }
+    remember(key, held)
+    return held
+  } catch (err) {
+    console.warn('[videos] reading the cache:', (err as Error).message)
+    return undefined
+  }
+}
+
+// One search per place at a time, however many travellers open it together.
+function search(q: VideoQuery, key: string, previous?: Held): Promise<PlaceVideos> {
+  let run = running.get(key)
+  if (run) return run
+  run = findVideos(q)
+    .then(async value => {
+      // a search that came back empty never replaces clips found before
+      if (!value.videos.length && previous?.value.videos.length) return previous.value
+      const held = { at: Date.now(), value }
+      remember(key, held)
+      await videoDb?.run(`INSERT INTO place_videos (key, name, city, videos, found_at) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (key) DO UPDATE SET videos = excluded.videos, found_at = excluded.found_at, name = excluded.name`,
+        key, q.name.slice(0, 120), q.city.slice(0, 60), JSON.stringify(value), held.at)
+        .catch(err => console.warn('[videos] saving to the cache:', (err as Error).message))
+      return value
+    })
+    .finally(() => running.delete(key))
+  running.set(key, run)
+  return run
+}
+
+// What we already hold for this place, without searching: for the rate limit, which only counts real searches.
+export async function cachedVideos(q: VideoQuery): Promise<PlaceVideos | undefined> {
+  const held = await stored(videoKey(q))
+  return usable(held) ? held!.value : undefined
+}
+
+export async function placeVideos(q: VideoQuery): Promise<PlaceVideos> {
+  const key = videoKey(q)
+  const held = await stored(key)
+  if (!usable(held)) return search(q, key, held)
+  if (Date.now() - held!.at > FRESH_MS && !running.has(key)) search(q, key, held).catch(err => console.warn('[videos] refreshing:', (err as Error).message))
+  return held!.value
 }
 
 async function findVideos(q: VideoQuery): Promise<PlaceVideos> {

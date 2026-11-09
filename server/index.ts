@@ -12,7 +12,7 @@ import { planWithClaude } from './planAgent'
 import { hotelsWithClaude } from './hotelAgent'
 import { closeMoneyDb, moneyApi } from './money/routes'
 import { clientIp, overLimit } from './money/auth'
-import { PlaceError, placeVideos, resolvePlace, traceSocial, videoLookupCached, type ResolveRequest } from './places'
+import { PlaceError, cachedVideos, placeVideos, resolvePlace, traceSocial, type ResolveRequest } from './places'
 import { openaiEnabled } from './openai'
 import { AgentError, agentEnabled, agentTurn } from './agent'
 import { captureServerConsole, flush as flushLogs } from './dev/log'
@@ -128,13 +128,17 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/places/videos') {
       const q = { name: (url.searchParams.get('name') ?? '').slice(0, 120).trim(), city: (url.searchParams.get('city') ?? '').slice(0, 60).trim(), area: url.searchParams.get('area')?.slice(0, 120) || undefined }
       if (!q.name || !q.city) return json(res, 400, { error: 'name and city are required' })
+      await moneyApi() // opens the database the found clips are kept in, once
       // each fresh lookup can run a web search, so fresh ones are limited; cached ones are free
-      if (!videoLookupCached(q) && overLimit(`videos:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'Too many lookups. Try again in a bit.' })
-      // ?debug=1: run the Instagram/TikTok search fresh and show what it found and kept (temporary, for checking it live)
-      if (url.searchParams.get('debug') === '1') {
-        if (overLimit(`videos:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'Too many lookups. Try again in a bit.' })
-        return json(res, 200, await traceSocial(q))
+      const held = url.searchParams.get('debug') === '1' ? undefined : await cachedVideos(q)
+      if (held) {
+        res.setHeader('Cache-Control', 'private, max-age=3600')
+        // served from what's kept, with a background refresh when it's getting old
+        return json(res, 200, await placeVideos(q))
       }
+      if (overLimit(`videos:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'Too many lookups. Try again in a bit.' })
+      // ?debug=1: run the Instagram/TikTok search fresh and show what it found and kept (temporary, for checking it live)
+      if (url.searchParams.get('debug') === '1') return json(res, 200, await traceSocial(q))
       res.setHeader('Cache-Control', 'private, max-age=3600')
       return json(res, 200, await placeVideos(q))
     }

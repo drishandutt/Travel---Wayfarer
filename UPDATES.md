@@ -4,6 +4,7 @@ Raw notes on feature ideas as they come up. The organised master list is [FEATUR
 
 ## 2026-11-09
 
+- **Reels and videos load once per place.** The first search for a place's clips is kept in the database (shared by every traveller, surviving restarts and deploys) and on the device for a week, so opening it again is instant. Clips over a week old still show at once and are refreshed in the background. The swipe deck also starts the next card's search early.
 - **London**, the first city built from public data rather than by hand: about 1,600 sights, museums, parks, markets, restaurants and bars from Wikivoyage's London guides, ranked by how well known they are on Wikidata, plus 30 hotels across three budgets. `npx tsx scripts/build-london.mts` rebuilds it. With that many places, the planner, swipe deck and assistant each weigh a shortlist of the best matches for the trip, and the assistant can search the rest.
 - The assistant picks a real place itself when asked for a kind the app doesn't list (a nightclub, say), and chooses the day when you leave it open.
 - **Share to Wayfarer.** Instagram reels, YouTube videos, X and LinkedIn posts, web searches, pages and map links can be shared to Wayfarer from the iPhone's share sheet, or pasted into chat. The server opens the link in a headless browser (signed in where the site needs it), the AI picks out the places, and you choose which of your trips they go into. They're added automatically.

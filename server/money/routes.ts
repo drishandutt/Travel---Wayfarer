@@ -17,6 +17,7 @@ import * as vault from '../vault/store'
 import { MAX_ORIGINAL_BYTES } from '../../src/vault/types'
 import { registerDevRoutes } from '../dev/routes'
 import { attachLogDb } from '../dev/log'
+import { attachVideoDb } from '../places'
 
 // The money API: accounts, groups, expenses, settling up, and a live stream per group.
 // The server trusts nothing it can work out itself: splits, balances and who may see
@@ -556,6 +557,7 @@ export function moneyApi(): Promise<MoneyApi | null> {
       await importSqliteOnce(db)
       openDb = db
       attachLogDb(db)
+      attachVideoDb(db)
       const storage = vaultStorageFromEnv(MAX_ORIGINAL_BYTES)
       if (!storage) console.warn('[vault] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are unset: the photo vault is off.')
       return createMoneyApi(db, { storage, geocode: process.env.VAULT_GEOCODE === 'off' ? null : vault.nominatim(), limits: vaultLimitsFromEnv() })

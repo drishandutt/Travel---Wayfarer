@@ -3,6 +3,7 @@ import type { Place } from '../types'
 import type { Action, TripState } from '../state/tripStore'
 import type { DeckCard } from '../planner/core'
 import { cityOfPlace, tripCity } from '../data/cities'
+import { getVideos } from '../services/videos'
 import { PLACE_COVERS } from '../data/placeCovers'
 import { getPhotos, type Photo } from '../services/photos'
 import { SocialVideos } from './SocialVideos'
@@ -185,9 +186,12 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  // warm the photo cache for the next cards so they appear instantly
+  // warm the photo cache for the next cards so they appear instantly, and start the next card's
+  // reels and videos (a first search for a place takes a while; after that they're kept)
   useEffect(() => {
     state.deck.slice(state.deckIndex + 1, state.deckIndex + 3).forEach(c => { const p = byId(c.id); if (p) photosFor(p).catch(() => {}) })
+    const next = byId(state.deck[state.deckIndex + 1]?.id)
+    if (next) getVideos(next, cityOfPlace(next)?.name).catch(() => {})
   }, [state.deckIndex])
 
   const visible = state.deck.slice(state.deckIndex, state.deckIndex + 3)

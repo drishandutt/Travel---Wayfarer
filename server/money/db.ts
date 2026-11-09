@@ -328,6 +328,23 @@ export const MIGRATIONS = [`
       REVOKE ALL ON dev_logs, dev_cookies, dev_tokens FROM anon, authenticated;
     END IF;
   END $$;
+`, `
+  -- Reels and videos found for a place, by name and city, so the slow search runs once per
+  -- place rather than once per server start. videos is the PlaceVideos JSON the browser takes.
+  CREATE TABLE place_videos (
+    key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    city TEXT NOT NULL,
+    videos TEXT NOT NULL,
+    found_at BIGINT NOT NULL
+  );
+  ALTER TABLE place_videos ENABLE ROW LEVEL SECURITY;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON place_videos FROM anon, authenticated;
+    END IF;
+  END $$;
 `]
 
 // A transaction is one connection, and one connection runs one query at a time: reads that

@@ -32,19 +32,51 @@ function curated(placeId: string): Promise<PlaceVideos> {
   })
 }
 
-// Places we hold no clips for (the ones travellers add themselves, mostly) are looked up live
-// on the server, once per place per visit.
+// Places we hold no clips for (London's, and the ones travellers add themselves) are looked up
+// on the server, which keeps what it finds. This device keeps a copy for a week too, so a place
+// opened before shows its clips at once, even before the server answers.
 const live = new Map<string, Promise<PlaceVideos>>()
+const KEPT_MS = 7 * 86_400_000
+const KEPT_PREFIX = 'wayfarer.videos.'
+
+function kept(key: string): PlaceVideos | undefined {
+  try {
+    const raw = localStorage.getItem(KEPT_PREFIX + key)
+    if (!raw) return undefined
+    const { at, value } = JSON.parse(raw) as { at: number; value: PlaceVideos }
+    if (Date.now() - at < KEPT_MS && value?.videos?.length) return value
+    localStorage.removeItem(KEPT_PREFIX + key)
+  } catch { /* storage blocked, full or garbled: just ask the server */ }
+  return undefined
+}
+
+function keep(key: string, value: PlaceVideos) {
+  try {
+    localStorage.setItem(KEPT_PREFIX + key, JSON.stringify({ at: Date.now(), value }))
+  } catch {
+    // full: make room by dropping the clips kept longest, then try once more
+    try {
+      const old = Object.keys(localStorage).filter(k => k.startsWith(KEPT_PREFIX))
+        .map(k => ({ k, at: (JSON.parse(localStorage.getItem(k) ?? '{}') as { at?: number }).at ?? 0 }))
+        .sort((a, b) => a.at - b.at).slice(0, 50)
+      for (const o of old) localStorage.removeItem(o.k)
+      localStorage.setItem(KEPT_PREFIX + key, JSON.stringify({ at: Date.now(), value }))
+    } catch { /* storage unavailable */ }
+  }
+}
 
 export async function getVideos(place: { id: string; name: string; custom?: { address?: string } }, city?: string): Promise<PlaceVideos> {
   const held = await curated(place.id)
   if (held.videos.length || !city) return held
-  let found = live.get(place.id)
+  const key = `${place.name}|${city}`.toLowerCase()
+  const onDevice = kept(key)
+  if (onDevice) return onDevice
+  let found = live.get(key)
   if (!found) {
     const q = new URLSearchParams({ name: place.name, city, ...(place.custom?.address ? { area: place.custom.address } : {}) })
     found = fetch(`/api/places/videos?${q}`).then(r => (r.ok ? r.json() as Promise<PlaceVideos> : { videos: [] }))
-    live.set(place.id, found)
-    found.then(v => { if (!v.videos.length) live.delete(place.id) }, () => live.delete(place.id))
+    live.set(key, found)
+    found.then(v => { if (v.videos.length) keep(key, v); else live.delete(key) }, () => live.delete(key))
   }
   return found.catch(() => ({ videos: [] }))
 }
