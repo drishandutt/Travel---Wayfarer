@@ -3,7 +3,7 @@ import { tripCity } from '../data/cities'
 import { centroid, fmtClock } from './geo'
 import { resolveBudgetTier } from './intake'
 import { sleep, type PlannerEngine, type Picks } from './engine'
-import { PACE, applyGapFill, buildDay, findGapFill, groupDays, hotelLegs, scoreHotel, scorePlace } from './core'
+import { PACE, applyGapFill, buildDay, findGapFill, groupDays, hotelLegs, scoreHotel, scorePlace, shortlist } from './core'
 
 export class MockPlanner implements PlannerEngine {
   constructor(private speed = 1) {}
@@ -34,22 +34,38 @@ export class MockPlanner implements PlannerEngine {
       yield { type: 'thought', text: `Scanning ${city.places.length} places I know in ${city.name}…` }
       await this.wait(700, signal)
 
-      const scored = city.places.map(p => ({ p, ...scorePlace(p, brief) })).sort((a, b) => b.score - a.score)
+      const scored = shortlist(city.places, brief).map(p => ({ p, ...scorePlace(p, brief) })).sort((a, b) => b.score - a.score)
+      const pause = Math.min(1, 40 / scored.length) // the sweep takes as long for London as for Lisbon
       const need = Math.min(scored.length, days * pace.perDay)
       const keep = new Set(scored.slice(0, need).map(s => s.p.id))
+      // somewhere to eat each day, and a bar each night on a nightlife trip: in a big city the
+      // famous sights would otherwise crowd them all out
+      const kindOf = new Map(scored.map(s => [s.p.id, s.p.kind]))
+      const musts = [['food', 'cafe'], ...(brief.vibes.includes('nightlife') ? [['bar']] : [])]
+      for (const kinds of musts) {
+        const is = (id: string) => kinds.includes(kindOf.get(id)!)
+        const guarded = (id: string) => musts.some(k => k.includes(kindOf.get(id)!))
+        for (const s of scored.filter(s => is(s.p.id) && !keep.has(s.p.id))) {
+          if ([...keep].filter(is).length >= days) break
+          const weakest = [...scored].reverse().find(x => keep.has(x.p.id) && !guarded(x.p.id))
+          if (!weakest) break
+          keep.delete(weakest.p.id)
+          keep.add(s.p.id)
+        }
+      }
 
       // reveal candidates in a geographic sweep so pins "rain" across the city
       const sweep = [...scored].sort((a, b) => a.p.coord[0] - b.p.coord[0])
       for (const s of sweep) {
         yield { type: 'candidate', place: s.p, verdict: 'consider' }
-        await this.wait(110, signal)
+        await this.wait(110 * pause, signal)
       }
       await this.wait(500, signal)
       for (const s of scored) {
         const verdict = keep.has(s.p.id) ? 'keep' : 'drop'
         yield { type: 'candidate', place: s.p, verdict, reason: s.why }
         if (verdict === 'keep') yield { type: 'thought', text: `✓ ${s.p.name} — ${s.why}`, tone: 'decide' }
-        await this.wait(verdict === 'keep' ? 260 : 90, signal)
+        await this.wait(verdict === 'keep' ? 260 : 90 * pause, signal)
       }
       chosen = scored.filter(s => keep.has(s.p.id)).map(s => s.p)
     }
@@ -64,7 +80,7 @@ export class MockPlanner implements PlannerEngine {
       let plan = buildDay(i + 1, clusters[i], brief)
       // plug long idle stretches with something nearby before drawing the day
       for (let tries = 0; tries < 2; tries++) {
-        const fill = findGapFill(plan, city.places.filter(p => !used.has(p.id)), brief)
+        const fill = findGapFill(plan, shortlist(city.places, brief, 400).filter(p => !used.has(p.id)), brief)
         if (!fill) break
         used.add(fill.place.id)
         plan = applyGapFill(plan, fill, brief)

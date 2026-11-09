@@ -4,6 +4,8 @@ Raw notes on feature ideas as they come up. The organised master list is [FEATUR
 
 ## 2026-11-09
 
+- **London**, the first city built from public data rather than by hand: about 1,600 sights, museums, parks, markets, restaurants and bars from Wikivoyage's London guides, ranked by how well known they are on Wikidata, plus 30 hotels across three budgets. `npx tsx scripts/build-london.mts` rebuilds it. With that many places, the planner, swipe deck and assistant each weigh a shortlist of the best matches for the trip, and the assistant can search the rest.
+- The assistant picks a real place itself when asked for a kind the app doesn't list (a nightclub, say), and chooses the day when you leave it open.
 - **Share to Wayfarer.** Instagram reels, YouTube videos, X and LinkedIn posts, web searches, pages and map links can be shared to Wayfarer from the iPhone's share sheet, or pasted into chat. The server opens the link in a headless browser (signed in where the site needs it), the AI picks out the places, and you choose which of your trips they go into. They're added automatically.
 - **Dev tools** (owner only, from My trips): every log line and error from the server, browsers and the iPhone app; the signed-in sessions the link reader uses; a link-reader tester; and tokens for a new **cookie-sync Chrome extension** (`tools/cookie-sync`) that keeps those sessions fresh by itself.
 - **Start over** is in the top bar now, not at the bottom of the itinerary. It asks first, and the plan so far stays in My trips.

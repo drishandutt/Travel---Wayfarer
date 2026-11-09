@@ -39,6 +39,7 @@ export interface Place {
   book?: string                 // set when it should be booked ahead, with the why
   keywords?: string[]           // cuisine & style words people search by ("tempura", "street food")
   custom?: PlaceSource          // set on places the travellers added themselves
+  rank?: number                 // 0..1, how well known it is; unset on the hand-picked cities, where every place is a headliner
 }
 
 // Where a traveller's own place came from: a maps link they shared, or a name they typed.
@@ -69,6 +70,7 @@ export interface City {
   hotels: Hotel[]
   transport: Transport
   essentials: Essentials
+  credit?: string               // where its places come from, when that needs crediting
 }
 
 // Practical, slow-changing facts for the trip dashboard.

@@ -1,5 +1,8 @@
 import type { DayPlan, HotelScore, Leg, LngLat, Place, PlannerEvent, TripBrief } from '../types'
-import { applyGapFill, bestInsertIndex, buildDeck, findGapFill, orderDay, rebuildDay, withHotel, type DeckCard } from '../planner/core'
+import { applyGapFill, bestInsertIndex, buildDeck, findGapFill, orderDay, rebuildDay, shortlist, withHotel, type DeckCard } from '../planner/core'
+
+// A big city's swipe deck: its best matches, not all ~1,600 places.
+const DECK_SIZE = 40
 import { cityById, tripCity } from '../data/cities'
 import { applyDeckPicks, applyEdit, planDeckRequest, type DeckRequest, type EditResult, type PlanSlice } from '../planner/edits'
 import { centroid } from '../planner/geo'
@@ -565,7 +568,7 @@ function baseReducer(s: TripState, a: Action): TripState {
       if (!city) return s
       // the travellers' own finds lead the deck
       const own = new Set(s.brief.customPlaces?.map(p => p.id))
-      const ranked = buildDeck(city.places, s.brief)
+      const ranked = buildDeck(shortlist(city.places, s.brief, DECK_SIZE), s.brief)
       const deck = [...ranked.filter(c => own.has(c.id)).map(c => ({ ...c, why: 'You added this one', match: 1 })), ...ranked.filter(c => !own.has(c.id))]
       const first = city.places.find(p => p.id === deck[0]?.id)
       return {

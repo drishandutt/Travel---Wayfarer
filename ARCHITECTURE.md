@@ -377,7 +377,8 @@ server/
     storage.ts             Supabase Storage bucket (production) or disk with signed links (dev)
 src/
   types.ts                 Domain model + PlannerEvent union (the contract)
-  data/cities.ts           Seed places + hotels (Tokyo, Lisbon)
+  data/cities.ts           Places + hotels: Tokyo and Lisbon by hand, London from london.json
+  data/london.json         ~1,600 London places + 30 hotels, built by scripts/build-london.mts from Wikivoyage, ranked by Wikidata
   data/videos.ts           Checked reels + videos per place, loaded on first use
   data/hotelPhotos.ts      Hand-picked cover photo per hotel
   data/placeCovers.ts      Hand-picked first photo for places the lookup serves poorly

@@ -281,12 +281,15 @@ function DashboardBody({ state, city, onClose, onDates, onMoney, onPhotos, balan
           </dl>
           <h4>Good to know</h4>
           <ul className="tips">{city.essentials.etiquette.slice(0, 3).map(t => <li key={t}>{t}</li>)}</ul>
-          <h4>Phrases</h4>
-          <div className="phrases">
-            {city.essentials.phrases.map(p => (
-              <div key={p.en} title={p.say}><small>{p.en}</small><b>{p.local}</b></div>
-            ))}
-          </div>
+          {city.essentials.phrases.length > 0 && <>
+            <h4>Phrases</h4>
+            <div className="phrases">
+              {city.essentials.phrases.map(p => (
+                <div key={p.en} title={p.say}><small>{p.en}</small><b>{p.local}</b></div>
+              ))}
+            </div>
+          </>}
+          {city.credit && <p className="fine">{city.credit}</p>}
         </section>
       </div>
     </div>

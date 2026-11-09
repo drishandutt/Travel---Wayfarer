@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { City, DayPlan, Place, PlannerEvent, TripBrief } from '../src/types'
 import { tripCity } from '../src/data/cities'
 import { centroid, estimateTravel, fmtClock } from '../src/planner/geo'
-import { PACE, buildDay } from '../src/planner/core'
+import { PACE, buildDay, shortlist } from '../src/planner/core'
 import { resolveBudgetTier } from '../src/planner/intake'
 import { sleep, type Picks } from '../src/planner/engine'
 import { FALLBACK, MODEL, client, effortFor, textOf } from './claude'
@@ -123,8 +123,9 @@ function parseClock(hhmm: string): number | undefined {
 export async function* planWithClaude(brief: TripBrief, signal: AbortSignal, picks?: Picks): AsyncGenerator<PlannerEvent> {
   const base = tripCity(brief)
   if (!base) throw new Error(`No map data for "${brief.destination}".`)
-  // With swipe picks, Claude plans only what the traveller kept.
-  const city: City = picks ? { ...base, places: base.places.filter(p => picks.liked.includes(p.id)) } : base
+  // With swipe picks, Claude plans only what the traveller kept; otherwise a big city's best
+  // matches for this brief, since nobody (Claude included) weighs 1,600 places well at once.
+  const city: City = { ...base, places: picks ? base.places.filter(p => picks.liked.includes(p.id)) : shortlist(base.places, brief) }
   if (!city.places.length) throw new Error('No places were picked.')
   const totalDays = Math.min(brief.days ?? 3, city.places.length)
   const byId = new Map(city.places.map(p => [p.id, p]))
@@ -135,7 +136,7 @@ export async function* planWithClaude(brief: TripBrief, signal: AbortSignal, pic
   yield { type: 'thought', text: `Reading ${city.places.length} places in ${city.name} against your brief…` }
   for (const p of [...city.places].sort((a, b) => a.coord[0] - b.coord[0])) {
     yield { type: 'candidate', place: p, verdict: 'consider' }
-    await sleep(70, signal)
+    await sleep(70 * Math.min(1, 40 / city.places.length), signal)
   }
 
   const messages: Anthropic.Beta.BetaMessageParam[] = [

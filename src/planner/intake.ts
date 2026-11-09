@@ -54,7 +54,7 @@ export function extractBrief(text: string, prev: TripBrief): TripBrief {
   }
   if (!money && /\b(cheap|budget|backpack|shoestring|broke)\b/.test(t)) next.budgetTier = 'shoestring'
   if (/\b(luxury|splurge|fancy|5[- ]star|bougie)\b/.test(t)) next.budgetTier = 'luxury'
-  if (/\b(mid|moderate|comfortable|reasonable)\b/.test(t)) next.budgetTier = 'comfort'
+  if (/\b(mid|moderate|comfort|comfortable|reasonable)\b/.test(t)) next.budgetTier = 'comfort'
 
   if (/\b(slow|relaxed|chill|easy)\b/.test(t)) next.pace = 'slow'
   if (/\b(packed|see everything|maximi[sz]e|busy)\b/.test(t)) next.pace = 'packed'

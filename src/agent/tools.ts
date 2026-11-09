@@ -19,6 +19,15 @@ export const AGENT_TOOLS = {
     description: 'Find Instagram reels, TikToks and YouTube videos of a place. Returns titles, creators and links.',
     args: z.strictObject({ place_id: id }),
   },
+  search_places: {
+    risk: 'read',
+    description: 'Search every place the app knows in the trip’s city, including ones not listed in the trip data. By words (name, cuisine, style: "jazz", "pie and mash", "Tate"), by kind, near a place, or any mix. Returns up to 15 places with ids, best first; add one with add_stop.',
+    args: z.strictObject({
+      query: nullable(z.string().max(80)),
+      kind: nullable(z.enum(['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint'])),
+      near_place_id: nullable(id),
+    }),
+  },
   money_summary: {
     risk: 'read',
     description: 'The trip’s shared expenses: currency, people (with member ids), who owes whom, total spent, and recent expenses. Only for a trip shared with a group.',

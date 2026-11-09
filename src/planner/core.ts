@@ -28,6 +28,8 @@ export function scorePlace(p: Place, brief: TripBrief): { score: number; why: st
   // remembered tastes ("traditional", "japanese") pull matching places up everywhere
   const loved = (brief.tastes ?? []).filter(t => p.keywords?.includes(t))
   score += loved.length * 1.5
+  // in a city with thousands of places, the famous ones lead (the hand-picked cities leave this unset)
+  if (p.rank !== undefined) score += p.rank * 4
   const why = loved.length ? `your kind of thing: ${loved.join(' + ')}`
     : hits.length ? `matches ${hits.join(' + ')}`
     : tier === 'shoestring' && p.price >= 3 ? 'over budget' : brief.vibes.length ? 'weak vibe match' : 'a local favourite'
@@ -299,6 +301,22 @@ export function applyGapFill(day: DayPlan, fill: GapFill, brief: TripBrief, hote
 export interface DeckCard { id: string; why: string; match: number }
 
 // Best matches first, so a user who stops early still has a good trip.
+// A city with more places than anyone could weigh (London has ~1,600): the ones worth
+// considering for this brief, best first, with every kind of place in the mix so a museum trip
+// still eats. The travellers' own finds always stay. Small hand-picked cities pass through whole.
+export const SHORTLIST = 120
+export function shortlist(places: Place[], brief: TripBrief, n = SHORTLIST): Place[] {
+  if (places.length <= n) return places
+  const scored = places.map(p => ({ p, score: scorePlace(p, brief).score })).sort((a, b) => b.score - a.score)
+  const out = new Set(scored.filter(x => x.p.custom).map(x => x.p))
+  const kinds = [...new Set(places.map(p => p.kind))]
+  const each = Math.max(2, Math.floor(n / (kinds.length * 3)))
+  for (const k of kinds) for (const x of scored.filter(x => x.p.kind === k).slice(0, each)) out.add(x.p)
+  for (const x of scored) { if (out.size >= n) break; out.add(x.p) }
+  const rank = new Map(scored.map((x, i) => [x.p.id, i]))
+  return [...out].sort((a, b) => rank.get(a.id)! - rank.get(b.id)!)
+}
+
 export function buildDeck(places: Place[], brief: TripBrief): DeckCard[] {
   const scored = places.map(p => ({ p, ...scorePlace(p, brief) }))
   const top = Math.max(...scored.map(s => s.score))

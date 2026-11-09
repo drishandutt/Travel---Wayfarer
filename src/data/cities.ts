@@ -1,4 +1,5 @@
-import type { City, Place, TripBrief } from '../types'
+import type { City, Hotel, Place, TripBrief } from '../types'
+import londonData from './london.json'
 
 // Hand-curated seed data. In production this is replaced by a places provider
 // (Google Places / Foursquare / OSM) behind the same `City` shape.
@@ -131,7 +132,35 @@ const lisbon: City = {
   ],
 }
 
-export const CITIES: City[] = [tokyo, lisbon]
+// Built from public guides rather than by hand (scripts/build-london.mts): every sight, museum,
+// park, market, restaurant and bar Wikivoyage's London districts list, ranked by fame on Wikidata.
+const london: City = {
+  id: 'london',
+  name: 'London',
+  country: 'United Kingdom',
+  center: [-0.1276, 51.5072],
+  zoom: 11.4,
+  aliases: ['london', 'england'],
+  // Tube single ride ~£2.80 on contactless; black cab ~£3.80 then ~£2.50/km
+  transport: { transitName: 'Tube', transitFare: 3.6, taxiBase: 4.8, taxiPerKm: 3.2 },
+  essentials: {
+    timezone: 'Europe/London',
+    currency: { code: 'GBP', symbol: '£', perUsd: 0.79 },
+    plugs: 'Type G · 230 V (UK three-pin; US and EU plugs need an adapter)',
+    tipping: '10–12.5% is usually added to the bill at restaurants; nothing at the bar in pubs',
+    emergency: 'All emergencies 999 (or 112)',
+    transitCard: 'Tap a contactless card or phone on Tube, buses and trains: fares cap daily, no Oyster needed',
+    water: 'Tap water is safe to drink, and free to ask for in restaurants',
+    etiquette: ['Stand on the right on escalators', 'Queue, and don’t jump it', 'In pubs, order and pay at the bar'],
+    phrases: [],
+    packing: ['Compact umbrella or a light rain jacket', 'Comfortable shoes: London is walked more than you expect'],
+  },
+  places: londonData.places as Place[],
+  hotels: londonData.hotels as Hotel[],
+  credit: 'Places from Wikivoyage (CC BY-SA 4.0) and Wikidata',
+}
+
+export const CITIES: City[] = [tokyo, lisbon, london]
 
 export function findCity(text: string): City | undefined {
   const t = text.toLowerCase()

@@ -5,7 +5,8 @@ import type { SharedTrip } from '../trip/types'
 import type { Expense, ExpenseInput, GroupState } from '../money/types'
 import { AGENT_TOOLS, MAX_ROUNDS, isToolName, type ToolCall, type ToolResult } from './tools'
 import { tripCity } from '../data/cities'
-import { fmtClock } from '../planner/geo'
+import { fmtClock, haversineKm } from '../planner/geo'
+import { scorePlace, shortlist } from '../planner/core'
 import { getVideos, watchUrl, PLATFORM_NAME } from '../services/videos'
 import { resolveCustomPlace } from '../planner/customPlaces'
 import { api } from '../money/client'
@@ -102,6 +103,30 @@ const TOOLS: Record<keyof typeof AGENT_TOOLS, (a: Record<string, any>, host: Age
     if (!videos.length) return `No reels or videos found that name ${p.name}. They can still open its pin for links to search Instagram, TikTok and YouTube.`
     host.dispatch({ type: 'select-place', id: p.id }) // its card holds the feed
     return `${videos.length} clips of ${p.name} (its card is now open, with the feed):\n${videos.map(v => `- ${PLATFORM_NAME[v.platform]}${v.short ? ' Short' : ''}${v.by ? ` by ${v.by}` : ''}: “${v.title}” ${watchUrl(v)}`).join('\n')}`
+  },
+
+  async search_places({ query, kind, near_place_id }, host) {
+    const s = host.state()
+    const city = tripCity(s.brief)
+    if (!city) return 'Error: the trip has no city yet.'
+    if (!query && !kind && !near_place_id) return 'Error: give words to search for, a kind, or a place to search near.'
+    const near = near_place_id ? placeOf(s, near_place_id) : undefined
+    if (near_place_id && !near) return `Error: no place with id ${near_place_id}.`
+    const words: string[] = String(query ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 2)
+    const planned = new Set(s.days.flatMap(d => d.stops.map(x => x.place.id)))
+    const hits = city.places
+      .filter(p => !kind || p.kind === kind)
+      .map(p => {
+        const text = `${p.name} ${p.keywords?.join(' ') ?? ''} ${p.tags.join(' ')} ${p.blurb}`.toLowerCase()
+        const matched = words.filter(w => text.includes(w)).length + words.filter(w => p.name.toLowerCase().includes(w)).length
+        const km = near ? haversineKm(near.coord, p.coord) : 0
+        return { p, matched, km, score: scorePlace(p, s.brief).score }
+      })
+      .filter(x => (!words.length || x.matched > 0) && (!near || (x.p.id !== near.id && x.km <= 2.5)))
+      .sort((a, b) => b.matched - a.matched || (near ? a.km - b.km : 0) || b.score - a.score)
+      .slice(0, 15)
+    if (!hits.length) return `Nothing like that in the ${city.name} catalog${near ? ` within 2.5 km of ${near.name}` : ''}. For a real place you know of, use add_own_place.`
+    return hits.map(({ p, km }) => `${placeLine(s, p)}${planned.has(p.id) ? ' | already in the plan' : ''}${near ? ` | ${km.toFixed(1)} km away` : ''}`).join('\n')
   },
 
   async money_summary(_, host) {
@@ -285,12 +310,19 @@ function costLine(s: TripState, city: NonNullable<ReturnType<typeof tripCity>>):
   ].join('\n')
 }
 
+// A big city lists only its best matches here; search_places reaches the rest.
+const OTHERS_SHOWN = 150
+
+const placeLine = (s: TripState, p: Place) => `${p.id} | ${p.name} | ${p.kind} | ${'$'.repeat(p.price) || 'free'} | ${p.tags.join(',')} | best ${p.bestAt ?? 'any'} | ${p.blurb}${p.book ? ` | book ahead: ${p.book}` : ''}${p.custom ? ' | added by the traveller' : ''}${s.picks[p.id] === 'nope' ? ' | skipped earlier' : ''}`
+
 export function contextOf(s: TripState, trip: SharedTrip | null): string {
   const city = tripCity(s.brief)
   if (!city) return 'No destination yet.'
   const b = s.brief
   const planned = new Set(s.days.flatMap(d => d.stops.map(x => x.place.id)))
-  const line = (p: Place) => `${p.id} | ${p.name} | ${p.kind} | ${'$'.repeat(p.price) || 'free'} | ${p.tags.join(',')} | best ${p.bestAt ?? 'any'} | ${p.blurb}${p.book ? ` | book ahead: ${p.book}` : ''}${p.custom ? ' | added by the traveller' : ''}${s.picks[p.id] === 'nope' ? ' | skipped earlier' : ''}`
+  const line = (p: Place) => placeLine(s, p)
+  const others = city.places.filter(p => !planned.has(p.id))
+  const shown = shortlist(others, b, OTHERS_SHOWN)
   const out = [
     `City: ${city.name}. Stage: ${s.phase === 'final' ? 'planned, with a hotel' : 'plan drafted, no hotel chosen yet'}.`,
     `Trip: ${b.days ?? s.days.length} days, ${b.travelers ?? 2} travellers, vibe ${b.vibes.join(', ') || 'a bit of everything'}, ${b.budgetTier ?? 'comfort'} budget${b.budgetAmount ? ` ($${b.budgetAmount} total)` : ''}, ${b.pace ?? 'balanced'} pace${b.startDate ? `, starts ${b.startDate}` : ''}${b.tastes?.length ? `, likes ${b.tastes.join(', ')}` : ''}.`,
@@ -309,8 +341,8 @@ export function contextOf(s: TripState, trip: SharedTrip | null): string {
     'Places in the plan (id | name | kind | price | tags | best time | about):',
     ...city.places.filter(p => planned.has(p.id)).map(line),
     '',
-    'Other places (not in the plan):',
-    ...city.places.filter(p => !planned.has(p.id)).map(line),
+    `Other places (not in the plan)${shown.length < others.length ? `, the best ${shown.length} of ${others.length} for this trip; search_places finds the rest` : ''}:`,
+    ...shown.map(line),
   ]
   return out.join('\n').slice(0, 39_000)
 }
