@@ -128,7 +128,12 @@ export async function* planWithClaude(brief: TripBrief, signal: AbortSignal, pic
   if (!base) throw new Error(`No map data for "${brief.destination}".`)
   // With swipe picks, Claude plans only what the traveller kept; otherwise a big city's best
   // matches for this brief, since nobody (Claude included) weighs 1,600 places well at once.
-  const city: City = { ...base, places: picks ? base.places.filter(p => picks.liked.includes(p.id)) : shortlist(base.places, brief) }
+  // A re-plan (`fresh`) keeps what they liked and their own finds, never what they skipped, and
+  // re-chooses the rest for the sliders as they are now.
+  const exact = picks && !picks.fresh
+  const keepIds = new Set([...(picks?.liked ?? []), ...(picks?.fresh ? brief.customPlaces?.map(p => p.id) ?? [] : [])])
+  const open = base.places.filter(p => !picks?.rejected.includes(p.id))
+  const city: City = { ...base, places: exact ? base.places.filter(p => picks.liked.includes(p.id)) : [...new Set([...shortlist(open, brief), ...open.filter(p => keepIds.has(p.id))])] }
   if (!city.places.length) throw new Error('No places were picked.')
   const totalDays = Math.min(brief.days ?? 3, city.places.length)
   const byId = new Map(city.places.map(p => [p.id, p]))
@@ -145,7 +150,7 @@ export async function* planWithClaude(brief: TripBrief, signal: AbortSignal, pic
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     {
       role: 'user',
-      content: `Trip brief:\n${briefText(brief)}\n\n${picks ? 'The traveller hand-picked every place below by swiping: keep all of them in shortlist_places unless one truly cannot fit.\n\n' : ''}Catalog (id | name | kind | tags | price | visit length | best time | fame 0-1 | note):\n${catalogLines(city)}\n\nPlan all ${totalDays} days.`,
+      content: `Trip brief:\n${briefText(brief)}\n\n${exact ? 'The traveller hand-picked every place below by swiping: keep all of them in shortlist_places unless one truly cannot fit.\n\n' : keepIds.size ? `This is a re-plan after the traveller changed their settings. Keep the places they chose (${[...keepIds].join(', ')}) unless one truly cannot fit, and choose the rest afresh for the brief as it is now.\n\n` : ''}Catalog (id | name | kind | tags | price | visit length | best time | fame 0-1 | note):\n${catalogLines(city)}\n\nPlan all ${totalDays} days.`,
     },
   ]
   const committed = new Map<number, DayPlan>()

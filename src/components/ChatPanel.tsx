@@ -40,7 +40,8 @@ interface Props {
   invitePrompt?: { onYes: () => void; onNo: () => void }
   confirm?: { question: string; yes: string; onYes: () => void; onNo: () => void }   // the assistant asking before a money or people change
   onInvite?: () => void
-  onBrief?: (patch: Partial<TripBrief>) => void   // a slider moved
+  onBrief?: (patch: Partial<TripBrief>) => void   // a slider moved, while setting up
+  onRetune?: (patch: Partial<TripBrief>) => void  // sliders moved over a plan: plan again with them
 }
 
 // Message ids start with the time they were made, which is enough to slot the group's own
@@ -64,7 +65,8 @@ function threadOf(messages: ChatMessage[], notes: TripNote[]): (ChatMessage | Tr
   return out
 }
 
-export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, onCollapse, onFocusInput, group, onNote, invitePrompt, confirm, onInvite, onBrief }: Props) {
+export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, onCollapse, onFocusInput, group, onNote, invitePrompt, confirm, onInvite, onBrief, onRetune }: Props) {
+  const [tuneOpen, setTuneOpen] = useState(false)
   const [text, setText] = useState('')
   const [toGroup, setToGroup] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -92,6 +94,9 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
   // once the basic questions are answered, the sliders tune the rest
   const cityName = cityById(state.brief.destination)?.name
   const tuning = !member && !locked && !typing && !field && cityName && onBrief && state.messages.length > 1
+  // over a plan, the same sliders re-plan the trip
+  const planned = state.phase === 'review' || state.phase === 'final'
+  const retuning = planned && !member && !typing && cityName && onRetune
   const thread = useMemo(() => threadOf(state.messages, group?.notes ?? []), [state.messages, group?.notes])
   const canApply = !member && (state.phase === 'review' || state.phase === 'final')
   const joined = group?.people.filter(p => p.joined).length ?? 0
@@ -155,6 +160,9 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
           </>
         )}
         {tuning && !confirm && <TuneCard brief={state.brief} city={cityName} onBrief={onBrief} />}
+        {retuning && !confirm && (tuneOpen
+          ? <TuneCard brief={state.brief} city={cityName} draft onBrief={patch => { setTuneOpen(false); onRetune(patch) }} onClose={() => setTuneOpen(false)} />
+          : <div className="quick-replies"><button onClick={() => setTuneOpen(true)}>Tune the trip</button></div>)}
         {invitePrompt && (
           <div className="quick-replies">
             <button onClick={invitePrompt.onYes}>Yes, add my friends</button>
@@ -209,18 +217,31 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
 }
 
 // The sliders: the first on show, the rest a tap away, so the chat isn't a wall of them.
-function TuneCard({ brief, city, onBrief }: { brief: TripBrief; city: string; onBrief: (patch: Partial<TripBrief>) => void }) {
-  const [more, setMore] = useState(() => SLIDERS.slice(1).some(s => brief[s.key] !== undefined))
+// While setting up, each move applies at once. Over a plan (`draft`), moves are held until
+// "Re-plan with these", since each one would otherwise mean drawing the whole trip again.
+function TuneCard({ brief, city, onBrief, draft, onClose }: { brief: TripBrief; city: string; onBrief: (patch: Partial<TripBrief>) => void; draft?: boolean; onClose?: () => void }) {
+  const [more, setMore] = useState(() => draft || SLIDERS.slice(1).some(s => brief[s.key] !== undefined))
+  const [held, setHeld] = useState<Partial<TripBrief>>({})
+  const now = { ...brief, ...held }
   const shown = more ? SLIDERS : SLIDERS.slice(0, 1)
   const moved = SLIDERS.slice(1).filter(s => brief[s.key] !== undefined).length
+  const changed = SLIDERS.some(s => sliderValue(s, now) !== sliderValue(s, brief))
+  const move = (patch: Partial<TripBrief>) => (draft ? setHeld(h => ({ ...h, ...patch })) : onBrief(patch))
   return (
     <div className="trip-tune">
       {shown.map(s => (
-        <TripSlider key={s.key} slider={s} city={city} value={sliderValue(s, brief)} onChange={v => onBrief(sliderPatch(s, v))} />
+        <TripSlider key={s.key} slider={s} city={city} value={sliderValue(s, now)} onChange={v => move(sliderPatch(s, v))} />
       ))}
-      <button className="trip-tune-more" aria-expanded={more} onClick={() => setMore(m => !m)}>
-        {more ? 'Fewer options' : `More ways to tune (${SLIDERS.length - 1})${moved ? ` · ${moved} set` : ''}`}
-      </button>
+      {draft ? (
+        <div className="quick-replies trip-tune-actions">
+          <button className="trip-tune-go" disabled={!changed} onClick={() => onBrief(held)}>Re-plan with these</button>
+          <button onClick={onClose}>Cancel</button>
+        </div>
+      ) : (
+        <button className="trip-tune-more" aria-expanded={more} onClick={() => setMore(m => !m)}>
+          {more ? 'Fewer options' : `More ways to tune (${SLIDERS.length - 1})${moved ? ` · ${moved} set` : ''}`}
+        </button>
+      )}
     </div>
   )
 }

@@ -4,8 +4,9 @@ import type { DayPlan, PlannerEvent, TripBrief } from '../types'
 // data). Next: RemotePlanner that opens an SSE stream to /api/plan, where a
 // Claude agent calls places/routing/hotel tools and emits these same events.
 
-// What the traveller chose on the swipe deck.
-export interface Picks { liked: string[]; rejected: string[] }
+// What the traveller chose on the swipe deck. `fresh`: a re-plan after the sliders moved, so
+// the liked places stay but the rest is chosen again from the whole city (never the rejected).
+export interface Picks { liked: string[]; rejected: string[]; fresh?: boolean }
 
 export interface PlannerEngine {
   planItinerary(brief: TripBrief, signal: AbortSignal, picks?: Picks): AsyncGenerator<PlannerEvent>

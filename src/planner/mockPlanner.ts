@@ -14,7 +14,8 @@ export class MockPlanner implements PlannerEngine {
 
   async *planItinerary(brief: TripBrief, signal: AbortSignal, picks?: Picks): AsyncGenerator<PlannerEvent> {
     const city = tripCity(brief) as City
-    const days = Math.min(brief.days ?? 3, picks ? Math.max(1, picks.liked.length) : Infinity)
+    const exact = picks && !picks.fresh ? picks : undefined // plan only what they swiped right on
+    const days = Math.min(brief.days ?? 3, exact ? Math.max(1, exact.liked.length) : Infinity)
     const pace = dayShape(brief)
     const tier = resolveBudgetTier(brief)
 
@@ -23,9 +24,9 @@ export class MockPlanner implements PlannerEngine {
     await this.wait(700, signal)
 
     let chosen
-    if (picks) {
+    if (exact) {
       // the traveller already chose by swiping: plan exactly their picks
-      chosen = city.places.filter(p => picks.liked.includes(p.id))
+      chosen = city.places.filter(p => exact.liked.includes(p.id))
       yield { type: 'thought', text: `You kept ${chosen.length} place${chosen.length === 1 ? '' : 's'}. Fitting them into ${days} day${days > 1 ? 's' : ''}…` }
       if ((brief.days ?? 3) > days) yield { type: 'thought', text: `Only ${chosen.length} pick${chosen.length === 1 ? '' : 's'}, so planning ${days} day${days > 1 ? 's' : ''} instead of ${brief.days}.`, tone: 'warn' }
       await this.wait(600, signal)
@@ -34,9 +35,14 @@ export class MockPlanner implements PlannerEngine {
       yield { type: 'thought', text: `Scanning ${city.places.length} places I know in ${city.name}…` }
       await this.wait(700, signal)
 
-      const scored = shortlist(city.places, brief).map(p => ({ p, ...scorePlace(p, brief) })).sort((a, b) => b.score - a.score)
+      // a re-plan keeps what they liked (and their own finds) and never brings back what they skipped
+      const rejected = new Set(picks?.rejected ?? [])
+      const liked = new Set([...(picks?.liked ?? []), ...(picks ? brief.customPlaces?.map(p => p.id) ?? [] : [])])
+      const open = city.places.filter(p => !rejected.has(p.id))
+      const pool = [...new Set([...shortlist(open, brief), ...open.filter(p => liked.has(p.id))])]
+      const scored = pool.map(p => ({ p, ...scorePlace(p, brief) })).sort((a, b) => Number(liked.has(b.p.id)) - Number(liked.has(a.p.id)) || b.score - a.score)
       const pause = Math.min(1, 40 / scored.length) // the sweep takes as long for London as for Lisbon
-      const need = Math.min(scored.length, days * pace.perDay)
+      const need = Math.max(Math.min(scored.length, days * pace.perDay), scored.filter(s => liked.has(s.p.id)).length)
       const keep = new Set(scored.slice(0, need).map(s => s.p.id))
       // somewhere to eat each day, and a bar each night on a nightlife trip: in a big city the
       // famous sights would otherwise crowd them all out
@@ -48,7 +54,7 @@ export class MockPlanner implements PlannerEngine {
       for (const kinds of musts) {
         const want = days * (kinds.includes('food') ? meals : 1)
         const is = (id: string) => kinds.includes(kindOf.get(id)!)
-        const guarded = (id: string) => musts.some(k => k.includes(kindOf.get(id)!))
+        const guarded = (id: string) => liked.has(id) || musts.some(k => k.includes(kindOf.get(id)!))
         for (const s of scored.filter(s => is(s.p.id) && !keep.has(s.p.id))) {
           if ([...keep].filter(is).length >= want) break
           const weakest = [...scored].reverse().find(x => keep.has(x.p.id) && !guarded(x.p.id))
@@ -74,7 +80,7 @@ export class MockPlanner implements PlannerEngine {
       chosen = scored.filter(s => keep.has(s.p.id)).map(s => s.p)
     }
     // hand-picked places: keep neighbourhoods together, even if days end up uneven
-    const clusters = groupDays(chosen, days, pace.perDay, picks ? pace.perDay + 1 : undefined).sort((a, b) => centroid(a.map(p => p.coord))[0] - centroid(b.map(p => p.coord))[0])
+    const clusters = groupDays(chosen, days, pace.perDay, exact ? pace.perDay + 1 : undefined).sort((a, b) => centroid(a.map(p => p.coord))[0] - centroid(b.map(p => p.coord))[0])
     yield { type: 'thought', text: `Grouping ${chosen.length} keepers into ${clusters.length} neighbourhood${clusters.length > 1 ? 's' : ''} so each day stays walkable.` }
     await this.wait(700, signal)
 
@@ -83,13 +89,14 @@ export class MockPlanner implements PlannerEngine {
     for (let i = 0; i < clusters.length; i++) {
       let plan = buildDay(i + 1, clusters[i], brief)
       // plug long idle stretches with something nearby before drawing the day
-      for (let tries = 0; tries < 2; tries++) {
+      // (not past the pace: a full day's idle afternoon is a break, not a gap)
+      for (let tries = 0; tries < 2 && plan.stops.length < pace.perDay; tries++) {
         const fill = findGapFill(plan, shortlist(city.places, brief, 400).filter(p => !used.has(p.id)), brief)
         if (!fill) break
         used.add(fill.place.id)
         plan = applyGapFill(plan, fill, brief)
         yield { type: 'candidate', place: fill.place, verdict: 'keep' }
-        yield { type: 'thought', text: `Day ${plan.day} had ${Math.round(fill.gap / 60 * 10) / 10}h idle — suggesting ${fill.place.name} nearby${picks ? ' (you didn’t see this one; remove it if you like)' : ''}.`, tone: 'decide' }
+        yield { type: 'thought', text: `Day ${plan.day} had ${Math.round(fill.gap / 60 * 10) / 10}h idle — suggesting ${fill.place.name} nearby${exact ? ' (you didn’t see this one; remove it if you like)' : ''}.`, tone: 'decide' }
       }
       const c = centroid(plan.stops.map(s => s.place.coord))
       yield { type: 'camera', center: c, zoom: city.zoom + 1.5 }

@@ -7,7 +7,8 @@ import { RemotePlanner } from './planner/remotePlanner'
 import { claudeIntake, detectBrain, type BrainStatus } from './planner/brain'
 import { customPlaceRequest, isFind, mapsHost, resolveCustomPlace, type CustomPlaceRequest } from './planner/customPlaces'
 import { runAgent } from './agent/run'
-import type { Place, PlannerEvent } from './types'
+import type { Place, PlannerEvent, TripBrief } from './types'
+import { tuningLines } from './planner/sliders'
 import { MapCanvas } from './components/MapCanvas'
 import { ChatPanel, inertIf, type ChatGroup } from './components/ChatPanel'
 import { ThinkingStream } from './components/ThinkingStream'
@@ -483,6 +484,21 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     dispatch({ type: 'chat', role: 'ai', text: label })
     run(signal => engine.planItinerary(latest.current.brief, signal, { liked, rejected }))
   }
+  // The sliders moved over a finished plan: plan again with them, keeping what they liked and their
+  // own finds, never what they skipped. "Undo" brings the old plan (and settings) back.
+  const retune = (patch: Partial<TripBrief>) => {
+    const s = latest.current
+    const brief = { ...s.brief, ...patch }
+    const picks = s.picks
+    const changed = tuningLines(brief).filter(l => !tuningLines(s.brief).includes(l))
+    dispatch({ type: 'retune', brief })
+    dispatch({ type: 'chat', role: 'ai', text: `Re-planning for ${changed.map(l => l.split(' (')[0]).join(', ') || 'your settings'}. Your picks and finds stay${s.hotel ? ', and I’ll find the hotel again after' : ''}. Say “undo” to go back.` })
+    run(signal => engine.planItinerary(brief, signal, {
+      liked: Object.keys(picks).filter(id => picks[id] === 'like'),
+      rejected: Object.keys(picks).filter(id => picks[id] === 'nope'),
+      fresh: true,
+    }))
+  }
   const [picksOpen, setPicksOpen] = useState(false)
   const requestPlan = () => {
     if (trip && trip.people.length > 1) { setPicksOpen(true); return }
@@ -714,7 +730,8 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         onNo: () => { setInvitePrompt(false); dispatch({ type: 'chat', role: 'ai', text: 'No problem. You can invite them later.' }) },
       } : undefined}
       onInvite={account && !member ? openInvite : undefined}
-      onBrief={patch => dispatch({ type: 'brief', brief: { ...latest.current.brief, ...patch } })} />
+      onBrief={patch => dispatch({ type: 'brief', brief: { ...latest.current.brief, ...patch } })}
+      onRetune={!member ? retune : undefined} />
   )
   const journalEl = state.phase === 'intake' ? null : (
         <aside className={`panel journal ${journalCollapsed ? 'collapsed' : ''}`} aria-hidden={journalCollapsed} {...inertIf(journalCollapsed)}>

@@ -75,6 +75,7 @@ export type Action =
   | { type: 'shared-role'; role: 'admin' | 'member' | null; version?: number }
   | { type: 'shared-synced'; json: string; version: number }
   | { type: 'reset' }
+  | { type: 'retune'; brief: TripBrief }   // the sliders moved over a plan: clear it for the planner, undoably
 
 // What we persist: enough to redraw the map and itinerary exactly.
 export interface SavedTrip {
@@ -327,6 +328,8 @@ function undo(s: TripState): TripState {
   const city = cityById(last.plan.brief.destination)
   return {
     ...restoreSlice(s, last.plan),
+    // undoing a re-plan brings its hotel back, and with it the finished stage
+    ...(last.plan.hotel && s.phase === 'review' ? { phase: 'final' as const } : {}),
     history: s.history.slice(0, -1),
     flash: { days: last.plan.days.map(d => d.day), key: seq++ },
     camera: city && last.plan.brief.destination !== s.brief.destination ? { center: city.center, zoom: city.zoom + 0.4, key: seq++ } : s.camera,
@@ -349,7 +352,7 @@ const UNDOABLE: Partial<Record<Action['type'], string>> = {
 // Normal users can look around and vote; the plan itself is the admin's to change. The server
 // refuses their edits anyway; this keeps the screen from pretending one happened.
 const ADMIN_ONLY = new Set<Action['type']>([
-  'chat', 'brief', 'phase', 'planner', 'choose-hotel', 'replan', 'remove-stop', 'move-stop', 'shift-stop', 'add-stop',
+  'chat', 'brief', 'phase', 'planner', 'choose-hotel', 'replan', 'retune', 'remove-stop', 'move-stop', 'shift-stop', 'add-stop',
   'optimize-day', 'fill-gap', 'saved', 'start-deck', 'chat-edit', 'undo', 'finish-deck', 'add-custom-place',
 ])
 
@@ -546,6 +549,15 @@ function baseReducer(s: TripState, a: Action): TripState {
       return finishEditDeck(s, Boolean(a.cancel))
     case 'reset':
       return initialState
+    case 'retune':
+      if (s.phase !== 'review' && s.phase !== 'final') return s
+      return {
+        ...s,
+        brief: a.brief,
+        phase: 'planning',
+        days: [], legs: [], hotel: undefined, hotelScores: [], candidates: {}, selectedPlace: null, activeDay: null,
+        history: [...s.history, { plan: sliceOf(s), label: 're-planned for your new settings' }].slice(-20),
+      }
     case 'shared-role': {
       if (!a.role) return s.shared ? { ...s, shared: undefined } : s
       const version = a.version ?? 0
