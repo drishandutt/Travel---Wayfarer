@@ -111,6 +111,10 @@ export function MapCanvas({ state, dispatch, insets, theme }: { state: TripState
     mapRef.current = map
     if (import.meta.env.DEV) (window as unknown as { __wayfarerMap: maplibregl.Map }).__wayfarerMap = map // debugging hook
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right')
+    // pin photos only once the map is close enough for them not to pile up
+    const near = () => container.current?.classList.toggle('map-near', map.getZoom() >= 12)
+    map.on('zoomend', near)
+    map.on('load', near)
     map.on('style.load', () => {
       addRouteLayers(map, themeRef.current)
       setStyleGen(g => g + 1)
@@ -202,7 +206,7 @@ export function MapCanvas({ state, dispatch, insets, theme }: { state: TripState
       if (!rec) {
         const el = document.createElement('div')
         el.className = 'marker'
-        el.innerHTML = `<div class="pin"><span class="pin-core"></span><span class="pin-label"><b></b><small></small></span></div>`
+        el.innerHTML = `<div class="pin"><span class="pin-photo"></span><span class="pin-core"></span><span class="pin-label"><b></b><small></small></span></div>`
         el.querySelector('b')!.textContent = c.place.name
         el.querySelector('small')!.textContent = c.place.blurb
         el.addEventListener('mouseenter', () => dispatch({ type: 'hover-place', id: c.place.id }))
@@ -223,6 +227,16 @@ export function MapCanvas({ state, dispatch, insets, theme }: { state: TripState
       const hot = state.hoverPlace === c.place.id || state.selectedPlace === c.place.id || focusId === c.place.id
       pin.classList.toggle('hot', hot)
       rec.el.style.zIndex = hot ? '20' : slot ? '5' : '1'
+      // a planned or kept place wears its photo beside the pin, like a profile picture
+      if ((slot || c.verdict !== 'drop') && !pin.dataset.photo) {
+        pin.dataset.photo = 'loading'
+        const face = pin.querySelector('.pin-photo') as HTMLElement
+        photosFor(c.place).then(p => {
+          if (!p[0]) { pin.dataset.photo = 'none'; return }
+          face.style.backgroundImage = `url("${smallPhoto(p[0].url).replace(/"/g, '%22')}")`
+          pin.dataset.photo = 'ready'
+        }).catch(() => { pin.dataset.photo = 'none' })
+      }
     }
   }, [state.candidates, slots, state.activeDay, state.hoverPlace, state.selectedPlace, state.phase, focusId, ready])
 
@@ -373,3 +387,6 @@ function fillLegPhotos(popup: maplibregl.Popup, ends: LegEnd[]) {
     })
   })
 }
+
+// Wikimedia serves a thumbnail at any of its standard widths; a pin photo needs a small one.
+const smallPhoto = (url: string) => (/\/thumb\//.test(url) ? url.replace(/\/\d+px-([^/]+)$/, '/120px-$1') : url)
