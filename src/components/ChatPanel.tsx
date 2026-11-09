@@ -35,6 +35,7 @@ interface Props {
   group?: ChatGroup           // set when this trip is shared with a group
   onNote: (text: string) => void
   invitePrompt?: { onYes: () => void; onNo: () => void }
+  confirm?: { question: string; yes: string; onYes: () => void; onNo: () => void }   // the assistant asking before a money or people change
   onInvite?: () => void
 }
 
@@ -59,7 +60,7 @@ function threadOf(messages: ChatMessage[], notes: TripNote[]): (ChatMessage | Tr
   return out
 }
 
-export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, onCollapse, onFocusInput, group, onNote, invitePrompt, onInvite }: Props) {
+export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, onCollapse, onFocusInput, group, onNote, invitePrompt, confirm, onInvite }: Props) {
   const [text, setText] = useState('')
   const [toGroup, setToGroup] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
@@ -70,7 +71,7 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
-  }, [state.messages.length, noteCount, typing, Boolean(invitePrompt)])
+  }, [state.messages.length, noteCount, typing, Boolean(invitePrompt), Boolean(confirm)])
 
   const asNote = member || (toGroup && others)
   const submit = (t: string) => {
@@ -137,13 +138,22 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
         })}
         {waitingLine && <div className="msg ai">{waitingLine}</div>}
         {typing && <div className="msg ai typing"><i /><i /><i /></div>}
+        {confirm && (
+          <>
+            <div className="msg ai">{confirm.question}</div>
+            <div className="quick-replies">
+              <button onClick={confirm.onYes}>{confirm.yes}</button>
+              <button onClick={confirm.onNo}>Cancel</button>
+            </div>
+          </>
+        )}
         {invitePrompt && (
           <div className="quick-replies">
             <button onClick={invitePrompt.onYes}>Yes, add my friends</button>
             <button onClick={invitePrompt.onNo}>Not now</button>
           </div>
         )}
-        {!invitePrompt && replies && (
+        {!invitePrompt && !confirm && replies && (
           <div className="quick-replies">
             {replies.map(r => <button key={r} onClick={() => submit(r)}>{r}</button>)}
           </div>

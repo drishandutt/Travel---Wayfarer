@@ -2,7 +2,7 @@ import type { TripBrief } from '../types'
 import type { ChatMessage } from '../state/tripStore'
 import { errorText } from './remotePlanner'
 
-export interface BrainStatus { claude: boolean; model: string | null }
+export interface BrainStatus { claude: boolean; model: string | null; agent?: boolean }
 
 // Asks the API server whether Claude is configured. No server (or no key)
 // means the app runs fully offline on the local MockPlanner + rule-based intake.

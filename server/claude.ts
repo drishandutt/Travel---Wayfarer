@@ -21,7 +21,7 @@ export const FALLBACK: Pick<Anthropic.Beta.MessageCreateParamsNonStreaming, 'bet
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
-export function effortFor(kind: 'intake' | 'plan' | 'hotel'): Effort {
+export function effortFor(kind: 'intake' | 'plan' | 'hotel' | 'agent'): Effort {
   const env = process.env[`WAYFARER_EFFORT_${kind.toUpperCase()}`] as Effort | undefined
   return env ?? (kind === 'plan' ? 'medium' : 'low')
 }

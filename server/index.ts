@@ -14,9 +14,11 @@ import { closeMoneyDb, moneyApi } from './money/routes'
 import { clientIp, overLimit } from './money/auth'
 import { PlaceError, placeVideos, resolvePlace, videoLookupCached, type ResolveRequest } from './places'
 import { openaiEnabled } from './openai'
+import { AgentError, agentEnabled, agentTurn } from './agent'
 
 // Minimal API server. The browser holds no secrets: the Anthropic key lives here.
-//   GET  /api/health   -> { claude, model, money, openai }
+//   GET  /api/health   -> { claude, model, money, openai, agent }
+//   POST /api/agent    -> { state, text, calls }   one round of the trip chatbot (server/agent.ts)
 //   POST /api/intake   -> { reply, brief }
 //   POST /api/plan     -> text/event-stream of PlannerEvent
 //   POST /api/hotels   -> text/event-stream of PlannerEvent
@@ -99,7 +101,7 @@ const server = createServer(async (req, res) => {
     // inside the try: a malformed path like "//" throws here, and must not stop the server
     const url = new URL(req.url ?? '/', 'http://localhost')
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(await moneyApi()), openai: openaiEnabled })
+      return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(await moneyApi()), openai: openaiEnabled, agent: agentEnabled() })
     }
     // Before the check below: shared expenses have nothing to do with Claude and must work without a key.
     if (url.pathname.startsWith('/api/money/')) {
@@ -124,6 +126,18 @@ const server = createServer(async (req, res) => {
       if (!videoLookupCached(q) && overLimit(`videos:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'Too many lookups. Try again in a bit.' })
       res.setHeader('Cache-Control', 'private, max-age=3600')
       return json(res, 200, await placeVideos(q))
+    }
+    if (req.method === 'POST' && url.pathname === '/api/agent') {
+      if (!agentEnabled()) return json(res, 503, { error: 'The assistant isn’t switched on here.' })
+      // every round is a model call, so rounds are limited per visitor
+      if (overLimit(`agent:${clientIp(req)}`, 150, 3_600_000)) return json(res, 429, { error: 'That’s a lot of requests in a short while. Try again in a bit.' })
+      try {
+        return json(res, 200, await agentTurn(await readJson(req), abortOnClose(res).signal))
+      } catch (err) {
+        if (err instanceof AgentError) return json(res, 422, { error: err.message })
+        if (err instanceof Error && err.name === 'ZodError') return json(res, 400, { error: 'Bad request' })
+        throw err
+      }
     }
     if (!brainEnabled && url.pathname.startsWith('/api/')) {
       return json(res, 503, { error: 'Claude is not configured. Set ANTHROPIC_API_KEY in .env.' })

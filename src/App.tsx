@@ -6,6 +6,7 @@ import { MockPlanner } from './planner/mockPlanner'
 import { RemotePlanner } from './planner/remotePlanner'
 import { claudeIntake, detectBrain, type BrainStatus } from './planner/brain'
 import { customPlaceRequest, isFind, resolveCustomPlace, type CustomPlaceRequest } from './planner/customPlaces'
+import { runAgent } from './agent/run'
 import type { Place, PlannerEvent } from './types'
 import { MapCanvas } from './components/MapCanvas'
 import { ChatPanel, inertIf, type ChatGroup } from './components/ChatPanel'
@@ -324,9 +325,42 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     return true
   }
 
+  // The assistant: with an LLM connected, chat over a plan goes to it, and it acts through the
+  // allowlisted tools (src/agent). Money and people changes wait for a tap on Confirm.
+  const [ask, setAsk] = useState<{ question: string; yes: string; answer: (ok: boolean) => void } | null>(null)
+  const tripRef = useRef(trip)
+  tripRef.current = trip
+  const askAgent = async (text: string, before: TripState['messages']): Promise<boolean> => {
+    setTyping(true)
+    try {
+      const reply = await runAgent(text, before, {
+        state: () => latest.current,
+        dispatch,
+        trip: () => tripRef.current ?? null,
+        ensureGroup,
+        confirm: (question, yes) => new Promise(resolve => {
+          setTyping(false)
+          setAsk({ question, yes, answer: ok => { setAsk(null); setTyping(true); resolve(ok) } })
+        }),
+      })
+      dispatch({ type: 'chat', role: 'ai', text: reply })
+      return true
+    } catch (e) {
+      // no assistant to reach: the rule-based editor still understands most changes
+      if (e instanceof TypeError) return false
+      dispatch({ type: 'chat', role: 'ai', text: `The assistant hit a problem: ${(e as Error).message}` })
+      return true
+    } finally {
+      setAsk(null)
+      setTyping(false)
+    }
+  }
+
   const send = async (text: string) => {
-    dispatch({ type: 'chat', role: 'user', text })
     const s = latest.current
+    dispatch({ type: 'chat', role: 'user', text })
+
+    if (brain?.agent && !member && (s.phase === 'review' || s.phase === 'final') && await askAgent(text, s.messages)) return
 
     const find = customPlaceRequest(text)
     if (find && isFind(find, s.brief)) {
@@ -552,6 +586,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     <ChatPanel state={state} typing={typing} canPlan={!member && isReady(state.brief)} onSend={send} onPlan={startDeck}
       collapsed={!isMobile && tucked.chat} onCollapse={() => toggle('chat')} onFocusInput={isMobile ? () => setSnap('full') : undefined}
       group={chatGroup} onNote={shared.postNote}
+      confirm={ask ? { question: ask.question, yes: ask.yes, onYes: () => ask.answer(true), onNo: () => ask.answer(false) } : undefined}
       invitePrompt={invitePrompt ? {
         onYes: () => { setInvitePrompt(false); openInvite() },
         onNo: () => { setInvitePrompt(false); dispatch({ type: 'chat', role: 'ai', text: 'No problem. You can invite them later.' }) },

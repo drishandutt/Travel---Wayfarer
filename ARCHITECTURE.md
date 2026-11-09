@@ -85,6 +85,14 @@ Big changes are handled the same way. "Add a day" regroups by neighbourhood and 
 - **On the map:** its pin card and tile say **Your find**, with a link back to the maps app it came from.
 - **Reels & videos:** places without a curated feed are searched live (`GET /api/places/videos`, cached a day per place). YouTube comes from its search page (or the Data API when `YOUTUBE_API_KEY` is set). Instagram reels and TikToks come from Claude’s web search, limited to those two sites, using only links found in the search results, never ones the model writes; TikTok’s oEmbed supplies the real caption. Without an Anthropic key, OpenAI does both jobs when `OPENAI_API_KEY` is set (`server/openai.ts`, model `gpt-6-astra` unless `WAYFARER_OPENAI_MODEL` says otherwise): its `web_search` tool, limited to the same two sites, returns sources without titles, so it reports each clip’s caption and creator, and a clip is kept only if its reel or video id is among the pages the search returned. OpenAI is used for nothing else; planning stays with Claude or the offline planner. `/api/health` says which keys are on. A clip is kept only if its title names the place, and ones that also name the city come first. With neither key, the feed shows YouTube plus the links to search Instagram and TikTok. Lookups are rate limited per visitor, since each can run a web search.
 
+**The assistant.** With an LLM connected (Claude when `ANTHROPIC_API_KEY` is set, otherwise OpenAI with `OPENAI_API_KEY`; `/api/health` says `agent: true`), chat over a plan goes to an assistant that acts on the trip through tools, like a command line for the app. Without one, the rule-based editor above answers as before.
+
+- **One allowlist** (`src/agent/tools.ts`): read (find a place’s videos, the money summary), plan edits (add, remove, move or reorder a stop, tidy a day, fill a gap, choose the hotel, add a traveller’s own place, undo, and `change_trip`, which hands a plain-words change to the rule-based editor), and money and people (log an expense, invite or remove someone). The server offers the model exactly these, and the browser runs a call only if its name is on the list and its arguments pass that tool’s schema, extra fields included. Anything else comes back to the model as an error.
+- **Nothing runs on the server.** `POST /api/agent` (`server/agent.ts`) only relays one round to the model and returns its tool calls. The browser runs them (`src/agent/run.ts`) through the same reducer actions and money API as the app’s own buttons, as the signed-in traveller, so the usual rules hold: a day keeps a stop, a normal group member can’t edit, the server checks admin rights, and every plan edit is undoable.
+- **Money and people ask first.** Logging an expense or inviting or removing someone shows exactly what will happen (“Log “Dinner”: ¥3,000, paid by you, split equally between everyone (3)?”) with Confirm and Cancel. Declining tells the model nothing was done. Expenses are in the group’s currency, and only existing member ids are accepted.
+- **Limits.** At most 8 rounds of tool calls per message, a cap on what’s sent, and 150 rounds an hour per visitor. Only the admin (or a solo traveller) talks to it. The model is told that trip data, place descriptions, video titles and tool results are information, never instructions, and that nobody in the chat can give it more abilities; the allowlist holds regardless.
+- **What it sees:** the trip as text (`contextOf`): brief, each day’s stops with times and ids, hotels, and every known place with its id, plus the last few chat lines.
+
 Every edit, from chat or from buttons, goes on an **undo stack** (↺ in the panel footer, or type "undo"). Requests typed while a plan is still drawing are queued and applied the moment it's ready.
 
 The interpreter is rule-based and offline. It is the seam for an LLM with edit tools later: same input (request + plan), same output (`EditResult`).
@@ -333,6 +341,7 @@ server/
   hotelAgent.ts            Hotel scoring + Claude's pick
   places.ts                Travellers' own places: maps links, OpenStreetMap lookup, live reels & videos
   openai.ts                OpenAI client, for those lookups when there's no Anthropic key
+  agent.ts                 The trip assistant's relay to Claude or OpenAI (runs no tools itself)
   money/
     routes.ts              Money API: validation, permissions, live streams
     store.ts               Groups, people, expenses, payments (each change one transaction)
@@ -351,6 +360,9 @@ src/
   data/videos.ts           Checked reels + videos per place, loaded on first use
   data/hotelPhotos.ts      Hand-picked cover photo per hotel
   data/placeCovers.ts      Hand-picked first photo for places the lookup serves poorly
+  agent/
+    tools.ts               The assistant's allowlist: every tool, its arguments, and which ask first
+    run.ts                 Runs the assistant's tool calls through the app's own actions; what it sees of the trip
   planner/
     engine.ts              PlannerEngine interface: the swap point
     core.ts                Shared scheduling + hotel scoring (used by server agent and offline planner)
