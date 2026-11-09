@@ -234,7 +234,7 @@ function TuneCard({ brief, city, onBrief, draft, onClose }: { brief: TripBrief; 
       ))}
       {draft ? (
         <div className="quick-replies trip-tune-actions">
-          <button className="trip-tune-go" disabled={!changed} onClick={() => onBrief(held)}>Re-plan with these</button>
+          <button className="trip-tune-go" disabled={!changed} onClick={() => onBrief(held)}>Show me options</button>
           <button onClick={onClose}>Cancel</button>
         </div>
       ) : (

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { cityById } from '../src/data/cities'
-import { PACE, dayShape, scoreHotel } from '../src/planner/core'
+import { PACE, dayShape, laneOf, scoreHotel } from '../src/planner/core'
 import { estimateTravel } from '../src/planner/geo'
 import { MockPlanner } from '../src/planner/mockPlanner'
 import { SLIDERS, sliderPatch, tuningLines } from '../src/planner/sliders'
@@ -110,16 +110,36 @@ describe('re-planning when the sliders move over a plan', () => {
     assert.ok(after.length === 3)
   })
 
-  it('clears the plan for the planner, and “undo” brings the old one and its settings back', async () => {
+  it('doesn’t choose for them: re-times the days and deals options to swipe', async () => {
     const days = await plan(base)
-    const s: TripState = { ...initialState, brief: base, phase: 'final', days, hotel: undefined }
-    const next = reducer(s, { type: 'retune', brief: { ...base, kids: 1 } })
-    assert.equal(next.phase, 'planning')
-    assert.equal(next.days.length, 0)
-    assert.equal(next.brief.kids, 1)
-    const back = reducer({ ...next, phase: 'review', days: await plan({ ...base, kids: 1 }) }, { type: 'undo' })
-    assert.deepEqual(back.days.map(d => d.stops.map(x => x.place.id)), days.map(d => d.stops.map(x => x.place.id)))
-    assert.equal(back.brief.kids, undefined)
+    const planned = days.flatMap(d => d.stops.map(x => x.place.id))
+    const skipped = 'ldn-tate-modern'
+    const s: TripState = { ...initialState, brief: base, phase: 'review', days, picks: { [skipped]: 'nope' } }
+    const next = reducer(s, { type: 'retune', brief: { ...base, rhythm: 1, foodie: 1 } })
+    assert.equal(next.phase, 'swipe')
+    assert.ok(next.deckMode, 'a deck over the plan, which returns to it')
+    // same places, new times
+    assert.deepEqual(next.days.map(d => d.stops.map(x => x.place.id)), days.map(d => d.stops.map(x => x.place.id)))
+    assert.ok(next.days.every(d => d.stops[0].arrive >= 10 * 60 + 30))
+    // options: nothing already planned or skipped, places first and then food and drink
+    const ids = next.deck.map(c => c.id)
+    assert.ok(ids.length > 0 && ids.every(id => !planned.includes(id) && id !== skipped))
+    const lanes = ids.map(id => laneOf(cityById('london')!.places.find(p => p.id === id)!))
+    assert.ok(lanes.includes('places') && lanes.includes('food'))
+    assert.equal(lanes.indexOf('food'), lanes.lastIndexOf('places') + 1, 'places, then food')
+    // keeping one adds it; nothing else changes
+    const kept = reducer({ ...next, picks: { ...next.picks, [ids[0]]: 'like' } }, { type: 'finish-deck' })
+    assert.ok(kept.days.some(d => d.stops.some(x => x.place.id === ids[0])))
+    assert.equal(kept.days.flatMap(d => d.stops).length, planned.length + 1)
+  })
+
+  it('“undo” brings the old settings and times back', async () => {
+    const days = await plan(base)
+    const s: TripState = { ...initialState, brief: base, phase: 'review', days }
+    const next = reducer(reducer(s, { type: 'retune', brief: { ...base, rhythm: 1 } }), { type: 'finish-deck', cancel: true })
+    const back = reducer(next, { type: 'undo' })
+    assert.equal(back.brief.rhythm, undefined)
+    assert.deepEqual(back.days.map(d => d.stops[0].arrive), days.map(d => d.stops[0].arrive))
   })
 
   it('only re-plans a plan', () => {
@@ -132,5 +152,41 @@ describe('a full day', () => {
   it('isn’t padded past the pace, even for a night owl', async () => {
     const b: TripBrief = { destination: 'tokyo', days: 3, vibes: ['food', 'culture'], travelers: 2, rhythm: 1, familiarity: 1 }
     for (const d of await plan(b)) assert.ok(d.stops.length <= dayShape(b).perDay + 1, `Day ${d.day} has ${d.stops.length} stops`)
+  })
+})
+
+describe('two decks: places, then food and drink', () => {
+  const start = (): TripState => reducer({ ...initialState, brief: base, phase: 'intake' }, { type: 'start-deck' })
+  const laneAt = (s: TripState, i = s.deckIndex) => laneOf(cityById('london')!.places.find(p => p.id === s.deck[i].id)!)
+
+  it('deals places first, then food and drink', () => {
+    const s = start()
+    assert.equal(laneAt(s, 0), 'places')
+    assert.equal(laneAt(s, s.deck.length - 1), 'food')
+  })
+
+  it('switches deck, keeps swiping in it, and undo goes back to the last card swiped', () => {
+    let s = start()
+    s = reducer(s, { type: 'swipe', like: true })
+    const firstPlace = s.deck[0].id
+    s = reducer(s, { type: 'deck-lane', lane: 'food' })
+    assert.equal(laneAt(s), 'food')
+    const firstFood = s.deck[s.deckIndex].id
+    s = reducer(s, { type: 'swipe', like: true })
+    assert.equal(laneAt(s), 'food', 'stays in the food deck')
+    s = reducer(s, { type: 'undo-swipe' })
+    assert.equal(s.deck[s.deckIndex].id, firstFood)
+    assert.equal(s.picks[firstFood], undefined)
+    assert.equal(s.picks[firstPlace], 'like')
+    s = reducer(s, { type: 'deck-lane', lane: 'places' })
+    assert.equal(laneAt(s), 'places')
+    assert.notEqual(s.deck[s.deckIndex].id, firstPlace, 'the next undecided place, not one already swiped')
+  })
+
+  it('moves on to the other deck when one runs out, then ends', () => {
+    let s = start()
+    for (let i = 0; i < s.deck.length; i++) s = reducer(s, { type: 'swipe', like: false })
+    assert.equal(s.deckIndex, s.deck.length)
+    assert.ok(s.deck.every(c => s.picks[c.id] === 'nope'))
   })
 })

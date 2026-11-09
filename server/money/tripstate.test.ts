@@ -145,7 +145,8 @@ describe('places that have gone from the city’s data', () => {
     assert.deepEqual(s.sharedDeck.map(c => c.id), ids)
   })
   it('a swipe that lands on one passes over it rather than pinning nothing', () => {
-    const s = { ...member(), deck: tiles, deckIndex: 5 }
+    // the five before it already swiped
+    const s = { ...member(), deck: tiles, deckIndex: 5, picks: Object.fromEntries(tiles.slice(0, 5).map(c => [c.id, 'like' as const])) }
     const next = reducer(s, { type: 'swipe', like: true })
     assert.equal(next.deckIndex, 6)
     assert.ok(Object.values(next.candidates).every(c => c.place))

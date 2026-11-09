@@ -398,7 +398,23 @@ export function shortlist(places: Place[], brief: TripBrief, n = SHORTLIST): Pla
   return [...out].sort((a, b) => rank.get(a.id)! - rank.get(b.id)!)
 }
 
+// Swiping comes in two runs: places to see, then food and drink, each with its own deck.
+export type Lane = 'places' | 'food'
+export const laneOf = (p: Pick<Place, 'kind' | 'tags'>): Lane =>
+  p.kind === 'food' || p.kind === 'cafe' || p.kind === 'bar' || (p.kind === 'market' && p.tags.includes('food')) ? 'food' : 'places'
+
+// The swipe deck: places first, then food and drink, each best first. `size` caps a big city's
+// runs; a small one deals everything.
+export function laneDeck(places: Place[], brief: TripBrief, size?: { places: number; food: number }): DeckCard[] {
+  const run = (lane: Lane, n?: number) => {
+    const all = places.filter(p => laneOf(p) === lane)
+    return buildDeck(n ? shortlist(all, brief, n) : all, brief)
+  }
+  return [...run('places', size?.places), ...run('food', size?.food)]
+}
+
 export function buildDeck(places: Place[], brief: TripBrief): DeckCard[] {
+  if (!places.length) return []
   const scored = places.map(p => ({ p, ...scorePlace(p, brief) }))
   const top = Math.max(...scored.map(s => s.score))
   return scored

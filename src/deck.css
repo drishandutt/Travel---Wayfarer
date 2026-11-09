@@ -9,6 +9,15 @@
 .deck-head:has(.deck-cancel + .deck-cancel) h2 { padding-right: 180px; } /* Chat and Back to the plan */
 .deck-head h2 { margin: 2px 0 12px; font-family: var(--display); font-weight: 600; font-size: 24px; letter-spacing: -.025em; line-height: 1.1; }
 .deck-head small { font-size: 12.5px; color: var(--paper-faint); }
+.deck-lanes { display: flex; gap: 6px; margin-bottom: 10px; }
+.deck-lanes button { flex: 1; min-height: 34px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--glass-hi); color: var(--paper-dim); font-size: 13px; font-weight: 600; }
+.deck-lanes button small { font-weight: 500; color: var(--paper-faint); margin-left: 4px; }
+.deck-lanes button.on { background: var(--paper); color: var(--ink); }
+.deck-lanes button.on small { color: inherit; opacity: .7; }
+.deck-lanes button:disabled:not(.on) { opacity: .5; }
+.dc-tastes { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 4px; }
+.dc-tastes span { padding: 3px 9px; border-radius: 999px; font-size: 12px; background: rgba(var(--paper-rgb), .08); color: var(--paper-dim); }
+.deck-between p + p { margin-top: -4px; }
 .deck-progress { height: 3px; border-radius: 3px; background: var(--line-2); overflow: hidden; margin-bottom: 8px; }
 .deck-progress i { display: block; height: 100%; background: var(--paper); transition: width .4s var(--ease); }
 .deck { position: relative; flex: 1; min-height: 0; }

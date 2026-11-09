@@ -1,8 +1,10 @@
 import type { DayPlan, HotelScore, Leg, LngLat, Place, PlannerEvent, TripBrief } from '../types'
-import { applyGapFill, bestInsertIndex, buildDeck, findGapFill, orderDay, rebuildDay, shortlist, withHotel, type DeckCard } from '../planner/core'
+import { applyGapFill, bestInsertIndex, buildDay, dayShape, findGapFill, hotelLegs, laneDeck, laneOf, orderDay, rebuildDay, withHotel, type DeckCard, type Lane } from '../planner/core'
 
-// A big city's swipe deck: its best matches, not all ~1,600 places.
-const DECK_SIZE = 40
+// A big city's swipe decks: its best matches, not all ~1,600 places.
+const DECK_SIZE = { places: 28, food: 16 }
+// Options dealt when the sliders move over a plan.
+const RETUNE_SIZE = { places: 10, food: 8 }
 import { cityById, tripCity } from '../data/cities'
 import { applyDeckPicks, applyEdit, planDeckRequest, type DeckRequest, type EditResult, type PlanSlice } from '../planner/edits'
 import { centroid } from '../planner/geo'
@@ -33,6 +35,7 @@ export interface TripState {
   selectedPlace: string | null
   deck: DeckCard[]              // swipe cards, best match first
   deckIndex: number
+  deckTrail?: string[]          // card ids in the order they were swiped, for undo
   picks: Record<string, 'like' | 'nope'>
   tripId?: string               // set once the trip is saved to My trips
   history: { plan: PlanSlice; label: string }[]  // undo stack for plan edits
@@ -75,7 +78,8 @@ export type Action =
   | { type: 'shared-role'; role: 'admin' | 'member' | null; version?: number }
   | { type: 'shared-synced'; json: string; version: number }
   | { type: 'reset' }
-  | { type: 'retune'; brief: TripBrief }   // the sliders moved over a plan: clear it for the planner, undoably
+  | { type: 'retune'; brief: TripBrief }   // the sliders moved over a plan: re-time it and deal options to swipe
+  | { type: 'deck-lane'; lane: Lane }      // switch between the places and the food-and-drink decks
 
 // What we persist: enough to redraw the map and itinerary exactly.
 export interface SavedTrip {
@@ -110,7 +114,7 @@ export const initialState: TripState = {
   hoverPlace: null,
   selectedPlace: null,
   deck: [],
-  deckIndex: 0,
+  deckIndex: 0, deckTrail: [],
   picks: {},
   history: [],
   sharedDeck: [],
@@ -225,7 +229,7 @@ function commit(s: TripState, res: EditResult): TripState {
       ? { center: centroid(focus), zoom: city.zoom + 1.2, key: seq++ }
       : { center: city.center, zoom: city.zoom + 0.4, key: seq++ },
     thoughts: [...s.thoughts, ...res.changes.map(t => ({ id: uid(), text: t, tone: 'decide' as const }))],
-    ...(moved ? { deck: [], deckIndex: 0, sharedDeck: [] } : {}),
+    ...(moved ? { deck: [], deckIndex: 0, deckTrail: [], sharedDeck: [] } : {}),
   }
   const lines = ['Done:', ...res.changes.map(c => `• ${c}`)]
   if (res.notes.length) lines.push('', `Heads up: ${res.notes.join(' ')}`)
@@ -245,7 +249,7 @@ function openEditDeck(s: TripState, req: DeckRequest): TripState {
     brief: req.tastes.length ? { ...s.brief, tastes } : s.brief,
     phase: 'swipe',
     deck: req.cards,
-    deckIndex: 0,
+    deckIndex: 0, deckTrail: [],
     deckMode: { returnPhase: s.phase === 'final' ? 'final' : 'review', replaceId: req.replaceId, day: req.day, label: req.label },
     candidates: { ...s.candidates, [first.id]: { place: first, verdict: 'consider' } },
     selectedPlace: null,
@@ -264,7 +268,7 @@ function finishEditDeck(s: TripState, cancel: boolean): TripState {
   for (const c of s.deck) if (!planned.has(c.id) && (cancel || candidates[c.id]?.verdict !== 'drop')) delete candidates[c.id]
   const picks = { ...s.picks }
   if (cancel) for (const c of s.deck) delete picks[c.id]
-  const base: TripState = { ...s, phase: mode.returnPhase, deck: [], deckIndex: 0, deckMode: undefined, candidates, picks }
+  const base: TripState = { ...s, phase: mode.returnPhase, deck: [], deckIndex: 0, deckTrail: [], deckMode: undefined, candidates, picks }
   if (!liked.length) {
     const kept = mode.replaceId ? ` I kept ${tripCity(s.brief)?.places.find(p => p.id === mode.replaceId)?.name ?? 'your stop'}.` : ''
     return { ...base, messages: [...base.messages, { id: uid(), role: 'ai', text: `${cancel ? 'Cancelled' : 'Nothing kept'} — your plan is unchanged.${kept}` }] }
@@ -380,6 +384,60 @@ function resumable(p: SharedPlan): SharedPlan {
 }
 
 // The pins for a voting deck: what you've decided, and the card in front of you.
+// Where the deck goes next: the next undecided card in `lane` (or any) from `from` on, then
+// the first undecided one from the top, then the end of the deck.
+export function nextOpen(s: Pick<TripState, 'deck' | 'brief'>, picks: Record<string, unknown>, from: number, lane?: Lane): number {
+  const city = tripCity(s.brief)
+  const laneAt = (i: number): Lane => { const p = city?.places.find(x => x.id === s.deck[i].id); return p ? laneOf(p) : 'places' }
+  const open = (i: number) => !picks[s.deck[i].id]
+  for (let i = from; i < s.deck.length; i++) if (open(i) && (!lane || laneAt(i) === lane)) return i
+  for (let i = 0; i < s.deck.length; i++) if (open(i) && (!lane || laneAt(i) === lane)) return i
+  for (let i = 0; i < s.deck.length; i++) if (open(i)) return i
+  return s.deck.length
+}
+
+// The card the last swipe decided, for undo: by the trail, else the one before (an older saved deck).
+export function lastSwiped(s: Pick<TripState, 'deck' | 'deckIndex' | 'deckTrail' | 'picks'>): number | undefined {
+  for (const id of [...(s.deckTrail ?? [])].reverse()) {
+    const i = s.deck.findIndex(c => c.id === id)
+    if (i >= 0 && s.picks[id]) return i
+  }
+  return s.deckIndex > 0 ? s.deckIndex - 1 : undefined
+}
+
+// The sliders moved over a finished plan. Nothing is chosen for them: the days keep their places
+// and only re-time to the new pace, start and walking, and a deck of options picked for the new
+// settings (places, then food and drink) opens to swipe. What they keep joins the plan.
+function retune(s: TripState, brief: TripBrief): TripState {
+  if (s.phase !== 'review' && s.phase !== 'final') return s
+  const city = tripCity(brief)
+  if (!city) return s
+  // each day's start moves as far as the default does, so one they set by hand stays as set relative to it
+  const shift = dayShape(brief).start - dayShape(s.brief).start
+  const days = s.days.map(d => {
+    const day = buildDay(d.day, d.stops.map(x => x.place), brief, { keepOrder: true, start: Math.max(7 * 60, (d.stops[0]?.arrive ?? dayShape(s.brief).start) + shift), title: d.title })
+    return s.hotel ? hotelLegs(s.hotel.hotel, [day])[0] : day
+  })
+  const retimed: TripState = {
+    ...s,
+    brief,
+    days,
+    legs: legsOf(days),
+    history: [...s.history, { plan: sliceOf(s), label: 'changed your settings' }].slice(-20),
+  }
+  const planned = new Set(s.days.flatMap(d => d.stops.map(x => x.place.id)))
+  const open = city.places.filter(p => !planned.has(p.id) && s.picks[p.id] !== 'nope')
+  const cards = laneDeck(open, brief, RETUNE_SIZE)
+  if (!cards.length) return { ...retimed, messages: [...s.messages, { id: uid(), role: 'ai', text: 'Your days are re-timed for the new settings. I’ve no new places to suggest, though.' }] }
+  const food = cards.filter(c => laneOf(city.places.find(p => p.id === c.id)!) === 'food').length
+  return openEditDeck(retimed, {
+    cards,
+    label: 'Ideas for your new settings',
+    intro: `Your plan is the same, re-timed for the new settings. Here are ${cards.length - food ? `${cards.length - food} places` : ''}${cards.length - food && food ? ' and ' : ''}${food ? `${food} food and drink spots` : ''} that fit them: keep what you like and I’ll fit it in. Say “undo” to go back.`,
+    tastes: [],
+  })
+}
+
 function deckPins(deck: DeckCard[], picks: Record<string, VoteValue>, nextId: string | undefined, brief: TripBrief): Record<string, Candidate> {
   const city = tripCity(brief)
   const out: Record<string, Candidate> = {}
@@ -415,13 +473,13 @@ function receivePlan(s: TripState, a: Extract<Action, { type: 'shared-plan' }>, 
     history: a.role === 'member' ? [] : s.history,
     camera: moved && city ? { center: city.center, zoom: city.zoom + 0.4, key: seq++ } : s.camera,
   }
-  if (!voting) return { ...base, phase: p.phase, candidates: p.candidates, deck: [], deckIndex: 0, picks: {} }
+  if (!voting) return { ...base, phase: p.phase, candidates: p.candidates, deck: [], deckIndex: 0, deckTrail: [], picks: {} }
   // keep your place in a deck you're part-way through
   const sameDeck = s.phase === 'swipe' && s.sharedDeck.length === tiles.length && s.sharedDeck.every((c, i) => c.id === tiles[i].id)
   if (sameDeck) return { ...base, phase: 'swipe', deck: s.deck, deckIndex: s.deckIndex, picks: s.picks, candidates: s.candidates }
   // otherwise it's just what you haven't decided yet: a vote only changes when you mean it to
   const deck = tiles.filter(c => !a.votes[c.id])
-  return { ...base, phase: 'swipe', deck, deckIndex: 0, picks: a.votes, candidates: deckPins(tiles, a.votes, deck[0]?.id, p.brief) }
+  return { ...base, phase: 'swipe', deck, deckIndex: 0, deckTrail: [], picks: a.votes, candidates: deckPins(tiles, a.votes, deck[0]?.id, p.brief) }
 }
 
 export function reducer(s: TripState, a: Action): TripState {
@@ -455,7 +513,7 @@ function baseReducer(s: TripState, a: Action): TripState {
       return { ...s, hotel: score, days, legs: legsOf(days) }
     }
     case 'replan':
-      return { ...s, phase: 'intake', thoughts: [], candidates: {}, legs: [], days: [], hotelScores: [], hotel: undefined, activeDay: null, selectedPlace: null, tripId: undefined, deck: [], deckIndex: 0, picks: {}, history: [], deckMode: undefined, sharedDeck: [] }
+      return { ...s, phase: 'intake', thoughts: [], candidates: {}, legs: [], days: [], hotelScores: [], hotel: undefined, activeDay: null, selectedPlace: null, tripId: undefined, deck: [], deckIndex: 0, deckTrail: [], picks: {}, history: [], deckMode: undefined, sharedDeck: [] }
     case 'select-place':
       return { ...s, selectedPlace: a.id }
     case 'remove-stop': {
@@ -550,14 +608,17 @@ function baseReducer(s: TripState, a: Action): TripState {
     case 'reset':
       return initialState
     case 'retune':
-      if (s.phase !== 'review' && s.phase !== 'final') return s
-      return {
-        ...s,
-        brief: a.brief,
-        phase: 'planning',
-        days: [], legs: [], hotel: undefined, hotelScores: [], candidates: {}, selectedPlace: null, activeDay: null,
-        history: [...s.history, { plan: sliceOf(s), label: 're-planned for your new settings' }].slice(-20),
-      }
+      return retune(s, a.brief)
+    case 'deck-lane': {
+      const at = nextOpen(s, s.picks, 0, a.lane)
+      if (at >= s.deck.length || at === s.deckIndex) return s
+      const city = tripCity(s.brief)
+      const place = city?.places.find(p => p.id === s.deck[at].id)
+      const candidates = { ...s.candidates }
+      const left = s.deck[s.deckIndex]
+      if (left && candidates[left.id]?.verdict === 'consider') delete candidates[left.id]
+      return { ...s, deckIndex: at, candidates: place ? { ...candidates, [place.id]: { place, verdict: 'consider' } } : candidates }
+    }
     case 'shared-role': {
       if (!a.role) return s.shared ? { ...s, shared: undefined } : s
       const version = a.version ?? 0
@@ -580,7 +641,7 @@ function baseReducer(s: TripState, a: Action): TripState {
       if (!city) return s
       // the travellers' own finds lead the deck
       const own = new Set(s.brief.customPlaces?.map(p => p.id))
-      const ranked = buildDeck(shortlist(city.places, s.brief, DECK_SIZE), s.brief)
+      const ranked = laneDeck(city.places, s.brief, DECK_SIZE)
       const deck = [...ranked.filter(c => own.has(c.id)).map(c => ({ ...c, why: 'You added this one', match: 1 })), ...ranked.filter(c => !own.has(c.id))]
       const first = city.places.find(p => p.id === deck[0]?.id)
       return {
@@ -588,7 +649,7 @@ function baseReducer(s: TripState, a: Action): TripState {
         phase: 'swipe',
         sharedDeck: deck,
         deck,
-        deckIndex: 0,
+        deckIndex: 0, deckTrail: [],
         deckMode: undefined,
         picks: {},
         candidates: first ? { [first.id]: { place: first, verdict: 'consider' } } : {},
@@ -602,12 +663,17 @@ function baseReducer(s: TripState, a: Action): TripState {
       if (!card || !city) return s
       const byId = (id?: string) => city.places.find(p => p.id === id)
       const place = byId(card.id)
-      const next = byId(s.deck[s.deckIndex + 1]?.id)
-      if (!place) return { ...s, deckIndex: s.deckIndex + 1 } // nothing to pin, so pass over it
+      const picks = { ...s.picks, [card.id]: a.like ? 'like' as const : 'nope' as const }
+      // on through the same deck (places, or food and drink), then whatever's left
+      const at = nextOpen(s, picks, s.deckIndex + 1, place ? laneOf(place) : undefined)
+      const next = byId(s.deck[at]?.id)
+      const deckTrail = [...(s.deckTrail ?? []), card.id]
+      if (!place) return { ...s, deckIndex: at, deckTrail } // nothing to pin, so pass over it
       return {
         ...s,
-        deckIndex: s.deckIndex + 1,
-        picks: { ...s.picks, [card.id]: a.like ? 'like' : 'nope' },
+        deckIndex: at,
+        deckTrail,
+        picks,
         // decided pins settle (amber = keep, faded = skip); the next card's pin starts pulsing
         candidates: {
           ...s.candidates,
@@ -617,15 +683,16 @@ function baseReducer(s: TripState, a: Action): TripState {
       }
     }
     case 'undo-swipe': {
-      if (s.deckIndex === 0) return s
-      const prev = s.deck[s.deckIndex - 1]
+      const back = lastSwiped(s)
+      if (back === undefined) return s
+      const prev = s.deck[back]
       const upcoming = s.deck[s.deckIndex]
       const picks = { ...s.picks }
       delete picks[prev.id]
       const candidates = { ...s.candidates }
-      if (upcoming) delete candidates[upcoming.id]
+      if (upcoming && upcoming.id !== prev.id) delete candidates[upcoming.id]
       if (candidates[prev.id]) candidates[prev.id] = { ...candidates[prev.id], verdict: 'consider' }
-      return { ...s, deckIndex: s.deckIndex - 1, picks, candidates }
+      return { ...s, deckIndex: back, deckTrail: (s.deckTrail ?? []).filter(id => id !== prev.id), picks, candidates }
     }
   }
 }
