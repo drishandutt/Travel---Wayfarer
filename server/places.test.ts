@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { customPlaceRequest, findMapsLink, isFind, parseCoords, parseMapsLink, sameSpot } from '../src/planner/customPlaces'
+import { customPlaceRequest, featureCoord, findMapsLink, isFind, parseCoords, parseMapsLink, s2CellCenter, sameSpot } from '../src/planner/customPlaces'
 import { cityOfPlace, tripCity } from '../src/data/cities'
 import { reducer, initialState, type TripState } from '../src/state/tripStore'
 import { buildDay } from '../src/planner/core'
@@ -17,6 +17,17 @@ describe('maps links', () => {
   it('reads Google query links by name or by coordinates', () => {
     assert.deepEqual(parseMapsLink('https://maps.google.com/?q=35.66,139.70'), { from: 'google', name: undefined, coord: [139.7, 35.66] })
     assert.equal(parseMapsLink('https://www.google.com/maps/search/?api=1&query=Ichiran+Shibuya')?.name, 'Ichiran Shibuya')
+  })
+  it('reads the spot from a Google feature id, which is where shared short links lead', () => {
+    // checked against the s2sphere reference library: S2 cell 0x60188908e728e749 is in Koto, Tokyo
+    const [lng, lat] = featureCoord('0x60188908e728e749:0x6de450c94bd3d622')!
+    assert.ok(Math.abs(lng - 139.80135029) < 1e-6 && Math.abs(lat - 35.66668610) < 1e-6)
+    assert.deepEqual(parseMapsLink('https://maps.google.com/?ftid=0x60188908e728e749:0x6de450c94bd3d622&entry=gps')?.coord, [lng, lat])
+    // a leaf cell near (0, 0) on face 0, and nonsense ids
+    const [x, y] = s2CellCenter(0x1000000000000001n)!
+    assert.ok(Math.abs(x) < 50 && Math.abs(y) < 50)
+    assert.equal(featureCoord('0xzz:0x1'), undefined)
+    assert.equal(s2CellCenter(0xF000000000000001n), undefined, 'there is no face 7')
   })
   it('knows short links need following', () => {
     assert.deepEqual(parseMapsLink('https://maps.app.goo.gl/AbC123xyz'), { from: 'google', short: true })

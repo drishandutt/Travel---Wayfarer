@@ -39,7 +39,8 @@ export async function expandLink(url: string, signal?: AbortSignal): Promise<Map
     const parsed = parseMapsLink(current)
     if (!parsed) break
     if (!parsed.short && (parsed.coord || parsed.name)) return { ...parsed, url: current }
-    const res = await fetch(current, { redirect: 'manual', headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en' }, signal: anySignal(signal, 8000) })
+    // an honest, plain user agent: Google answers a browser's with an "open in the app" page instead of the redirect
+    const res = await fetch(current, { redirect: 'manual', headers: { 'User-Agent': 'Wayfarer trip planner (link preview)', 'Accept-Language': 'en' }, signal: anySignal(signal, 8000) })
     const location = res.headers.get('location')
     if (location && res.status >= 300 && res.status < 400) {
       current = new URL(location, current).toString()
@@ -285,7 +286,10 @@ export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal): P
   }
   coord = coord!
   name = displayName(name, hit) ?? hit?.address?.road
-  if (!name) throw new PlaceError('I found the spot but not what it’s called. Send it with its name, e.g. “add Fuunji ramen”.')
+  if (!name) {
+    const where = shortAddress(hit?.address)
+    throw new PlaceError(`I found the spot${where ? ` (${where})` : ''}, but the map I use doesn’t have its name. What’s it called? Send the name with the link, e.g. “Fuunji ${req.link ?? ''}”.`.replace(/\s+”/, '”'))
+  }
 
   const km = haversineKm(coord, city.center)
   if (km > NEARBY_KM) throw new PlaceError(`${name} is about ${Math.round(km)} km from ${city.name}, too far to fit into this trip.`)

@@ -73,7 +73,7 @@ export const AGENT_TOOLS = {
   },
   add_own_place: {
     risk: 'edit',
-    description: 'Add a place that is not in the catalog: by its name, or by a Google Maps / Apple Maps / OpenStreetMap / Waze link the traveller shared. Optionally into a day.',
+    description: 'Add a place that is not in the catalog: by its name, or by a Google Maps / Apple Maps / OpenStreetMap / Waze link the traveller shared, or both. Optionally into a day. If a link alone comes back without a name, ask the traveller what the place is called, then call again with that name and the same link (the link gives the exact spot).',
     args: z.strictObject({ name: nullable(z.string().max(120)), link: nullable(z.string().max(2000)), day: nullable(day) }),
   },
 

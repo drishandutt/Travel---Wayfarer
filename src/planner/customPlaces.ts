@@ -80,7 +80,7 @@ export function parseMapsLink(url: string): MapsLink | undefined {
     const view = path.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/)
     const placeName = path.match(/\/maps\/place\/([^/@]+)/)?.[1]
     const query = q.get('q') ?? q.get('query') ?? q.get('destination') ?? q.get('daddr')
-    const coord = (pin && latLng(Number(pin[1]), Number(pin[2]))) || pair(query) || pair(q.get('ll'))
+    const coord = (pin && latLng(Number(pin[1]), Number(pin[2]))) || pair(query) || pair(q.get('ll')) || featureCoord(q.get('ftid'))
       || (placeName && pair(plus(placeName))) || (view && placeName ? latLng(Number(view[1]), Number(view[2])) : undefined)
     const named = [placeName, query].map(s => (s ? plus(s) : '')).find(s => s && !pair(s))
     return { from, name: named || undefined, coord }
@@ -97,6 +97,57 @@ export function parseMapsLink(url: string): MapsLink | undefined {
     return { from, name: q.get('query')?.trim() || undefined, coord }
   }
   return { from, coord: pair(q.get('ll')), name: q.get('q')?.trim() || undefined }
+}
+
+// Google's feature ids (`ftid=0x60188908e728e749:0x6de4…`, what a shared short link often leads
+// to) start with the S2 cell holding the place: a public geometry scheme, so decoding it gives
+// the spot to within a few centimetres without asking Google anything.
+export function featureCoord(ftid: string | null | undefined): LngLat | undefined {
+  const hex = ftid?.match(/^0x([0-9a-f]{1,16}):0x[0-9a-f]+$/i)?.[1]
+  if (!hex) return undefined
+  const ll = s2CellCenter(BigInt(`0x${hex}`))
+  return ll && latLng(ll[1], ll[0])
+}
+
+// S2 cell id → centre [lng, lat], after the reference implementation (s2geometry, Apache 2.0).
+const LOOKUP_BITS = 4
+const POS_TO_IJ = [[0, 1, 3, 2], [0, 2, 3, 1], [3, 2, 0, 1], [3, 1, 0, 2]]
+const POS_TO_ORIENTATION = [1, 0, 0, 3]
+let lookupIJ: number[] | undefined
+function buildLookup(): number[] {
+  const table: number[] = []
+  const cell = (level: number, i: number, j: number, orig: number, pos: number, orientation: number) => {
+    if (level === LOOKUP_BITS) { table[(pos << 2) + orig] = (((i << LOOKUP_BITS) + j) << 2) + orientation; return }
+    const r = POS_TO_IJ[orientation]
+    for (let k = 0; k < 4; k++) cell(level + 1, (i << 1) + (r[k] >> 1), (j << 1) + (r[k] & 1), orig, (pos << 2) + k, orientation ^ POS_TO_ORIENTATION[k])
+  }
+  for (let o = 0; o < 4; o++) cell(0, 0, 0, o, 0, o)
+  return table
+}
+
+export function s2CellCenter(id: bigint): LngLat | undefined {
+  if (id <= 0n || id >= 1n << 64n) return undefined
+  lookupIJ ??= buildLookup()
+  const face = Number(id >> 61n)
+  if (face > 5) return undefined
+  let bits = face & 1
+  let i = 0
+  let j = 0
+  for (let k = 7; k >= 0; k--) {
+    const n = k === 7 ? 30 - 7 * LOOKUP_BITS : LOOKUP_BITS
+    bits += Number((id >> BigInt(k * 2 * LOOKUP_BITS + 1)) & ((1n << BigInt(2 * n)) - 1n)) << 2
+    bits = lookupIJ[bits]
+    i += (bits >> (LOOKUP_BITS + 2)) * 2 ** (k * LOOKUP_BITS)
+    j += ((bits >> 2) & ((1 << LOOKUP_BITS) - 1)) * 2 ** (k * LOOKUP_BITS)
+    bits &= 3
+  }
+  const uv = (ij: number) => {
+    const s = (ij + 0.5) / 2 ** 30
+    return s >= 0.5 ? (4 * s * s - 1) / 3 : (1 - 4 * (1 - s) * (1 - s)) / 3
+  }
+  const [u, v] = [uv(i), uv(j)]
+  const [x, y, z] = [[1, u, v], [-u, 1, v], [-u, -v, 1], [-1, -v, -u], [v, -1, -u], [v, u, -1]][face]
+  return [(Math.atan2(y, x) * 180) / Math.PI, (Math.atan2(z, Math.hypot(x, y)) * 180) / Math.PI]
 }
 
 // Bare coordinates, as copied from any maps app: "35.6869, 139.6967".

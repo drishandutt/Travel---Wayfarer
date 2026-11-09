@@ -123,7 +123,7 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
             return (
               <div key={m.id} className={`msg ${theirs ? 'friend' : m.role}`} style={{ animationDelay: `${Math.min(i, 2) * 60}ms` }}>
                 {theirs && <small className="msg-from">{adminName}</small>}
-                {m.text}
+                {m.role === 'ai' ? withBold(m.text) : m.text}
               </div>
             )
           }
@@ -198,4 +198,10 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
       </form>
     </section>
   )
+}
+
+// The assistant may mark a few words **bold**; nothing else is read as formatting.
+function withBold(text: string) {
+  const parts = text.split(/\*\*(.+?)\*\*/g)
+  return parts.length === 1 ? text : parts.map((p, i) => (i % 2 ? <b key={i}>{p}</b> : p))
 }

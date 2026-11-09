@@ -14,6 +14,7 @@ import { currencyDigits, fmtMoney } from '../money/currency'
 import { categoryForKind, guessCategory } from '../money/categories'
 import { newId } from '../state/persistence'
 import { errorText } from '../planner/remotePlanner'
+import { estimateCosts } from '../planner/insights'
 
 // The trip chatbot in the browser. The server relays to the model (server/agent.ts); every tool
 // call it hands back runs here, through the app's own actions, as the signed-in traveller.
@@ -273,6 +274,17 @@ async function question(name: string, a: Record<string, any>, host: AgentHost): 
 
 // ── what the model sees of the trip ──────────────────────────────────────────
 
+// The same estimate the trip's dashboard shows, so the assistant and the dashboard agree.
+function costLine(s: TripState, city: NonNullable<ReturnType<typeof tripCity>>): string {
+  if (!s.days.length) return ''
+  const c = estimateCosts(s.brief, s.days, city, s.hotel)
+  const usd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`
+  return [
+    `Estimated cost for the whole trip, in USD (what the dashboard shows; ${s.days.length} night${s.days.length > 1 ? 's' : ''}, one per planned day): ${usd(c.total)} total, ${usd(c.perPerson)} per person, ${usd(c.perDay)} per day${c.budget ? `, against a ${usd(c.budget)} budget (${c.total <= c.budget ? `${usd(c.budget - c.total)} under` : `${usd(c.total - c.budget)} over`})` : ''}.`,
+    ...c.lines.map(l => `  ${l.label}: ${usd(l.amount)} (${l.note})`),
+  ].join('\n')
+}
+
 export function contextOf(s: TripState, trip: SharedTrip | null): string {
   const city = tripCity(s.brief)
   if (!city) return 'No destination yet.'
@@ -291,6 +303,7 @@ export function contextOf(s: TripState, trip: SharedTrip | null): string {
     ]),
     '',
     s.hotel ? `Hotel: ${s.hotel.hotel.name} [${s.hotel.hotel.id}], $${s.hotel.hotel.nightly}/night.` : 'Hotel: none chosen yet.',
+    costLine(s, city),
     ...(s.hotelScores.length ? [`Scored hotels: ${s.hotelScores.map(h => `${h.hotel.name} [${h.hotel.id}] $${h.hotel.nightly}/night, ~${Math.round(h.avgCommute)} min to each day`).join('; ')}`] : []),
     '',
     'Places in the plan (id | name | kind | price | tags | best time | about):',

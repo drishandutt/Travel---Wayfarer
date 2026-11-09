@@ -131,6 +131,8 @@ describe('the assistant’s allowlist', () => {
     const text = contextOf(planned(), null)
     assert.match(text, /Day 1 “.*”:\n {2}\d\d:\d\d–\d\d:\d\d Sensō-ji Temple \[tk-sensoji\]/)
     assert.match(text, /Other places \(not in the plan\):\ntk-/)
+    assert.match(text, /Estimated cost for the whole trip, in USD .*: \$[\d,]+ total, \$[\d,]+ per person/)
+    assert.match(text, /\n {2}Stay: \$[\d,]+ \(/)
   })
 })
 
