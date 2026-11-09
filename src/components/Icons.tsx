@@ -37,3 +37,6 @@ export const SunIcon = () => (
 export const MoonIcon = () => (
   <svg {...base} width={16} height={16}><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" /></svg>
 )
+export const RestartIcon = () => (
+  <svg {...base} width={16} height={16}><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" /></svg>
+)

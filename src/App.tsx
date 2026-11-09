@@ -452,6 +452,8 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   const cancelDeck = () => dispatch({ type: 'finish-deck', cancel: true })
 
   const approve = () => {
+    // Accepting the itinerary makes the trip's own Money and Photos (its group), once.
+    if (account && !activeGroup) ensureGroup().catch(() => {}) // offline: the dashboard makes it later
     dispatch({ type: 'phase', phase: 'hotels' })
     dispatch({ type: 'active-day', day: null })
     dispatch({ type: 'chat', role: 'ai', text: 'Approved. Now hunting for a base that keeps every day close.' })
@@ -468,9 +470,23 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   const [dashOpen, setDashOpen] = useState(false)
   const showDash = dashOpen && (state.phase === 'review' || state.phase === 'final') && state.days.length > 0
 
-  // Shared expenses, connected to this trip.
-  const [moneyOpen, setMoneyOpen] = useState<{ prefill?: ExpensePrefill } | null>(null)
-  const [vaultOpen, setVaultOpen] = useState(false)
+  // Money and Photos. From the top bar: every trip together. From the trip (its dashboard, a
+  // place on its map): that trip's own, made on the spot if accepting the plan didn't get to.
+  const [moneyOpen, setMoneyOpen] = useState<{ scope?: string; prefill?: ExpensePrefill } | null>(null)
+  const [vaultOpen, setVaultOpen] = useState<{ scope?: string } | null>(null)
+  const tripSpace = async (): Promise<string | undefined> => {
+    if (activeGroup) return activeGroup
+    if (!account || member) return undefined
+    try {
+      return await ensureGroup()
+    } catch (err) {
+      toast((err as Error).message)
+      return undefined
+    }
+  }
+  const openTripMoney = async (prefill?: ExpensePrefill) => setMoneyOpen({ scope: await tripSpace(), prefill })
+  const openTripPhotos = async () => setVaultOpen({ scope: await tripSpace() })
+  const tripBalance = groups?.find(g => g.id === activeGroup) ?? null
   const moneyBadge = useMoneyBadge(Boolean(moneyOpen))
   const hasPlan = (state.phase === 'review' || state.phase === 'final') && state.days.length > 0
   const moneyTrip = useMemo<MoneyTrip>(() => ({
@@ -495,7 +511,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     const start = state.brief.startDate
     const date = start && day ? new Date(new Date(`${start}T00:00:00Z`).getTime() + (day - 1) * 86_400_000).toISOString().slice(0, 10) : undefined
     dispatch({ type: 'select-place', id: null })
-    setMoneyOpen({ prefill: { title: place.name, category: categoryForKind(place.kind), placeId: place.id, placeName: place.name, date } })
+    openTripMoney({ title: place.name, category: categoryForKind(place.kind), placeId: place.id, placeName: place.name, date })
   }
 
   const save = () => {
@@ -539,6 +555,13 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     setActiveGroup(null)
     dispatch({ type: 'reset' })
   }
+
+  // From the top bar, so it's never more than a tap away. Nothing is lost (the plan stays in
+  // My trips), but a stray tap shouldn't wipe the screen, so it asks.
+  const startOver = () => {
+    if (confirm('Start a new trip? This one stays in My trips.')) newTrip()
+  }
+  const canStartOver = !member && !state.deckMode && (state.phase !== 'intake' || state.messages.some(m => m.role === 'user'))
 
   const signOut = async () => {
     const unsent = unsentCount()
@@ -632,9 +655,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
             </footer>
           ) : (
             <footer className="actions">
-              {state.deckMode
-                ? <button className="ghost" onClick={cancelDeck}>Cancel</button>
-                : <button className="ghost" onClick={newTrip}>Start over</button>}
+              {state.deckMode && <button className="ghost" onClick={cancelDeck}>Cancel</button>}
               {state.history.length > 0 && (state.phase === 'review' || state.phase === 'final') && (
                 <button className="ghost undo" title={`Undo: ${state.history[state.history.length - 1].label}`} aria-label="Undo last change" onClick={() => dispatch({ type: 'undo' })}>↺</button>
               )}
@@ -661,8 +682,8 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         : { left: tucked.chat && state.phase !== 'swipe' ? 60 : 440, right: tucked.journal || state.phase === 'intake' ? 60 : 460 }} />
       <div className="vignette" />
 
-      <TopBar state={state} brain={brain} trips={trips} onOpen={openTrip} onDelete={removeTrip} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} moneyBadge={moneyBadge} onPhotos={() => setVaultOpen(true)}
-        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} email={account?.email ?? null} onSignOut={signOut} />
+      <TopBar state={state} brain={brain} trips={trips} onOpen={openTrip} onDelete={removeTrip} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} moneyBadge={moneyBadge} onPhotos={() => setVaultOpen({})}
+        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} email={account?.email ?? null} onSignOut={signOut} />
 
       {newGroup && (
         <div className="trip-nudge" role="status">
@@ -729,10 +750,11 @@ function TripApp({ acct }: { acct: AccountHandle }) {
 
       <PlaceCard state={state} dispatch={dispatch} onLogExpense={logExpense} voteOn={voteOn} />
 
-      {showDash && <Dashboard state={state} onClose={() => setDashOpen(false)} onDates={member ? undefined : setDates} onMoney={() => setMoneyOpen({})} />}
+      {showDash && <Dashboard state={state} onClose={() => setDashOpen(false)} onDates={member ? undefined : setDates}
+        onMoney={() => openTripMoney()} onPhotos={openTripPhotos} balance={tripBalance} />}
 
-      {moneyOpen && <MoneyApp acct={acct} trip={moneyTrip} prefill={moneyOpen.prefill} onClose={() => setMoneyOpen(null)} />}
-      {vaultOpen && <VaultApp acct={acct} onClose={() => setVaultOpen(false)} />}
+      {moneyOpen && <MoneyApp acct={acct} trip={moneyTrip} scope={moneyOpen.scope} prefill={moneyOpen.prefill} onClose={() => { setMoneyOpen(null); refreshGroups().catch(() => {}) }} />}
+      {vaultOpen && <VaultApp acct={acct} scope={vaultOpen.scope} onClose={() => setVaultOpen(null)} />}
 
       {inviteOpen && trip && <InviteFriends trip={trip} tripSize={state.brief.travelers ?? 2} onClose={() => setInviteOpen(false)} onChanged={() => { shared.refresh(); refreshGroups().catch(() => {}) }} />}
 

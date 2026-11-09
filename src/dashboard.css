@@ -35,6 +35,15 @@
 .muted { color: var(--paper-faint); font-size: 13px; }
 .fine { margin: 14px 0 0; font-size: 12px; color: var(--paper-faint); }
 
+/* this trip's money and photos */
+.trip-space { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.trip-space-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; border: 0; text-align: left; color: var(--paper); cursor: pointer; transition: background .2s; }
+.trip-space-btn:hover { background: var(--surface-2); }
+.trip-space-btn .eyebrow { display: inline-flex; align-items: center; gap: 6px; }
+.trip-space-btn b { font-family: var(--display); font-weight: 600; font-size: 22px; letter-spacing: -.022em; line-height: 1.15; }
+.trip-space-btn b.pos { color: var(--mint); } .trip-space-btn b.neg { color: var(--coral); }
+.trip-space-btn small { font-size: 13px; color: var(--paper-faint); }
+
 /* hero */
 .hero-card { min-height: 280px; display: flex; align-items: flex-end; overflow: hidden; padding: 30px; border: 0;
   background: linear-gradient(180deg, rgba(var(--ink-rgb), 0) 35%, rgba(var(--ink-rgb), .85) 100%), var(--cover, linear-gradient(135deg, #2c2c2e, #1c1c1e 60%)) center / cover; }
@@ -148,6 +157,7 @@
   .dash { padding: 0 14px 40px; }
 }
 @media (max-width: 600px) {
+  .trip-space { grid-template-columns: 1fr; }
   .dash-actions button { padding: 8px 12px; font-size: 13px; }
   .tiles, .phrases { grid-template-columns: 1fr 1fr; }
   .card-head { flex-direction: column; align-items: flex-start; }
@@ -156,6 +166,7 @@
 
 /* print: just the dashboard, on paper */
 @media print {
+  .trip-space { display: none; }
   body { overflow: visible; background: #fff; }
   .app > :not(.dash) { display: none !important; }
   .dash { position: static; overflow: visible; background: #fff; color: #111; padding: 0; animation: none; }

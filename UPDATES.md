@@ -4,6 +4,8 @@ Raw notes on feature ideas as they come up. The organised master list is [FEATUR
 
 ## 2026-11-09
 
+- **Start over** is in the top bar now, not at the bottom of the itinerary. It asks first, and the plan so far stays in My trips.
+- Every trip gets its own **Money** and **Photos**, created the first time its itinerary is approved. The trip's dashboard opens them directly, scoped to that trip only. Money and Photos in the top bar show everything together: what you owe and are owed across all trips, and every photo with its filters. Each trip is listed there as a link into its own space.
 - With an LLM connected (Claude, or OpenAI), the trip chat becomes an assistant that acts on the trip through an allowlist of tools: plan edits, adding your own places, videos, the money summary, logging expenses and inviting or removing people. Money and people changes ask for a tap first. Without an LLM the chat works as before.
 
 ## 2026-11-06

@@ -96,6 +96,11 @@ a.ghost { color: var(--paper-dim); }
 .m-group-bal b { font-weight: 600; font-size: 15px; }
 .pos > b, .m-hero-num.pos { color: var(--mint); }
 .neg > b, .m-hero-num.neg { color: var(--coral); }
+.m-totals { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.m-total { display: flex; flex-direction: column; gap: 4px; padding: 16px 20px; border-radius: 22px; background: var(--ink-2); min-width: 0; }
+.m-total small { font-size: 12px; color: var(--paper-faint); }
+.m-total b { font-family: var(--display); font-weight: 600; font-size: 24px; letter-spacing: -.02em; line-height: 1.15; overflow-wrap: anywhere; }
+.m-totals .m-note { grid-column: 1 / -1; margin: 0; }
 .m-new-group { display: flex; flex-direction: column; gap: 12px; }
 .m-account-card { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .m-account-card .card-head { margin-bottom: 0; }

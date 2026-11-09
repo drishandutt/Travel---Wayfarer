@@ -8,6 +8,8 @@ import { describe, getWeather, isWet, type TripWeather } from '../services/weath
 import { getPhotos } from '../services/photos'
 import { loadChecks, saveChecks } from '../state/persistence'
 import { Memphis } from './Memphis'
+import { PhotoIcon } from './Icons'
+import { fmtMoney } from '../money/currency'
 
 // The trip, at a glance: dates & countdown, weather, what it costs, the days,
 // what to book and pack, and the local know-how. Everything is derived from the
@@ -27,16 +29,19 @@ interface Props {
   state: TripState
   onClose: () => void
   onDates?: (start: string) => void   // only the trip's admin sets the dates
+  // this trip's own Money and Photos
   onMoney: () => void
+  onPhotos: () => void
+  balance: { myNet: number; currency: string; memberCount: number } | null
 }
 
-export function Dashboard({ state, onClose, onDates, onMoney }: Props) {
-  const city = cityById(state.brief.destination)
-  if (!city || !state.days.length) return null
-  return <DashboardBody state={state} city={city} onClose={onClose} onDates={onDates} onMoney={onMoney} />
+export function Dashboard(props: Props) {
+  const city = cityById(props.state.brief.destination)
+  if (!city || !props.state.days.length) return null
+  return <DashboardBody {...props} city={city} />
 }
 
-function DashboardBody({ state, city, onClose, onDates, onMoney }: Props & { city: City }) {
+function DashboardBody({ state, city, onClose, onDates, onMoney, onPhotos, balance }: Props & { city: City }) {
   const { brief, days, hotel } = state
   const start = brief.startDate
   const people = brief.travelers ?? 2
@@ -106,7 +111,6 @@ function DashboardBody({ state, city, onClose, onDates, onMoney }: Props & { cit
       <div className="dash-bar">
         <button className="dash-back" onClick={onClose}>← Map</button>
         <div className="dash-actions">
-          <button onClick={onMoney}>Spending</button>
           <button onClick={downloadICS} disabled={!start} title={start ? 'Download every stop as calendar events' : 'Pick your dates first'}>Add to Calendar</button>
           <button onClick={() => window.print()}>Print</button>
           <button onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
@@ -198,6 +202,23 @@ function DashboardBody({ state, city, onClose, onDates, onMoney }: Props & { cit
             <Tile n={(stats.transitMin / 60).toFixed(1)} unit="h" label={`On the ${city.transport.transitName.toLowerCase()}`} />
             <Tile n={stats.freeHours.toFixed(1)} unit="h" label="Free time" />
           </div>
+        </section>
+
+        {/* ── this trip's money and photos ── */}
+        <section className="span-12 trip-space">
+          <button className="card trip-space-btn" onClick={onMoney}>
+            <span className="eyebrow">Trip money</span>
+            <b className={balance ? (balance.myNet > 0 ? 'pos' : balance.myNet < 0 ? 'neg' : '') : ''}>
+              {!balance ? 'Split costs' : balance.myNet > 0 ? `You’re owed ${fmtMoney(balance.myNet, balance.currency)}`
+                : balance.myNet < 0 ? `You owe ${fmtMoney(-balance.myNet, balance.currency)}` : 'All settled'}
+            </b>
+            <small>{balance ? `Expenses and balances for ${balance.memberCount} ${balance.memberCount === 1 ? 'person' : 'people'}` : 'Log what you spend and who owes whom'}</small>
+          </button>
+          <button className="card trip-space-btn" onClick={onPhotos}>
+            <span className="eyebrow">Trip photos <PhotoIcon /></span>
+            <b>{city.name} album</b>
+            <small>Photos shared with everyone on this trip</small>
+          </button>
         </section>
 
         {/* ── days ── */}

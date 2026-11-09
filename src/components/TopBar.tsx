@@ -6,7 +6,7 @@ import type { Theme } from '../state/theme'
 import { fmtMoney } from '../money/currency'
 import type { GroupSummary } from '../money/types'
 import { groupCopyOf } from '../state/persistence'
-import { MoonIcon, PhotoIcon, SunIcon } from './Icons'
+import { MoonIcon, PhotoIcon, RestartIcon, SunIcon } from './Icons'
 
 const STEPS: { id: Phase; label: string }[] = [
   { id: 'intake', label: 'Brief' },
@@ -32,6 +32,8 @@ interface Props {
   activeGroup: string | null
   onOpenGroup: (id: string) => void
   onNewTrip: () => void
+  // a clean slate; only offered while there's something on screen to clear
+  onStartOver?: () => void
   email: string | null
   onSignOut: () => void
 }
@@ -89,7 +91,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOp
   )
 }
 
-export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleTheme, onMoney, onPhotos, moneyBadge, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut }: Props) {
+export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleTheme, onMoney, onPhotos, moneyBadge, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, email, onSignOut }: Props) {
   const b = state.brief
   const city = cityById(b.destination)
   const at = STEPS.findIndex(s => s.id === state.phase)
@@ -116,6 +118,7 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleT
           {moneyBadge && <span className={`money-amt ${moneyBadge.net > 0 ? 'pos' : 'neg'}`}>{moneyBadge.net > 0 ? '+' : '−'}{fmtMoney(Math.abs(moneyBadge.net), moneyBadge.currency, { compact: true })}</span>}
         </button>
         <button className="money-btn photos-btn" onClick={onPhotos} aria-label="Photos"><span>Photos</span><PhotoIcon /></button>
+        {onStartOver && <button className="money-btn restart-btn" onClick={onStartOver} aria-label="Start over" title="Start over: your plan so far stays in My trips"><RestartIcon /><span>Start over</span></button>}
         <button className="theme-btn" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
           {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
         </button>

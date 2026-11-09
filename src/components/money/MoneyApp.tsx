@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, NetworkError, api, readLocal, writeLocal } from '../../money/client'
+import { ApiError, NetworkError, api } from '../../money/client'
 import { CURRENCIES, fmtMoney, homeCurrency, parseAmount } from '../../money/currency'
 import { claimLocal, drainClosedGroups, useGroup, useGroups, type AccountHandle, type Rates } from '../../money/hooks'
 import { describeOp } from '../../money/outbox'
@@ -199,10 +199,11 @@ function GroupList({ trip, prefillLabel, onOpen, onClose }: { trip: MoneyTrip; p
       {prefillLabel && <p className="m-banner">Pick a group to log “{prefillLabel}” in, or start one.</p>}
       <header className="m-list-head">
         <Memphis layout="corner" />
-        <h1>Groups</h1>
+        <h1>Money</h1>
       </header>
 
       {groups === null && <div className="m-skeleton" />}
+      {groups && groups.length > 0 && <Totals groups={groups} />}
       {groups && groups.length > 0 && (
         <ul className="m-groups">
           {groups.map(g => (
@@ -256,6 +257,38 @@ function GroupList({ trip, prefillLabel, onOpen, onClose }: { trip: MoneyTrip; p
   )
 }
 
+// Everything you owe and are owed across every trip, kept per currency: balances in
+// different currencies aren't added together.
+export function netsByCurrency(groups: { myNet: number; currency: string }[]) {
+  const by = new Map<string, { owed: number; owe: number }>()
+  for (const g of groups) {
+    const t = by.get(g.currency) ?? { owed: 0, owe: 0 }
+    if (g.myNet > 0) t.owed += g.myNet
+    else t.owe -= g.myNet
+    by.set(g.currency, t)
+  }
+  return [...by].map(([currency, t]) => ({ currency, ...t }))
+}
+
+function Totals({ groups }: { groups: { myNet: number; currency: string }[] }) {
+  const totals = netsByCurrency(groups)
+  const owed = totals.filter(t => t.owed > 0)
+  const owe = totals.filter(t => t.owe > 0)
+  return (
+    <div className="m-totals" role="group" aria-label="Across all your trips">
+      <div className={`m-total ${owed.length ? 'pos' : ''}`}>
+        <small>You’re owed</small>
+        <b>{owed.length ? owed.map(t => fmtMoney(t.owed, t.currency)).join(' · ') : 'Nothing'}</b>
+      </div>
+      <div className={`m-total ${owe.length ? 'neg' : ''}`}>
+        <small>You owe</small>
+        <b>{owe.length ? owe.map(t => fmtMoney(t.owe, t.currency)).join(' · ') : 'Nothing'}</b>
+      </div>
+      <p className="m-note">Across all {groups.length} trip{groups.length === 1 ? '' : 's'}. Open one to see its expenses.</p>
+    </div>
+  )
+}
+
 // ── inside a group ────────────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string }[] = [
@@ -274,7 +307,7 @@ type Overlay =
   | { kind: 'settle'; debt?: Debt }
   | null
 
-function GroupView({ groupId, trip, prefill, onBack, onClose, onSessionEnded }: { groupId: string; trip: MoneyTrip; prefill?: ExpensePrefill; onBack: () => void; onClose: () => void; onSessionEnded: () => void }) {
+function GroupView({ groupId, trip, prefill, scoped, onBack, onClose, onSessionEnded }: { groupId: string; trip: MoneyTrip; prefill?: ExpensePrefill; scoped: boolean; onBack: () => void; onClose: () => void; onSessionEnded: () => void }) {
   const g = useGroup(groupId)
   const { state: s, status, live, waiting, failed, incoming, clearIncoming, actions } = g
   const [tab, setTab] = useState<Tab>('overview')
@@ -326,7 +359,7 @@ function GroupView({ groupId, trip, prefill, onBack, onClose, onSessionEnded }: 
       <div className="m-center">
         <Empty icon="🧭" title="You’re not in this group any more">
           It may have been deleted, or you may have been removed from it.
-          <button className="ghost" onClick={onBack}>Back to your groups</button>
+          <button className="ghost" onClick={onBack}>{scoped ? 'Back' : 'Back to your groups'}</button>
         </Empty>
       </div>
     )
@@ -340,8 +373,8 @@ function GroupView({ groupId, trip, prefill, onBack, onClose, onSessionEnded }: 
   return (
     <Ctx.Provider value={ctx}>
       <div className="m-group-bar">
-        <button className="dash-back m-close" onClick={onClose}>← Map</button>
-        <button className="m-back" onClick={onBack} aria-label="All groups">Groups</button>
+        <button className="dash-back m-close" onClick={onClose}>{scoped ? '← Trip' : '← Map'}</button>
+        {!scoped && <button className="m-back" onClick={onBack} aria-label="All trips">All trips</button>}
         <h1>{s.group.name}</h1>
         <span className={`m-live ${live}`} role="status" title={live === 'live' ? 'Changes from your group appear as they happen' : 'Your changes are saved here and will sync'}><i />{liveLabel}{waiting > 0 && ` · ${waiting} to sync`}</span>
         <button className={`cta m-add ${tab === 'people' ? 'quiet' : ''}`} onClick={() => setOverlay({ kind: 'new' })}><span aria-hidden>+</span> Add expense</button>
@@ -380,17 +413,15 @@ function GroupView({ groupId, trip, prefill, onBack, onClose, onSessionEnded }: 
 
 // ── the whole money screen ────────────────────────────────────────────────────
 
-export function MoneyApp({ acct, trip, prefill, onClose }: { acct: AccountHandle; trip: MoneyTrip; prefill?: ExpensePrefill; onClose: () => void }) {
+// Two ways in. With a scope, it's that one trip's money and nothing else (from the trip's
+// dashboard or a place on its map). Without, it's every trip: the totals, then each trip
+// to step into.
+export function MoneyApp({ acct, trip, scope, prefill, onClose }: { acct: AccountHandle; trip: MoneyTrip; scope?: string; prefill?: ExpensePrefill; onClose: () => void }) {
   const { account, status, signedIn, signOut, retry } = acct
-  const [groupId, setGroupIdState] = useState<string | null>(() => trip.linkedGroupId ?? readLocal<string | null>('lastGroup', null))
+  const [groupId, setGroupId] = useState<string | null>(scope ?? null)
   const [pendingPrefill, setPendingPrefill] = useState(prefill)
 
-  const setGroupId = useCallback((id: string | null) => {
-    writeLocal('lastGroup', id)
-    setGroupIdState(id)
-  }, [])
-
-  const accountCtx = useMemo(() => (account ? { account, signedIn, signOut: async () => { await signOut(); setGroupIdState(null) } } : null), [account, signedIn, signOut])
+  const accountCtx = useMemo(() => (account ? { account, signedIn, signOut: async () => { await signOut(); setGroupId(null) } } : null), [account, signedIn, signOut])
 
   let body
   if (status === 'loading' && !account) {
@@ -415,7 +446,7 @@ export function MoneyApp({ acct, trip, prefill, onClose }: { acct: AccountHandle
   } else if (!account) {
     body = <AuthScreen onDone={signedIn} />
   } else if (groupId) {
-    body = <GroupView key={groupId} groupId={groupId} trip={trip} prefill={pendingPrefill} onBack={() => { setPendingPrefill(undefined); setGroupId(null) }} onClose={onClose} onSessionEnded={retry} />
+    body = <GroupView key={groupId} groupId={groupId} trip={trip} prefill={pendingPrefill} scoped={Boolean(scope)} onBack={scope ? onClose : () => { setPendingPrefill(undefined); setGroupId(null) }} onClose={onClose} onSessionEnded={retry} />
   } else {
     body = <GroupList trip={trip} prefillLabel={pendingPrefill?.title} onOpen={setGroupId} onClose={onClose} />
   }
@@ -441,8 +472,11 @@ export function useMoneyBadge(open: boolean) {
       claimLocal(user)
       await drainClosedGroups()
       return api<{ groups: { myNet: number; currency: string }[] }>('GET', '/groups').then(({ groups }) => {
+        // all your trips together; a mix of currencies can't be summed, so then there's no badge
         const owing = groups.filter(g => g.myNet !== 0)
-        setBadge(owing.length === 1 ? { net: owing[0].myNet, currency: owing[0].currency } : null)
+        const currencies = new Set(owing.map(g => g.currency))
+        const net = owing.reduce((n, g) => n + g.myNet, 0)
+        setBadge(currencies.size === 1 && net !== 0 ? { net, currency: owing[0].currency } : null)
       })
     }).catch((err: unknown) => { if (!(err instanceof NetworkError || err instanceof ApiError)) throw err })
   }, [])
