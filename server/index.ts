@@ -12,7 +12,7 @@ import { planWithClaude } from './planAgent'
 import { hotelsWithClaude } from './hotelAgent'
 import { closeMoneyDb, moneyApi } from './money/routes'
 import { clientIp, overLimit } from './money/auth'
-import { PlaceError, placeVideos, resolvePlace, videoLookupCached, type ResolveRequest } from './places'
+import { PlaceError, placeVideos, resolvePlace, traceSocial, videoLookupCached, type ResolveRequest } from './places'
 import { openaiEnabled } from './openai'
 import { AgentError, agentEnabled, agentTurn } from './agent'
 
@@ -124,6 +124,11 @@ const server = createServer(async (req, res) => {
       if (!q.name || !q.city) return json(res, 400, { error: 'name and city are required' })
       // each fresh lookup can run a web search, so fresh ones are limited; cached ones are free
       if (!videoLookupCached(q) && overLimit(`videos:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'Too many lookups. Try again in a bit.' })
+      // ?debug=1: run the Instagram/TikTok search fresh and show what it found and kept (temporary, for checking it live)
+      if (url.searchParams.get('debug') === '1') {
+        if (overLimit(`videos:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'Too many lookups. Try again in a bit.' })
+        return json(res, 200, await traceSocial(q))
+      }
       res.setHeader('Cache-Control', 'private, max-age=3600')
       return json(res, 200, await placeVideos(q))
     }

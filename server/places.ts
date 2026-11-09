@@ -474,6 +474,18 @@ const Clips = z.object({ clips: z.array(z.object({ url: z.string(), creator: z.s
 
 // OpenAI's sources carry no titles, so it reports each clip's caption and creator; a clip only
 // counts if its reel or video id is among the pages the search actually returned.
+// What the last searches found and kept, for checking the search on a live server.
+export const socialTrace: { at: string; query: string; status?: string; sources: string[]; listed: string; kept: number; error?: string }[] = []
+
+export async function traceSocial(q: VideoQuery) {
+  try {
+    const videos = await (brainEnabled ? socialWithClaude(q) : openai ? socialWithOpenAI(q) : Promise.resolve([]))
+    return { videos, trace: socialTrace.at(-1) }
+  } catch (err) {
+    return { error: (err as Error).message, trace: socialTrace.at(-1) }
+  }
+}
+
 async function socialWithOpenAI(q: VideoQuery): Promise<Video[]> {
   const response = await openai!.responses.create({
     model: OPENAI_MODEL,
@@ -484,7 +496,14 @@ async function socialWithOpenAI(q: VideoQuery): Promise<Video[]> {
     text: { format: { type: 'json_schema', name: 'clips', strict: true, schema: CLIPS_SCHEMA } },
   }, { signal: AbortSignal.timeout(90_000) })
 
-  return clipsFrom(openAIResults(response.output, response.status === 'completed' ? response.output_text : null), q)
+  const results = openAIResults(response.output, response.status === 'completed' ? response.output_text : null)
+  const kept = await clipsFrom(results, q)
+  const sources = new Map<string, string>()
+  collectOpenAISources(response.output, sources)
+  socialTrace.push({ at: new Date().toISOString(), query: `${q.name} ${q.city}`, status: response.status, sources: [...sources.keys()].slice(0, 40), listed: response.output_text.slice(0, 3000), kept: kept.length })
+  if (socialTrace.length > 10) socialTrace.shift()
+  console.log(`[videos] openai ${q.name}: ${sources.size} sources, ${results.size} candidates, ${kept.length} kept`)
+  return kept
 }
 
 // url → title for each clip: what the model reported, kept only when the search returned that clip.
