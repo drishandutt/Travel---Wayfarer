@@ -20,7 +20,7 @@ interface Ctx { req: IncomingMessage; res: ServerResponse; url: URL; params: str
 
 const PRODUCTION = process.env.NODE_ENV === 'production'
 // Whose dev tools these are. In dev with nothing set, anyone signed in, so it can be tried out.
-const DEFAULT_ADMINS = ['drishan.dutt@11-london.com']
+const DEFAULT_ADMINS = ['drishandutt9@gmail.com']
 const admins = () => (process.env.WAYFARER_DEV_EMAILS ?? DEFAULT_ADMINS.join(',')).split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
 export const isDevAdmin = (u: UserRow | null) => Boolean(u && (admins().includes(u.email) || (!PRODUCTION && !process.env.WAYFARER_DEV_EMAILS)))
 
