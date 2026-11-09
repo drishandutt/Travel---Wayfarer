@@ -3,8 +3,9 @@ import { z } from 'zod'
 import type { City, DayPlan, Place, PlannerEvent, TripBrief } from '../src/types'
 import { tripCity } from '../src/data/cities'
 import { centroid, estimateTravel, fmtClock } from '../src/planner/geo'
-import { PACE, buildDay, shortlist } from '../src/planner/core'
+import { buildDay, dayShape, shortlist } from '../src/planner/core'
 import { resolveBudgetTier } from '../src/planner/intake'
+import { tuningLines } from '../src/planner/sliders'
 import { sleep, type Picks } from '../src/planner/engine'
 import { FALLBACK, MODEL, client, effortFor, textOf } from './claude'
 
@@ -78,21 +79,15 @@ function catalogLines(city: City): string {
     .join('\n')
 }
 
-function familiarityText(x: number): string {
-  return x < 0.2 ? 'first time there: plan the famous must-sees (high fame in the catalog)'
-    : x < 0.45 ? 'been before: the big names they missed, plus some local favourites'
-    : x < 0.7 ? 'knows it fairly well: favour local favourites over the famous sights'
-    : 'knows it like a local: skip the famous sights, plan hidden gems (low fame in the catalog)'
-}
-
 function briefText(brief: TripBrief): string {
-  const pace = PACE[brief.pace ?? 'balanced']
+  const pace = dayShape(brief)
   return [
     `Days: ${brief.days ?? 3}`,
     `Travellers: ${brief.travelers ?? 2}`,
     `Vibe: ${brief.vibes.join(', ') || 'a bit of everything'}`,
     `Budget: ${brief.budgetAmount ? `$${brief.budgetAmount} total` : ''} (${resolveBudgetTier(brief)} tier)`,
-    ...(brief.familiarity !== undefined ? [`Knows the city: ${familiarityText(brief.familiarity)}`] : []),
+    // the chat's sliders they moved; "fame" in the catalog is how well known each place is
+    ...tuningLines(brief),
     `Pace: ${brief.pace ?? 'balanced'} (~${pace.perDay} stops/day, ${pace.buffer} min buffers, default start ${fmtClock(pace.start)})`,
   ].join('\n')
 }

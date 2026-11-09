@@ -12,9 +12,10 @@ export function haversineKm(a: LngLat, b: LngLat): number {
 
 // Heuristic travel model. Swap for a routing API (OSRM / Mapbox / Google) later;
 // callers only depend on { mode, minutes, km }.
-export function estimateTravel(a: LngLat, b: LngLat): { mode: TravelMode; minutes: number; km: number } {
+// `walkKm`: how far they'll walk before taking transit (the walking slider; 1.4 km by default).
+export function estimateTravel(a: LngLat, b: LngLat, walkKm = 1.4): { mode: TravelMode; minutes: number; km: number } {
   const km = haversineKm(a, b) * 1.3 // street-network detour factor
-  if (km <= 1.4) return { mode: 'walk', minutes: Math.max(4, Math.round((km / 4.6) * 60)), km }
+  if (km <= walkKm) return { mode: 'walk', minutes: Math.max(4, Math.round((km / 4.6) * 60)), km }
   return { mode: 'transit', minutes: Math.round(8 + (km / 22) * 60), km }
 }
 

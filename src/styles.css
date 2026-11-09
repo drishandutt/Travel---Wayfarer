@@ -142,6 +142,9 @@ input { font: inherit; }
 .quick-replies { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; animation: msgIn .35s var(--ease) both; }
 .quick-replies button { min-height: 34px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--paper); font-size: 13px; transition: background .2s; }
 .quick-replies button:hover { background: rgba(var(--paper-rgb), .08); }
+.trip-tune { display: flex; flex-direction: column; gap: 8px; animation: msgIn .35s var(--ease) both; }
+.trip-tune-more { align-self: flex-start; min-height: 34px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--paper); font-size: 13px; }
+.trip-tune-more:hover { background: rgba(var(--paper-rgb), .08); }
 .trip-slider { padding: 14px 16px 12px; border-radius: 18px; background: rgba(var(--paper-rgb), .06); border: 1px solid var(--line); animation: msgIn .35s var(--ease) both; }
 .trip-slider label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 10px; }
 .trip-slider input[type=range] { width: 100%; height: 28px; margin: 0; background: transparent; appearance: none; -webkit-appearance: none; cursor: pointer; touch-action: pan-y; }

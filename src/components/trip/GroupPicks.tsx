@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Place } from '../../types'
 import type { TripState } from '../../state/tripStore'
 import { tripCity } from '../../data/cities'
-import { PACE } from '../../planner/core'
+import { dayShape } from '../../planner/core'
 import { defaultPicks, rankDeck, rejectedPlaces, votingProgress, type PlaceTally } from '../../trip/votes'
 import type { SharedTrip } from '../../trip/types'
 import { Modal } from '../money/parts'
@@ -10,7 +10,7 @@ import { usePhotos } from '../SwipeDeck'
 
 const namesOf = (trip: SharedTrip, ids: string[]) => ids.map(id => (id === trip.me ? 'You' : trip.people.find(p => p.id === id)?.name ?? '?')).join(', ')
 
-export const planCapacity = (state: TripState) => (state.brief.days ?? 3) * PACE[state.brief.pace ?? 'balanced'].perDay
+export const planCapacity = (state: TripState) => (state.brief.days ?? 3) * dayShape(state.brief).perDay
 
 function Row({ place, tally, trip, chosen, onToggle }: { place: Place; tally: PlaceTally; trip: SharedTrip; chosen?: boolean; onToggle?: () => void }) {
   const photos = usePhotos(place)

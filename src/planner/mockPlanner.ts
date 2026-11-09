@@ -3,7 +3,7 @@ import { tripCity } from '../data/cities'
 import { centroid, fmtClock } from './geo'
 import { resolveBudgetTier } from './intake'
 import { sleep, type PlannerEngine, type Picks } from './engine'
-import { PACE, applyGapFill, buildDay, findGapFill, groupDays, hotelLegs, scoreHotel, scorePlace, shortlist } from './core'
+import { applyGapFill, dayShape, buildDay, findGapFill, groupDays, hotelLegs, scoreHotel, scorePlace, shortlist } from './core'
 
 export class MockPlanner implements PlannerEngine {
   constructor(private speed = 1) {}
@@ -15,7 +15,7 @@ export class MockPlanner implements PlannerEngine {
   async *planItinerary(brief: TripBrief, signal: AbortSignal, picks?: Picks): AsyncGenerator<PlannerEvent> {
     const city = tripCity(brief) as City
     const days = Math.min(brief.days ?? 3, picks ? Math.max(1, picks.liked.length) : Infinity)
-    const pace = PACE[brief.pace ?? 'balanced']
+    const pace = dayShape(brief)
     const tier = resolveBudgetTier(brief)
 
     yield { type: 'camera', center: city.center, zoom: city.zoom }
@@ -41,12 +41,16 @@ export class MockPlanner implements PlannerEngine {
       // somewhere to eat each day, and a bar each night on a nightlife trip: in a big city the
       // famous sights would otherwise crowd them all out
       const kindOf = new Map(scored.map(s => [s.p.id, s.p.kind]))
-      const musts = [['food', 'cafe'], ...(brief.vibes.includes('nightlife') ? [['bar']] : [])]
+      // (two meals a day for a foodie; a bar a night for night owls too, but never with little ones)
+      const owl = (brief.vibes.includes('nightlife') || (brief.rhythm ?? 0.5) >= 0.75) && (brief.kids ?? 0) < 0.5
+      const musts = [['food', 'cafe'], ...(owl ? [['bar']] : [])]
+      const meals = (brief.foodie ?? 0.5) >= 0.75 ? 2 : 1
       for (const kinds of musts) {
+        const want = days * (kinds.includes('food') ? meals : 1)
         const is = (id: string) => kinds.includes(kindOf.get(id)!)
         const guarded = (id: string) => musts.some(k => k.includes(kindOf.get(id)!))
         for (const s of scored.filter(s => is(s.p.id) && !keep.has(s.p.id))) {
-          if ([...keep].filter(is).length >= days) break
+          if ([...keep].filter(is).length >= want) break
           const weakest = [...scored].reverse().find(x => keep.has(x.p.id) && !guarded(x.p.id))
           if (!weakest) break
           keep.delete(weakest.p.id)

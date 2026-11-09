@@ -7,6 +7,7 @@ import { AGENT_TOOLS, MAX_ROUNDS, isToolName, type ToolCall, type ToolResult } f
 import { tripCity } from '../data/cities'
 import { fmtClock, haversineKm } from '../planner/geo'
 import { scorePlace, shortlist } from '../planner/core'
+import { tuningLines } from '../planner/sliders'
 import { getVideos, watchUrl, PLATFORM_NAME } from '../services/videos'
 import { resolveCustomPlace } from '../planner/customPlaces'
 import { api } from '../money/client'
@@ -325,7 +326,8 @@ export function contextOf(s: TripState, trip: SharedTrip | null): string {
   const shown = shortlist(others, b, OTHERS_SHOWN)
   const out = [
     `City: ${city.name}. Stage: ${s.phase === 'final' ? 'planned, with a hotel' : 'plan drafted, no hotel chosen yet'}.`,
-    `Trip: ${b.days ?? s.days.length} days, ${b.travelers ?? 2} travellers, vibe ${b.vibes.join(', ') || 'a bit of everything'}, ${b.budgetTier ?? 'comfort'} budget${b.budgetAmount ? ` ($${b.budgetAmount} total)` : ''}, ${b.pace ?? 'balanced'} pace${b.startDate ? `, starts ${b.startDate}` : ''}${b.tastes?.length ? `, likes ${b.tastes.join(', ')}` : ''}${b.familiarity !== undefined ? `, knows the city ${Math.round(b.familiarity * 10)}/10 (0 first visit: must-sees; 10 local: hidden gems)` : ''}.`,
+    `Trip: ${b.days ?? s.days.length} days, ${b.travelers ?? 2} travellers, vibe ${b.vibes.join(', ') || 'a bit of everything'}, ${b.budgetTier ?? 'comfort'} budget${b.budgetAmount ? ` ($${b.budgetAmount} total)` : ''}, ${b.pace ?? 'balanced'} pace${b.startDate ? `, starts ${b.startDate}` : ''}${b.tastes?.length ? `, likes ${b.tastes.join(', ')}` : ''}.`,
+    ...(tuningLines(b).length ? [`Tuned with the chat's sliders (place fame is how well known it is): ${tuningLines(b).join('; ')}.`] : []),
     trip ? `Shared with ${trip.people.length} people: ${trip.people.map(p => p.name).join(', ')}.` : 'Not shared with anyone yet.',
     '',
     'Plan:',

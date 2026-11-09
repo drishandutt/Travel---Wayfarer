@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatMessage, TripState } from '../state/tripStore'
 import { ChevronIcon, SendIcon } from './Icons'
 import { QUICK_REPLIES, nextField } from '../planner/intake'
-import { SLIDERS, stepOf, valueOf, type BriefSlider } from '../planner/sliders'
+import { SLIDERS, sliderPatch, sliderValue, stepOf, valueOf, type BriefSlider } from '../planner/sliders'
 import { cityById } from '../data/cities'
 import type { TripBrief } from '../types'
 import type { TripNote, TripPerson } from '../trip/types'
@@ -154,9 +154,7 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
             </div>
           </>
         )}
-        {tuning && !confirm && SLIDERS.map(s => (
-          <TripSlider key={s.key} slider={s} city={cityName} value={state.brief[s.key]} onChange={v => onBrief({ [s.key]: v })} />
-        ))}
+        {tuning && !confirm && <TuneCard brief={state.brief} city={cityName} onBrief={onBrief} />}
         {invitePrompt && (
           <div className="quick-replies">
             <button onClick={invitePrompt.onYes}>Yes, add my friends</button>
@@ -210,8 +208,25 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
   )
 }
 
+// The sliders: the first on show, the rest a tap away, so the chat isn't a wall of them.
+function TuneCard({ brief, city, onBrief }: { brief: TripBrief; city: string; onBrief: (patch: Partial<TripBrief>) => void }) {
+  const [more, setMore] = useState(() => SLIDERS.slice(1).some(s => brief[s.key] !== undefined))
+  const shown = more ? SLIDERS : SLIDERS.slice(0, 1)
+  const moved = SLIDERS.slice(1).filter(s => brief[s.key] !== undefined).length
+  return (
+    <div className="trip-tune">
+      {shown.map(s => (
+        <TripSlider key={s.key} slider={s} city={city} value={sliderValue(s, brief)} onChange={v => onBrief(sliderPatch(s, v))} />
+      ))}
+      <button className="trip-tune-more" aria-expanded={more} onClick={() => setMore(m => !m)}>
+        {more ? 'Fewer options' : `More ways to tune (${SLIDERS.length - 1})${moved ? ` · ${moved} set` : ''}`}
+      </button>
+    </div>
+  )
+}
+
 // One question answered by dragging: five steps, each saying what it does to the plan.
-function TripSlider({ slider, city, value, onChange }: { slider: BriefSlider; city: string; value: number | undefined; onChange: (v: number) => void }) {
+function TripSlider({ slider, city, value, onChange }: { slider: BriefSlider; city: string; value: number; onChange: (v: number) => void }) {
   const n = slider.stops.length
   const step = stepOf(value, n)
   const stop = slider.stops[step]

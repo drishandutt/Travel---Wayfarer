@@ -1,7 +1,7 @@
 import type { City, DayPlan, HotelScore, Place, TripBrief } from '../types'
 import type { Candidate } from '../state/tripStore'
 import { CITIES, tripCity } from '../data/cities'
-import { PACE, bestInsertIndex, buildDay, groupDays, hotelLegs, orderDay, rebalanceDays, scoreHotel, scorePlace, type DeckCard } from './core'
+import { bestInsertIndex, buildDay, dayShape, groupDays, hotelLegs, orderDay, rebalanceDays, scoreHotel, scorePlace, type DeckCard } from './core'
 import { centroid, fmtClock, haversineKm } from './geo'
 import { resolveBudgetTier } from './intake'
 
@@ -199,7 +199,7 @@ function alternative(d: Draft, original: Place, want: string, day: number): Plac
 // Re-group every planned place into n days (used when the number of days changes).
 // `addedDays` > 0 tops up with roughly one day's worth of the best unused matches per new day.
 function regroup(d: Draft, n: number, addedDays = 0) {
-  const perDay = PACE[d.brief.pace ?? 'balanced'].perDay
+  const perDay = dayShape(d.brief).perDay
   let places = d.lists.flat()
   if (addedDays > 0) {
     const extra = pool(d).sort((a, b) => score(b, d) - score(a, d)).slice(0, addedDays * (perDay - 1))
@@ -280,7 +280,7 @@ const handlers: Handler[] = [
     if (!/\b(start|begin|leave|head out|wake|sleep in|lie in|later start|earlier start|early start)\b/.test(c)) return false
     const day = dayRef(c, d)
     const which = day === undefined ? d.lists.map((_, i) => i) : [day]
-    const pace = PACE[d.brief.pace ?? 'balanced']
+    const pace = dayShape(d.brief)
     let set: (cur: number) => number
     let what: string
     const at = /\bat\b|\d/.test(c.replace(/\bday\s*\d+/, '')) ? parseClock(c.replace(/\bday\s*\d+/, '')) : undefined
@@ -305,8 +305,8 @@ const handlers: Handler[] = [
     else if (/\b(packed|busier|more stops|squeeze|cram|see more|fit more|pack (it|more) in)\b/.test(c)) pace = 'packed'
     else if (/\b(balanced|normal pace|medium pace)\b/.test(c)) pace = 'balanced'
     if (!pace) return false
-    d.brief = { ...d.brief, pace }
-    const per = PACE[pace].perDay
+    d.brief = { ...d.brief, pace, paceLevel: undefined } // said in words: the slider's step no longer applies
+    const per = dayShape(d.brief).perDay
     const trimmed: Place[] = []
     const added: Place[] = []
     d.lists = d.lists.map((l, i) => {
@@ -332,7 +332,7 @@ const handlers: Handler[] = [
       }
     }
     d.lists.forEach((_, i) => d.touched.add(i))
-    d.changes.push(`Switched to a ${pace} pace (${PACE[pace].buffer}-min buffers${trimmed.length ? `; dropped ${trimmed.map(p => p.name).join(', ')}` : ''}${added.length ? `; added ${added.map(p => p.name).join(', ')}` : ''})`)
+    d.changes.push(`Switched to a ${pace} pace (${dayShape(d.brief).buffer}-min buffers${trimmed.length ? `; dropped ${trimmed.map(p => p.name).join(', ')}` : ''}${added.length ? `; added ${added.map(p => p.name).join(', ')}` : ''})`)
     return true
   },
 
@@ -342,7 +342,7 @@ const handlers: Handler[] = [
     const day = dayRef(c, d)
     const which = day === undefined ? d.lists.map((_, i) => i) : [day]
     // the whole trip can also move stops between days; one day can only re-order itself
-    if (day === undefined) d.lists = rebalanceDays(d.lists, PACE[d.brief.pace ?? 'balanced'].perDay + 1)
+    if (day === undefined) d.lists = rebalanceDays(d.lists, dayShape(d.brief).perDay + 1)
     else d.lists[day] = orderDay(d.lists[day])
     which.forEach(i => d.touched.add(i))
     d.changes.push(day === undefined ? 'Re-planned every day for less travel, moving stops between days where it helped' : `Re-ordered ${label(day)} for the shortest route`)
@@ -663,7 +663,7 @@ function switchCity(plan: PlanSlice, city: City): EditResult {
   const brief: TripBrief = { ...plan.brief, destination: city.id }
   const n = brief.days ?? plan.days.length
   // seed with the best matches there, then group them into days like any other plan
-  const perDay = PACE[brief.pace ?? 'balanced'].perDay
+  const perDay = dayShape(brief).perDay
   const best = [...city.places].sort((a, b) => scorePlace(b, brief).score - scorePlace(a, brief).score).slice(0, n * perDay)
   const d: Draft = {
     city, brief, lists: [best], starts: [], hotelMode: plan.hotel ? 'best' : 'keep',

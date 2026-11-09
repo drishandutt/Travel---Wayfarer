@@ -16,6 +16,42 @@ export const PACE = {
   packed: { perDay: 6, buffer: 10, start: 8 * 60 + 30 },
 }
 
+// The pace slider's five steps, slowest first; `PACE` above is the same thing by name.
+const PACE_STEPS = [
+  { perDay: 3, buffer: 35, start: 10 * 60 },
+  { perDay: 4, buffer: 25, start: 9 * 60 + 45 },
+  { perDay: 5, buffer: 15, start: 9 * 60 },
+  { perDay: 6, buffer: 10, start: 8 * 60 + 30 },
+  { perDay: 7, buffer: 5, start: 8 * 60 },
+]
+
+export interface DayShape {
+  perDay: number    // stops
+  buffer: number    // minutes between stops
+  start: number     // minutes after midnight
+  walkKm: number    // further than this, take transit
+  visit: number     // multiplies each place's visit length
+}
+
+// What a day looks like for this trip: its pace, shaped by the chat's sliders. Every slider
+// left alone (or in the middle) changes nothing here.
+export function dayShape(brief: TripBrief): DayShape {
+  const base = brief.paceLevel !== undefined ? PACE_STEPS[Math.round(brief.paceLevel * 4)] : PACE[brief.pace ?? 'balanced']
+  const loose = brief.structure ?? 0.5
+  const kids = brief.kids ?? 0
+  const walk = brief.walking ?? 0.5
+  return {
+    // loose days and little ones both mean a stop fewer
+    perDay: Math.max(2, base.perDay - (loose >= 0.75 ? 1 : 0) - (kids >= 0.5 ? 1 : 0)),
+    buffer: Math.max(5, Math.round(base.buffer + (loose - 0.5) * 30 + kids * 10)),
+    // early bird out by 7:30, night owl from 10:30
+    start: Math.max(7 * 60, base.start + Math.round(((brief.rhythm ?? 0.5) - 0.5) * 12) * 15),
+    // 600 m before a ride for short walks, 1.4 km in the middle, 3 km for keen walkers
+    walkKm: walk < 0.5 ? 0.6 + 1.6 * walk : 1.4 + 3.2 * (walk - 0.5),
+    visit: 1 - 0.25 * kids,
+  }
+}
+
 export function scorePlace(p: Place, brief: TripBrief): { score: number; why: string } {
   const tier = resolveBudgetTier(brief)
   const hits = p.tags.filter(t => brief.vibes.includes(t))
@@ -39,13 +75,43 @@ export function scorePlace(p: Place, brief: TripBrief): { score: number; why: st
     const off = p.rank < lo ? lo - p.rank : p.rank > hi ? p.rank - hi : 0
     score += 4 * Math.max(0, 1 - off * 2.5)
   }
+  const tuned = tuning(p, brief)
+  score += tuned.score
   const gem = local >= 0.6 && p.rank !== undefined && p.rank <= 0.4
   const icon = local <= 0.4 && p.rank !== undefined && p.rank >= 0.8
   const why = loved.length ? `your kind of thing: ${loved.join(' + ')}`
+    : tuned.why ? tuned.why
     : gem ? 'off the tourist trail'
     : icon ? 'a must on a first visit'
     : hits.length ? `matches ${hits.join(' + ')}`
     : tier === 'shoestring' && p.price >= 3 ? 'over budget' : brief.vibes.length ? 'weak vibe match' : 'a local favourite'
+  return { score, why }
+}
+
+// What the other sliders do to one place's score. Each term is zero with its slider in the middle.
+function tuning(p: Place, brief: TripBrief): { score: number; why?: string } {
+  const off = (v: number | undefined) => (v ?? 0.5) - 0.5   // -0.5 … 0.5
+  const has = (...t: Vibe[]) => t.some(x => p.tags.includes(x))
+  const eats = p.kind === 'food' || p.kind === 'cafe' || (p.kind === 'market' && has('food'))
+  const late = p.bestAt === 'night' ? 1 : p.bestAt === 'evening' ? 0.5 : p.bestAt === 'morning' ? -1 : 0
+  const calm = p.kind === 'park' || p.kind === 'cafe' || has('relaxed', 'romantic')
+  const thrill = has('adventure', 'nightlife')
+  const roam = p.kind === 'park' || p.kind === 'market' || (p.kind === 'sight' && p.minutes >= 90)
+  const kids = brief.kids ?? 0
+  const crowds = brief.crowds ?? 0
+  let score = 0
+  score += off(brief.rhythm) * 3 * late                                        // night owl: late places
+  score += eats ? off(brief.foodie) * 4 : 0                                    // live to eat: more food
+  score += off(brief.splurgeOn) * 2 * (p.price >= 2 ? 1 : p.price === 0 ? -0.5 : 0) // spend on doing, not sleeping
+  score += off(brief.energy) * 3 * ((thrill ? 1 : 0) - (calm ? 1 : 0))         // adventurous vs chill
+  score += roam ? off(brief.structure) * 2 : 0                                 // wanderers: places to roam
+  if (p.rank !== undefined && p.rank > 0.7) score -= crowds * 3 * (p.rank - 0.7) / 0.3 // the busiest sights
+  if (kids) score += kids * (p.kind === 'bar' || p.bestAt === 'night' ? -5 : p.kind === 'park' || p.kind === 'museum' ? 1.5 : 0)
+  const why = kids >= 0.5 && (p.kind === 'park' || p.kind === 'museum') ? 'good with little ones'
+    : off(brief.rhythm) >= 0.25 && late >= 0.5 ? 'for a night owl'
+    : off(brief.rhythm) <= -0.25 && late < 0 ? 'for an early start'
+    : off(brief.foodie) >= 0.25 && eats ? 'one for the foodie'
+    : undefined
   return { score, why }
 }
 
@@ -191,7 +257,7 @@ export function groupDays(places: Place[], days: number, perDay: number, maxPerG
 }
 
 export function buildDay(day: number, places: Place[], brief: TripBrief, opts: { keepOrder?: boolean; start?: number; title?: string } = {}): DayPlan {
-  const pace = PACE[brief.pace ?? 'balanced']
+  const pace = dayShape(brief)
   const color = DAY_COLORS[(day - 1) % DAY_COLORS.length]
   const stops: Stop[] = []
   const legs: Leg[] = []
@@ -200,7 +266,7 @@ export function buildDay(day: number, places: Place[], brief: TripBrief, opts: {
     let legIn: Leg | undefined
     if (i > 0) {
       const prev = stops[i - 1]
-      const t = estimateTravel(prev.place.coord, place.coord)
+      const t = estimateTravel(prev.place.coord, place.coord, pace.walkKm)
       legIn = { id: `d${day}-${i}`, day, from: prev.place.coord, to: place.coord, kind: 'stop', ...t }
       legs.push(legIn)
       clock = prev.depart + prev.bufferAfter + t.minutes
@@ -210,7 +276,7 @@ export function buildDay(day: number, places: Place[], brief: TripBrief, opts: {
         clock = earliest
       }
     }
-    stops.push({ place, arrive: clock, depart: clock + place.minutes, bufferAfter: pace.buffer, legIn })
+    stops.push({ place, arrive: clock, depart: clock + Math.round(place.minutes * pace.visit), bufferAfter: pace.buffer, legIn })
   })
   const first = stops[0]?.place.name.split(/[ &(]/)[0]
   const last = stops[stops.length - 1]?.place.name.split(/[ &(]/)[0]
@@ -242,9 +308,11 @@ export function scoreHotel(h: Hotel, brief: TripBrief, days: DayPlan[]): HotelSc
   const target = brief.budgetAmount
     ? (brief.budgetAmount * 0.4) / nights / rooms
     : { shoestring: 90, comfort: 220, luxury: 450 }[tier]
+  // spending on food and experiences leaves less for the room, and the other way round
+  const stayTarget = target * (1.3 - 0.6 * (brief.splurgeOn ?? 0.5))
   const ends: LngLat[] = days.flatMap(d => (d.stops.length ? [d.stops[0].place.coord, d.stops[d.stops.length - 1].place.coord] : []))
   const avgCommute = ends.reduce((s, p) => s + estimateTravel(h.coord, p).minutes, 0) / Math.max(1, ends.length)
-  const priceFit = Math.max(0, 1 - Math.abs(h.nightly - target) / target)
+  const priceFit = Math.max(0, 1 - Math.abs(h.nightly - stayTarget) / stayTarget)
   const vibeHits = h.tags.filter(t => brief.vibes.includes(t as Vibe)).length
   const vibeFit = brief.vibes.length ? Math.min(1, vibeHits / Math.min(2, brief.vibes.length)) : 0.5
   const commuteFit = Math.max(0, Math.min(1, 1 - (avgCommute - 8) / 40))
@@ -288,7 +356,7 @@ export interface GapFill { day: number; after: number; place: Place; gap: number
 // Long idle stretches (usually waiting for an evening stop) are where a plan
 // feels thin. Suggest the nearest unused place that fits inside the gap.
 export function findGapFill(day: DayPlan, pool: Place[], brief: TripBrief, minGap = 90, maxKm = 4.5): GapFill | undefined {
-  const buffer = PACE[brief.pace ?? 'balanced'].buffer
+  const buffer = dayShape(brief).buffer
   for (let i = 0; i < day.stops.length - 1; i++) {
     const s = day.stops[i]
     const gap = s.bufferAfter - buffer

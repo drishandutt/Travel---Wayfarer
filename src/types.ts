@@ -17,7 +17,18 @@ export interface TripBrief {
   budgetTier?: BudgetTier
   budgetAmount?: number         // total, in USD
   pace?: 'slow' | 'balanced' | 'packed'
-  familiarity?: number          // 0 first time there … 1 knows it like a local: must-sees vs hidden gems
+  // The chat's sliders (src/planner/sliders.ts), each 0..1. Unset means the middle, or "none"
+  // for crowds and kids, and changes nothing.
+  familiarity?: number          // first time there … knows it like a local: must-sees vs hidden gems
+  paceLevel?: number            // very slow … see it all; keeps `pace` in step
+  rhythm?: number               // early bird … night owl
+  structure?: number            // every hour planned … loose days to wander
+  walking?: number              // keep walks short … happy to walk miles
+  foodie?: number               // eat to live … live to eat
+  crowds?: number               // don't mind queues … avoid crowds
+  splurgeOn?: number            // spend on the stay … spend on food and experiences
+  energy?: number               // chill … adventurous
+  kids?: number                 // no kids … little ones along
   startDate?: string            // ISO yyyy-mm-dd, set on the trip dashboard
   tastes?: string[]             // remembered preferences, e.g. ['traditional', 'japanese']
   open?: string[]               // questions answered "you choose" (or not caught): don't ask again
