@@ -18,6 +18,7 @@ import { MAX_ORIGINAL_BYTES } from '../../src/vault/types'
 import { registerDevRoutes } from '../dev/routes'
 import { attachLogDb } from '../dev/log'
 import { attachVideoDb } from '../places'
+import { attachCityDb, loadCities } from '../cities/store'
 
 // The money API: accounts, groups, expenses, settling up, and a live stream per group.
 // The server trusts nothing it can work out itself: splits, balances and who may see
@@ -558,6 +559,9 @@ export function moneyApi(): Promise<MoneyApi | null> {
       openDb = db
       attachLogDb(db)
       attachVideoDb(db)
+      attachCityDb(db)
+      // the cities built so far, travellers' promoted finds and the places' profiles
+      await loadCities().catch(err => console.warn('[cities] loading:', (err as Error).message))
       const storage = vaultStorageFromEnv(MAX_ORIGINAL_BYTES)
       if (!storage) console.warn('[vault] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are unset: the photo vault is off.')
       return createMoneyApi(db, { storage, geocode: process.env.VAULT_GEOCODE === 'off' ? null : vault.nominatim(), limits: vaultLimitsFromEnv() })
@@ -572,10 +576,17 @@ export function moneyApi(): Promise<MoneyApi | null> {
   return api
 }
 
+// The database the cities, promoted finds and profiles are kept in: the same one, once open.
+export async function cityDb(): Promise<Db | null> {
+  await moneyApi()
+  return openDb
+}
+
 export async function closeMoneyDb() {
   const db = openDb
   openDb = null
   attachLogDb(null)
+  attachCityDb(null)
   api = undefined
   await db?.close()
 }

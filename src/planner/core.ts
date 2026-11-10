@@ -1,6 +1,7 @@
 import type { DayPlan, Hotel, HotelScore, Leg, LngLat, Place, Stop, TripBrief, Vibe } from '../types'
 import { estimateTravel, haversineKm, kmeans } from './geo'
 import { resolveBudgetTier } from './intake'
+import { audiencesOf, profileFit, profileOf } from './profile'
 
 // Deterministic planning primitives shared by the offline MockPlanner (browser)
 // and the Claude planning agent (server). Claude decides *what* and *in which
@@ -77,10 +78,14 @@ export function scorePlace(p: Place, brief: TripBrief): { score: number; why: st
   }
   const tuned = tuning(p, brief)
   score += tuned.score
+  // who it suits, from its profile: what the guides and travellers who kept it say
+  const fit = profileFit(p, brief, audiencesOf(brief))
+  score += fit.score
   const gem = local >= 0.6 && p.rank !== undefined && p.rank <= 0.4
   const icon = local <= 0.4 && p.rank !== undefined && p.rank >= 0.8
   const why = loved.length ? `your kind of thing: ${loved.join(' + ')}`
     : tuned.why ? tuned.why
+    : fit.why ? fit.why
     : gem ? 'off the tourist trail'
     : icon ? 'a must on a first visit'
     : hits.length ? `matches ${hits.join(' + ')}`
@@ -89,13 +94,15 @@ export function scorePlace(p: Place, brief: TripBrief): { score: number; why: st
 }
 
 // What the other sliders do to one place's score. Each term is zero with its slider in the middle.
+// The place's profile says how late, lively, busy and child-friendly it is: from the catalog's
+// own columns for most places, from Claude or travellers' swipes where they know better.
 function tuning(p: Place, brief: TripBrief): { score: number; why?: string } {
   const off = (v: number | undefined) => (v ?? 0.5) - 0.5   // -0.5 … 0.5
   const has = (...t: Vibe[]) => t.some(x => p.tags.includes(x))
+  const prof = profileOf(p)
   const eats = p.kind === 'food' || p.kind === 'cafe' || (p.kind === 'market' && has('food'))
-  const late = p.bestAt === 'night' ? 1 : p.bestAt === 'evening' ? 0.5 : p.bestAt === 'morning' ? -1 : 0
-  const calm = p.kind === 'park' || p.kind === 'cafe' || has('relaxed', 'romantic')
-  const thrill = has('adventure', 'nightlife')
+  const late = prof.late * 2 - 1                                               // -1 a morning thing … 1 a night thing
+  const mood = prof.lively * 2 - 1                                             // -1 calm … 1 lively
   const roam = p.kind === 'park' || p.kind === 'market' || (p.kind === 'sight' && p.minutes >= 90)
   const kids = brief.kids ?? 0
   const crowds = brief.crowds ?? 0
@@ -103,13 +110,13 @@ function tuning(p: Place, brief: TripBrief): { score: number; why?: string } {
   score += off(brief.rhythm) * 3 * late                                        // night owl: late places
   score += eats ? off(brief.foodie) * 4 : 0                                    // live to eat: more food
   score += off(brief.splurgeOn) * 2 * (p.price >= 2 ? 1 : p.price === 0 ? -0.5 : 0) // spend on doing, not sleeping
-  score += off(brief.energy) * 3 * ((thrill ? 1 : 0) - (calm ? 1 : 0))         // adventurous vs chill
+  score += off(brief.energy) * 3 * mood                                        // adventurous vs chill
   score += roam ? off(brief.structure) * 2 : 0                                 // wanderers: places to roam
-  if (p.rank !== undefined && p.rank > 0.7) score -= crowds * 3 * (p.rank - 0.7) / 0.3 // the busiest sights
-  if (kids) score += kids * (p.kind === 'bar' || p.bestAt === 'night' ? -5 : p.kind === 'park' || p.kind === 'museum' ? 1.5 : 0)
-  const why = kids >= 0.5 && (p.kind === 'park' || p.kind === 'museum') ? 'good with little ones'
-    : off(brief.rhythm) >= 0.25 && late >= 0.5 ? 'for a night owl'
-    : off(brief.rhythm) <= -0.25 && late < 0 ? 'for an early start'
+  score -= crowds * 6 * Math.max(0, prof.busy - 0.5)                           // the busiest places
+  if (kids) score += kids * (prof.kids - 0.5) * 8                              // bars out, parks and museums in
+  const why = kids >= 0.5 && prof.kids >= 0.7 ? 'good with little ones'
+    : off(brief.rhythm) >= 0.25 && late >= 0.3 ? 'for a night owl'
+    : off(brief.rhythm) <= -0.25 && late <= -0.6 ? 'for an early start'
     : off(brief.foodie) >= 0.25 && eats ? 'one for the foodie'
     : undefined
   return { score, why }

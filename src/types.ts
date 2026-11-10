@@ -52,6 +52,32 @@ export interface Place {
   keywords?: string[]           // cuisine & style words people search by ("tempura", "street food")
   custom?: PlaceSource          // set on places the travellers added themselves
   rank?: number                 // 0..1, how well known it is: 1 is on every first-timer's list, 0 only locals know
+  profile?: PlaceProfile        // its strengths, weaknesses and who it suits (src/planner/profile.ts)
+  found?: { at: number }        // a traveller's find, now in the city's shared catalog for everyone
+}
+
+// Who a place suits. The planners read these against the trip (`audiencesOf` in
+// src/planner/profile.ts): the sliders, the budget and who's coming.
+export type Audience =
+  | 'first-timers' | 'locals' | 'families' | 'couples' | 'solo' | 'groups' | 'foodies'
+  | 'night-owls' | 'early-birds' | 'budget' | 'splurge' | 'crowd-averse' | 'wanderers' | 'adventurous' | 'chill'
+
+// What a place is good and bad at, so it's suggested to the travellers it suits. Rules give
+// every place one from its kind, tags, price and fame; Claude (or OpenAI) gives a better one
+// where it knows the place; and travellers' swipes teach the rest (`learned`).
+export interface PlaceProfile {
+  strengths: string[]           // what it does well, short phrases, up to 4
+  weaknesses: string[]          // what to know before going, up to 4
+  for: Audience[]               // who gets the most out of it
+  notFor: Audience[]            // who should give it a miss
+  kids: number                  // 0..1 how well it works with little ones
+  busy: number                  // 0..1 how crowded or queued it usually is
+  lively: number                // 0..1 chill … lively
+  late: number                  // 0..1 a daytime thing … a night thing
+  by: 'rules' | 'claude' | 'openai'
+  at: number
+  // what travellers' swipes have taught, on top of the above
+  learned?: { signals: number; for: Audience[]; notFor: Audience[] }
 }
 
 // Where a traveller's own place came from: a maps link they shared, or a name they typed.
@@ -83,6 +109,7 @@ export interface City {
   transport: Transport
   essentials: Essentials
   credit?: string               // where its places come from, when that needs crediting
+  built?: string                // ISO date, when its catalog was built from public guides (not by hand)
 }
 
 // Practical, slow-changing facts for the trip dashboard.

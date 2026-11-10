@@ -83,6 +83,7 @@ Big changes are handled the same way. "Add a day" regroups by neighbourhood and 
 - **Finding it:** the server follows short links (only to maps hosts, hop by hop), reads the pin from the link, and looks it up on OpenStreetMap’s Nominatim (free, one request a second): near the pin for a link, around the city for a name, ranked by how well the name matches before how famous a place is. Anything more than 120 km from the trip’s city is refused. The kind (restaurant, bar, museum, park…) comes from its OpenStreetMap category; with Claude on (or OpenAI, see below), it also writes the blurb, tags, price, visit length and best time.
 - **Where it goes:** the place is stored on the trip (`brief.customPlaces`), so it syncs to the group, survives reloads and saved trips, and every edit, deck and planner sees it through `tripCity(brief)`. While briefing, it’s saved and leads the deck. While swiping, it’s the next card (and goes to the group’s vote). With a plan, it goes straight into the day asked for, or the nearest one, and is undoable. While a plan is still drawing, it waits until the draft is ready. The same spot sent twice is only added once.
 - **On the map:** its pin card and tile say **Your find**, with a link back to the maps app it came from.
+- **Shared with everyone:** a find that's somewhere other travellers could visit joins the city's catalog for every traveller (`promoteFind` in `server/cities/store.ts`, table `city_places`), shown as **Traveller's find**. What the map calls it decides (`isVenue`: an attraction, restaurant, café, bar, park, market, shop or historic site; never a house, an office, a school or a hotel), and with a model on, its own view too (`public` in the description it writes). The catalog's copy loses the "Your find" marker and the link; the finder's own copy keeps both, and `tripCity` shows the catalog's copy once it's there. The same spot already listed is never promoted twice. Who added it is recorded when they're signed in, and a find can be hidden again in the database.
 - **Reels & videos:** places without a curated feed are searched live (`GET /api/places/videos`, cached a day per place). YouTube comes from its search page (or the Data API when `YOUTUBE_API_KEY` is set). Instagram reels and TikToks come from Claude’s web search, limited to those two sites, using only links found in the search results, never ones the model writes; TikTok’s oEmbed supplies the real caption. Without an Anthropic key, OpenAI does both jobs when `OPENAI_API_KEY` is set (`server/openai.ts`, model `gpt-6-astra` unless `WAYFARER_OPENAI_MODEL` says otherwise): its `web_search` tool, limited to the same two sites, returns sources without titles, so it reports each clip’s caption and creator, and a clip is kept only if its reel or video id is among the pages the search returned. OpenAI is used for nothing else; planning stays with Claude or the offline planner. `/api/health` says which keys are on. A clip is kept only if its title names the place, and ones that also name the city come first. With neither key, the feed shows YouTube plus the links to search Instagram and TikTok. Lookups are rate limited per visitor, since each can run a web search.
 
 **The assistant.** With an LLM connected (Claude when `ANTHROPIC_API_KEY` is set, otherwise OpenAI with `OPENAI_API_KEY`; `/api/health` says `agent: true`), chat over a plan goes to an assistant that acts on the trip through tools, like a command line for the app. Without one, the rule-based editor above answers as before.
@@ -308,9 +309,23 @@ The sun/moon button in the top bar switches themes. First-time visitors follow t
 
 ---
 
+## Any city: catalogs built on request
+
+Tokyo and Lisbon are hand-made and London was built once from Wikivoyage; every other city is built the same way the moment a traveller names it (`server/cities/`). The catalog is a registry, not a constant: `src/data/cities.ts` keeps `CITIES` as one array that `registerCity` adds to and `addCatalogPlaces` grows, so every planner, deck and card reads a built city exactly like a hand-made one. The server registers everything it has built at start; the browser fetches a trip's city when the trip opens (`src/data/cityClient.ts`, `GET /api/cities/:id`) and redraws with it (`city-ready`), which is also how a hand-made city picks up travellers' promoted finds and what its places have learned.
+
+**Naming a city.** With Claude, the intake's `destination` is free text; the server resolves it (`destinationOf` in `server/intake.ts`): a city it knows, by id or alias, or a lookup. Offline, `converse` returns `lookup` when the destination question went unanswered and the message has a word in it; the browser asks `POST /api/cities/lookup` and reads the message again with the city set once it's known. The lookup (`lookupCity` in `server/cities/store.ts`) tries the message's capitalised runs and then the message without its filler against Wikivoyage's search, keeps a title only if it's what they said and its article is a city or district guide (its status template says), and answers `known`, `building`, `failed` or `unknown`. A country or a region can't be built; the chat asks which city.
+
+**Building** (`buildCity` in `server/cities/build.ts`, reading with `server/cities/wikivoyage.ts`): the article and the district pages its Districts section links to (a borough's own districts too, up to 60 pages) give every `see`, `do`, `eat`, `drink`, `buy` and `sleep` listing with coordinates. The same reading as London's: one entry per Wikidata item or name within 150 m; events and chains out; kind from the name and section; tags from the words; price band from the section or any amount in the listing, in any money (`amountsUsd`); fame from how many Wikipedias have an article; hotels from `sleep` listings with a price, the most central ten per budget, or placeholder stays named for the busiest areas when a guide prices none. The city's centre comes from the guide's `{{geo}}`, its country from OpenStreetMap, its money from the country (`moneyFor`, with live rates when the database has them), its time zone and the dashboard's essentials (plugs, tipping, emergency number, transit card, water, etiquette, phrases, packing, transit fares, aliases) from Claude or OpenAI, checked (a zone the clock can't use falls back to one from the longitude) and plain when neither is on. A build takes about a minute; the job's progress is polled (`GET /api/cities/:id/status`) and shown in the chat, which then carries on with the questions. Built cities are kept in the `cities` table and loaded at start. `npx tsx scripts/build-london.mts` still rebuilds London's shipped file with the same code.
+
+**What a place is for.** Every place has a `profile` (`src/planner/profile.ts`): strengths, weaknesses, how busy, lively, late and child-friendly it is, and who it's *for* and *not for* among fifteen audiences (first-timers, locals, families, couples, solo, groups, foodies, night-owls, early-birds, budget, splurge, crowd-averse, wanderers, adventurous, chill). `ruleProfile` gives every place one from its kind, tags, price, fame and best time, so the browser and the server agree without a model. The server asks Claude (or OpenAI) for a better one (`server/cities/profile.ts`): a city's 150 best-known places in batches of twenty, once, in the background the first time the city is served; and every traveller's find, in the same call that describes it. A model that doesn't recognise a place says so and the rules stand. Profiles live in `place_profiles`. The trip's own audiences come from the brief (`audiencesOf`: the sliders, the budget and who's coming), and `scorePlace` adds `profileFit` (for: up, not for: down, more so when someone knew the place) and reads the profile's numbers in place of its old guesses (a bar is late and lively, a park is calm and good with kids). The planner's catalog lines say who a profiled place suits; the pin card shows **Best for**, **Good** and **Know**.
+
+**What swipes teach.** Mapping a deck sends what was kept and skipped with the trip's audiences, never who the traveller is (`POST /api/cities/:id/signals`, table `place_signals`). A minute later the city learns (`learnFrom`): a place with at least six swipes is *for* an audience that kept it clearly more than most did (four or more of them, 65%+, a tenth above the overall rate) and *not for* one that skipped it. What's learned sits on the profile as `learned` and outranks what the catalog or the model guessed, so a place travellers keep proving wrong gets corrected.
+
+---
+
 ## The intake conversation
 
-`converse` in `src/planner/intake.ts` reads each message against the question on screen, says back what it heard, and always moves on. A bare answer ("5", "low") belongs to the question asked. Optional questions are never repeated: "mix and match" or an unclear reply settles that field and adds it to `brief.open`. Only destination and days are required. Tap-to-answer chips come from `QUICK_REPLIES`. Trips are capped at `MAX_DAYS` (5), and the reply says so when someone asks for more.
+`converse` in `src/planner/intake.ts` reads each message against the question on screen, says back what it heard, and always moves on. A bare answer ("5", "low") belongs to the question asked. Optional questions are never repeated: "mix and match" or an unclear reply settles that field and adds it to `brief.open`. Only destination and days are required. Tap-to-answer chips come from `QUICK_REPLIES`. Trips are capped at `MAX_DAYS` (5), and the reply says so when someone asks for more. A city the app doesn't know is looked up and built (see *Any city*).
 
 ---
 
@@ -338,7 +353,7 @@ The browser never holds the API key. A small Node server (`server/index.ts`) tal
 
 | Step | Endpoint | How Claude is used |
 |---|---|---|
-| Intake | `POST /api/intake` → `{reply, brief}` | One call with **structured output** (JSON schema): Claude returns the whole updated `TripBrief` plus a one-question reply. Effort `low`. |
+| Intake | `POST /api/intake` → `{reply, brief, building?}` | One call with **structured output** (JSON schema): Claude returns the whole updated `TripBrief` plus a one-question reply. Effort `low`. The destination is free text; the server resolves it, building the city if need be. |
 | Planning | `POST /api/plan` → SSE | **Tool-using agent loop** (`server/planAgent.ts`). Claude gets the brief and the place catalog, then calls `shortlist_places` → `commit_day` (once per day) → `finish_plan`. Every tool carries a `narration` sentence that becomes the live thinking log. Effort `medium`. |
 | Hotels | `POST /api/hotels` → SSE | Commute, price and vibe scores are computed; Claude makes the final pick and explains it (structured output, effort `low`). Candidates animate in while it deliberates. |
 
@@ -360,8 +375,13 @@ server/
   intake.ts                Chat → TripBrief via structured output
   planAgent.ts             Claude tool loop → PlannerEvents
   hotelAgent.ts            Hotel scoring + Claude's pick
-  places.ts                Travellers' own places: maps links, OpenStreetMap lookup, live reels & videos
+  places.ts                Travellers' own places: maps links, OpenStreetMap lookup, live reels & videos, promotion to the catalog
   openai.ts                OpenAI client, for those lookups when there's no Anthropic key
+  cities/
+    wikivoyage.ts          Reading a guide's wikitext into places and hotels, in any money (London's script uses it too)
+    build.ts               Finding a city's article, walking its districts, money, time zone, essentials from a model
+    profile.ts             A model's read on what places are good and bad at, and who they suit
+    store.ts               Built cities, promoted finds, profiles and swipe signals in the database; the registry; build jobs
   agent.ts                 The trip assistant's relay to Claude or OpenAI (runs no tools itself)
   money/
     routes.ts              Money API: validation, permissions, live streams
@@ -377,7 +397,8 @@ server/
     storage.ts             Supabase Storage bucket (production) or disk with signed links (dev)
 src/
   types.ts                 Domain model + PlannerEvent union (the contract)
-  data/cities.ts           Places + hotels: Tokyo and Lisbon by hand, London from london.json
+  data/cities.ts           The city registry: Tokyo and Lisbon by hand, London from london.json, any other registered as built
+  data/cityClient.ts       Fetching a trip's city, looking one up, waiting for a build, sending swipe signals
   data/london.json         ~1,600 London places + 30 hotels, built by scripts/build-london.mts from Wikivoyage, ranked by Wikidata
   data/videos.ts           Checked reels + videos per place, loaded on first use
   data/hotelPhotos.ts      Hand-picked cover photo per hotel
@@ -395,6 +416,7 @@ src/
     remotePlanner.ts       SSE client for the Claude planner
     brain.ts               Detects whether Claude is configured; Claude intake call
     intake.ts              Chat → TripBrief extraction + next question
+    profile.ts             What a place is for: rules profile, the trip's audiences, the fit
     geo.ts                 Haversine, travel-time model, arcs, balanced k-means
   money/
     engine.ts              Splits, balances, debts, spending (shared with the server)
@@ -445,7 +467,7 @@ src/
 |---|---|---|
 | Understanding the user | ✅ Claude (structured output); regex extractor offline | — |
 | Planning brain | ✅ Claude agent loop over SSE; `MockPlanner` offline | — |
-| Places | Hand-curated `cities.ts` | Google Places / Foursquare / OSM Overpass behind a `searchPlaces` tool |
+| Places | ✅ Tokyo and Lisbon by hand; London and any other city from Wikivoyage + Wikidata on request; travellers' finds promoted | Opening hours and a places API for the long tail |
 | Travel time | Distance heuristic (walk ≤ 1.4 km, else transit) | Routing API (Google Routes / Mapbox / OSRM) via `estimateTravel` |
 | Route geometry | Bezier arcs | Real polylines from the routing API |
 | Photos | ✅ Wikipedia / Commons (free) | Google Places / Foursquare photos for restaurants and hotels |
@@ -456,7 +478,7 @@ src/
 
 ## Suggested next milestones
 
-1. **Real data**: places API + routing API (real polylines, opening hours, departure-time-aware transit).
+1. **Real data**: opening hours for the built catalogs, and a routing API (real polylines, departure-time-aware transit).
 2. **Richer editing**: drag-and-drop between days, must-see pins before planning, "swap this for something cheaper", per-day start times.
 3. **Sync**: group trips live on the server already; do the same for trips kept in the browser, so they follow you between devices.
 4. **Trip-time mode**: live "you are here → next stop in 12 min" guidance and re-planning when you run late.

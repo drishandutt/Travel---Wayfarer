@@ -80,6 +80,7 @@ export type Action =
   | { type: 'reset' }
   | { type: 'retune'; brief: TripBrief }   // the sliders moved over a plan: re-time it and deal options to swipe
   | { type: 'deck-lane'; lane: Lane }      // switch between the places and the food-and-drink decks
+  | { type: 'city-ready'; id: string }     // the trip's city (re)loaded into the catalog: redraw with it
 
 // What we persist: enough to redraw the map and itinerary exactly.
 export interface SavedTrip {
@@ -607,6 +608,9 @@ function baseReducer(s: TripState, a: Action): TripState {
       return finishEditDeck(s, Boolean(a.cancel))
     case 'reset':
       return initialState
+    case 'city-ready':
+      // the catalog changed under the trip, so every view that reads the city runs again
+      return { ...s }
     case 'retune':
       return retune(s, a.brief)
     case 'deck-lane': {

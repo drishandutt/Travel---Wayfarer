@@ -8,6 +8,7 @@ import { SocialVideos } from './SocialVideos'
 import { cityById } from '../data/cities'
 import { HOTEL_PHOTOS } from '../data/hotelPhotos'
 import { PLACE_COVERS } from '../data/placeCovers'
+import { AUDIENCE_LABEL, audiencesOfProfile, profileOf } from '../planner/profile'
 
 const SOURCE_NAME: Partial<Record<string, string>> = { google: 'Google Maps', apple: 'Apple Maps', osm: 'OpenStreetMap', waze: 'Waze' }
 
@@ -46,6 +47,11 @@ export function PlaceCard({ state, dispatch, onLogExpense, voteOn }: { state: Tr
   }
 
   const p = place!
+  // what it's good and bad at, and who it suits: shown in full when someone who knows the place
+  // (or travellers' swipes) said so; the rules' guess only names who it's for
+  const prof = profileOf(p)
+  const informed = prof.by !== 'rules' || Boolean(prof.learned)
+  const bestFor = audiencesOfProfile(prof).yes.slice(0, informed ? 4 : 3)
   const day = state.days.find(d => d.stops.some(s => s.place.id === id))
   const idx = day ? day.stops.findIndex(s => s.place.id === id) : -1
   const stop = day?.stops[idx]
@@ -58,6 +64,7 @@ export function PlaceCard({ state, dispatch, onLogExpense, voteOn }: { state: Tr
       <PhotoGallery id={p.id} name={p.name} coord={p.coord} allowArea={['sight', 'viewpoint', 'park'].includes(p.kind)} context={cityById(state.brief.destination)?.name} nearbyLabel="Nearby" lead={PLACE_COVERS[p.id]} />
       <div className="pc-meta">
         {p.custom && <span className="kind mine">Your find</span>}
+        {!p.custom && p.found && <span className="kind found">Traveller’s find</span>}
         <span className="kind">{p.kind}</span>
         <span>{p.minutes} min</span>
         <span>{p.price ? '$'.repeat(p.price) : 'Free'}</span>
@@ -65,6 +72,14 @@ export function PlaceCard({ state, dispatch, onLogExpense, voteOn }: { state: Tr
       <h3>{p.name}</h3>
       <p>{p.blurb}</p>
       {p.custom?.url && <a className="pc-source" href={p.custom.url} target="_blank" rel="noreferrer">Open in {SOURCE_NAME[p.custom.from] ?? 'maps'} ↗</a>}
+      {(bestFor.length > 0 || (informed && (prof.strengths.length > 0 || prof.weaknesses.length > 0))) && (
+        <dl className="pc-profile">
+          {bestFor.length > 0 && <><dt>Best for</dt><dd>{bestFor.map(a => AUDIENCE_LABEL[a]).join(', ')}</dd></>}
+          {informed && prof.strengths.length > 0 && <><dt>Good</dt><dd>{prof.strengths.join(' · ')}</dd></>}
+          {informed && prof.weaknesses.length > 0 && <><dt>Know</dt><dd>{prof.weaknesses.join(' · ')}</dd></>}
+          {prof.learned && <><dt>Swipes</dt><dd>{prof.learned.signals} travellers have weighed in</dd></>}
+        </dl>
+      )}
 
       {voteOn && planned && <PlaceVotes placeId={p.id} trip={voteOn.trip} onVote={voteOn.onVote} />}
       {planned && !editable && day && stop && (

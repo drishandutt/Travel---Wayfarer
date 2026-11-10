@@ -33,6 +33,7 @@ import { useSharedTrip } from './trip/useSharedTrip'
 import { myVotes } from './trip/votes'
 import type { SharedTrip } from './trip/types'
 import { cityById, findCity } from './data/cities'
+import { ensureCity, lookupCity, sendSignals, waitForCity } from './data/cityClient'
 import { ShareSheet, type Shared, type ShareTarget } from './components/share/ShareSheet'
 import { DevTools } from './components/dev/DevTools'
 import type { FoundPlace } from './share/types'
@@ -333,6 +334,52 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     if (shouldOffer && !typing && !nextField(state.brief)) offerFriends()
   }, [shouldOffer, typing, state.brief, offerFriends])
 
+  // The trip's city, fetched from the server when the trip opens: a city built from public
+  // guides lives only there, and a hand-made one picks up travellers' promoted finds and what
+  // the places have learned. Everything that reads the catalog redraws once it's in.
+  useEffect(() => {
+    const id = state.brief.destination
+    if (!id) return
+    let gone = false
+    ensureCity(id).then(c => { if (c && !gone) dispatch({ type: 'city-ready', id }) })
+    return () => { gone = true }
+  }, [state.brief.destination])
+
+  // A city the app hadn't mapped: wait for the build, then set it as the destination and carry
+  // on with the questions as if they'd named one the app knew. `text` is their message, for the
+  // offline intake to read again with the city known.
+  const buildCtrl = useRef<AbortController | null>(null)
+  const awaitCity = async (job: { id: string; name: string }, text?: string) => {
+    buildCtrl.current?.abort()
+    const ctrl = new AbortController()
+    buildCtrl.current = ctrl
+    setTyping(true)
+    let lastSaid = Date.now()
+    try {
+      const city = await waitForCity(job.id, progress => {
+        if (Date.now() - lastSaid > 25_000) { lastSaid = Date.now(); dispatch({ type: 'chat', role: 'ai', text: `Still mapping ${job.name}: ${progress.replace(/^./, c => c.toLowerCase())}…` }) }
+      }, ctrl.signal)
+      if (ctrl.signal.aborted) return
+      const s = latest.current
+      const mapped = `${city.name} is mapped: ${city.places.length} places from public guides.`
+      if (text !== undefined) {
+        const { brief, reply } = converse(text, s.brief, city.id)
+        dispatch({ type: 'brief', brief })
+        dispatch({ type: 'chat', role: 'ai', text: `${mapped} ${reply}` })
+      } else {
+        const brief = { ...s.brief, destination: city.id }
+        dispatch({ type: 'brief', brief })
+        dispatch({ type: 'chat', role: 'ai', text: `${mapped}${nextField(brief) ? '' : ' Hit “Pick places” whenever you’re ready.'}` })
+      }
+      dispatch({ type: 'city-ready', id: city.id })
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return
+      dispatch({ type: 'chat', role: 'ai', text: `${(e as Error).message} Which other city should we try?` })
+    } finally {
+      if (buildCtrl.current === ctrl) { buildCtrl.current = null; setTyping(false) }
+    }
+  }
+
   const run = useCallback(async (stream: (signal: AbortSignal) => AsyncGenerator<PlannerEvent>) => {
     abort.current?.abort()
     const ctrl = new AbortController()
@@ -437,6 +484,8 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         const out = await claudeIntake([...s.messages, { id: 'pending', role: 'user', text }], s.brief)
         dispatch({ type: 'brief', brief: { ...out.brief, moneyGroupId: s.brief.moneyGroupId } })
         dispatch({ type: 'chat', role: 'ai', text: out.reply })
+        // a city being mapped: the destination is set once it's ready
+        if (out.building) { void awaitCity(out.building); return }
       } catch (e) {
         const { brief, reply } = converse(text, latest.current.brief)
         dispatch({ type: 'brief', brief })
@@ -446,7 +495,29 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       }
       return
     }
-    const { brief, reply } = converse(text, s.brief)
+    const heard = converse(text, s.brief)
+    let { brief, reply } = heard
+    // they named somewhere the app doesn't know: the server may know it, or can build it
+    if (heard.lookup) {
+      try {
+        const look = await lookupCity(heard.lookup)
+        if (look.status === 'known') {
+          await ensureCity(look.id)
+          ;({ brief, reply } = converse(text, s.brief, look.id))
+        } else if (look.status === 'building') {
+          // what else they said (days, who, vibe) is kept even if the build fails
+          dispatch({ type: 'brief', brief })
+          dispatch({ type: 'chat', role: 'ai', text: `I don’t have ${look.name} mapped yet, so I’m building it from public guides now. It takes about a minute.` })
+          void awaitCity(look, text)
+          return
+        } else if (look.status === 'failed') {
+          reply = `${look.error} ${reply}`
+        }
+      } catch (e) {
+        // no server to ask (or it refused): the offline reply stands
+        if (!(e instanceof TypeError)) reply = `${(e as Error).message} ${reply}`
+      }
+    }
     dispatch({ type: 'brief', brief })
     setTimeout(() => {
       setTyping(false)
@@ -479,9 +550,12 @@ function TripApp({ acct }: { acct: AccountHandle }) {
 
   // Plan the chosen places.
   const plan = (liked: string[], rejected: string[], label: string) => {
+    const brief = latest.current.brief
+    // what they kept and skipped teaches the places who they suit
+    if (brief.destination) sendSignals(brief.destination, liked, rejected, brief)
     dispatch({ type: 'phase', phase: 'planning' })
     dispatch({ type: 'chat', role: 'ai', text: label })
-    run(signal => engine.planItinerary(latest.current.brief, signal, { liked, rejected }))
+    run(signal => engine.planItinerary(brief, signal, { liked, rejected }))
   }
   // The sliders moved over a finished plan: the days re-time, and options that fit the new settings
   // open as a deck to swipe. Nothing is added unless they keep it.
@@ -498,7 +572,11 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   const likedCount = state.deck.filter(c => state.picks[c.id] === 'like').length
   const inGroup = Boolean(trip && trip.people.length > 1)
   // a deck opened from chat over an existing plan finishes back into that plan
-  const finishDeck = () => dispatch({ type: 'finish-deck' })
+  const finishDeck = () => {
+    const s = latest.current
+    if (s.brief.destination) sendSignals(s.brief.destination, s.deck.filter(c => s.picks[c.id] === 'like').map(c => c.id), s.deck.filter(c => s.picks[c.id] === 'nope').map(c => c.id), s.brief)
+    dispatch({ type: 'finish-deck' })
+  }
   const cancelDeck = () => dispatch({ type: 'finish-deck', cancel: true })
 
   const approve = () => {

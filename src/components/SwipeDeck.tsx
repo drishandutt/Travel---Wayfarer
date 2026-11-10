@@ -128,7 +128,7 @@ function Card({ place, card, top, leaving, onRelease, likedBy, voting }: {
           </div>
           <div className="dc-body">
             <div className="dc-meta">
-              {place.custom ? <span className="kind mine">Your find</span> : <span className="kind">{place.kind}</span>}
+              {place.custom ? <span className="kind mine">Your find</span> : place.found ? <span className="kind found">Traveller’s find</span> : <span className="kind">{place.kind}</span>}
               {food ? <span>{MEAL[place.bestAt ?? 'midday']}</span> : <span>{place.minutes} min</span>}
               <span>{place.price ? '$'.repeat(place.price) : 'Free'}</span>
             </div>

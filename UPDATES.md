@@ -2,6 +2,12 @@
 
 Raw notes on feature ideas as they come up. The organised master list is [FEATURES.md](FEATURES.md).
 
+## 2026-11-10
+
+- **Any city.** Name a city the app doesn’t have and it builds one from public guides in about a minute: every sight, museum, park, market, restaurant, bar and stay in its Wikivoyage article and district pages, each with its own map position, ranked by how well known it is on Wikidata, with the country’s money worked out and the dashboard’s essentials (plugs, tipping, the transit card, a few phrases) filled in by Claude. Tokyo, Lisbon and London stay as they were. Built cities are kept in the database, so the next traveller gets them at once. The chat says it’s mapping the city and carries on when it’s done.
+- **Finds go to everyone.** A place a traveller adds themselves that’s somewhere others could visit too (an attraction, a restaurant, a bar, a park, a shop, never a home or an address: the map’s own category decides, and Claude’s read on it) joins that city’s places for every other traveller, marked **Traveller’s find**. The finder keeps **Your find** and the link they shared.
+- **Every place has a profile:** what it does well, what to know before going, how busy, lively, late and child-friendly it is, and who it suits (first-timers, locals, families, couples, solo, groups, foodies, night owls, early birds, a tight budget, a splurge, avoiding crowds, wanderers, the adventurous, a slow day). Rules give every place one from the catalog; Claude profiles each city’s best-known places and every new find; and swipes teach the rest: what each kind of traveller kept or skipped makes a place *for* or *not for* them. The sliders, the swipe deck, the planner and the assistant all read it, and the pin card shows it.
+
 ## 2026-11-09
 
 - **Admins can delete shared trips** from My trips (the ✕ on a trip you run). It goes for everyone: the plan, votes, chat and shared expenses. With anyone else in it, or money spent, you type the trip's name first.

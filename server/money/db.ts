@@ -345,6 +345,62 @@ export const MIGRATIONS = [`
       REVOKE ALL ON place_videos FROM anon, authenticated;
     END IF;
   END $$;
+`, `
+  -- Cities built from public guides when a traveller named one (server/cities). city is the
+  -- City JSON the app takes, places and hotels included.
+  CREATE TABLE cities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    country TEXT NOT NULL,
+    city TEXT NOT NULL,
+    built_at BIGINT NOT NULL
+  );
+
+  -- Travellers' finds promoted into a city's shared catalog (a real attraction, restaurant or
+  -- bar, never someone's home). place is the Place JSON; hidden takes one out again.
+  CREATE TABLE city_places (
+    id TEXT PRIMARY KEY,
+    city_id TEXT NOT NULL,
+    place TEXT NOT NULL,
+    added_by TEXT,
+    added_at BIGINT NOT NULL,
+    hidden INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX city_places_city ON city_places(city_id);
+
+  -- What a place is good and bad at and who it suits, from Claude or OpenAI, for places in
+  -- any city, hand-made ones included. profile is the PlaceProfile JSON.
+  CREATE TABLE place_profiles (
+    city_id TEXT NOT NULL,
+    place_id TEXT NOT NULL,
+    profile TEXT NOT NULL,
+    profiled_at BIGINT NOT NULL,
+    PRIMARY KEY (city_id, place_id)
+  );
+
+  -- Every swipe, with who the traveller is (their audiences, never who they are), so a place
+  -- learns who keeps it and who skips it.
+  CREATE TABLE place_signals (
+    id BIGSERIAL PRIMARY KEY,
+    city_id TEXT NOT NULL,
+    place_id TEXT NOT NULL,
+    kept INTEGER NOT NULL,
+    audiences TEXT NOT NULL,
+    at BIGINT NOT NULL
+  );
+  CREATE INDEX place_signals_place ON place_signals(city_id, place_id);
+
+  ALTER TABLE cities ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE city_places ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE place_profiles ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE place_signals ENABLE ROW LEVEL SECURITY;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON cities, city_places, place_profiles, place_signals FROM anon, authenticated;
+      REVOKE ALL ON SEQUENCE place_signals_id_seq FROM anon, authenticated;
+    END IF;
+  END $$;
 `]
 
 // A transaction is one connection, and one connection runs one query at a time: reads that

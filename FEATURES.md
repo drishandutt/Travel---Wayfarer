@@ -3,7 +3,7 @@
 > The consolidated, final list of every feature idea discussed. Organized into three tiers.
 > This is the master reference; `UPDATES.md` remains the raw running log.
 >
-> _Last updated: 2026-11-04_
+> _Last updated: 2026-11-10_
 
 **Legend:** 🟢 design locked · 🔵 building · ⚪ idea (not yet scoped)
 
@@ -18,8 +18,8 @@
 | 3 | **Paste Itinerary → Get the Vibe** | ⚪ | Paste an itinerary; app reads it to surface the trip's feel. |
 | 4 | **Real-Time Updates** | ⚪ | Location-based, crisis alerts, population count, safety, events, flight & travel-cost updates, and more. |
 | 5 | **Truly Hidden** | ⚪ | Collaborate with locals; influencers & agents; download podcasts/user stories and analyze them. |
-| 6 | **Suggestion-Based Algorithm** | ⚪ | Recommendation engine for destinations / activities. |
-| 7 | _open slot_ | ⚪ | Reserved — to be added. |
+| 6 | **Suggestion-Based Algorithm** | 🔵 | First slice live: every place carries a profile (strengths, weaknesses, who it suits), from rules, Claude and travellers' swipes; the sliders, deck and planner read it. Next: learn from saved and rejected trips, not just swipes. |
+| 7 | **Any city** | 🟢🔵 | Live: a city the app doesn't have is built from Wikivoyage and Wikidata when named, with Claude filling the essentials. Travellers' public finds join each city's catalog for everyone. Next: opening hours and real routing. |
 
 ---
 
@@ -46,12 +46,12 @@
 - **Language & etiquette primer** — the 20 phrases and 5 customs that actually matter.
 
 ### Extending the Algorithm (#6)
-- **Taste graph** — learns from trips you saved/rejected, not just an onboarding quiz.
+- **Taste graph** — learns from trips you saved/rejected, not just an onboarding quiz. _(Swipes already teach each place who keeps it; saved and rejected trips next.)_
 - **"People like you" without the creep** — recs by trip-style similarity, not personal data.
 - **Anti-recommendation** — tells you what to skip as confidently as what to do.
 
 ### Net-New Themes
-- **Group / collaborative planning** — shared trip with voting, split costs, merged availability calendar.
+- **Group / collaborative planning** — shared trip with voting, split costs, merged availability calendar. _(Voting and split costs are live; the calendar isn't.)_
 - **Memory / post-trip** — auto-generates a recap or photobook from your vault + itinerary.
 - **Carbon & slow-travel mode** — surfaces lower-impact routes and flags.
 - **Flexibility search** — "anywhere warm, under $X, first week of March" instead of a fixed destination.
@@ -78,8 +78,8 @@
 - **Trip journaling, shareable** — lightweight public/private log friends can follow.
 
 ### Money
-- **Shared wallet** — group expense tracking with auto-split and settle-up.
-- **Spend-vs-budget live** — running tally against the trip budget, by category.
+- **Shared wallet** — group expense tracking with auto-split and settle-up. _(Live: Money.)_
+- **Spend-vs-budget live** — running tally against the trip budget, by category. _(Live: Money's budgets and planned vs actual.)_
 
 ### Safety & accessibility
 - **Solo-safety mode** — check-ins, trusted-contact share, safe-route suggestions at night.

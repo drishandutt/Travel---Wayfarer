@@ -7,6 +7,8 @@ import { haversineKm } from '../src/planner/geo'
 import { FALLBACK, MODEL, brainEnabled, client, textOf } from './claude'
 import { OPENAI_MODEL, openai } from './openai'
 import type { Db } from './money/db'
+import { PROFILE_PROPS, PROFILE_REQUIRED, ProfileOut, profileFrom } from './cities/profile'
+import { promoteFind } from './cities/store'
 
 // Travellers' own places: find what they shared or typed, and the reels and videos of it.
 //   resolvePlace  a maps link (Google, Apple, OpenStreetMap, Waze, bare coordinates) or a name
@@ -89,7 +91,7 @@ interface OsmHit {
 // Nominatim allows one request a second and asks to be told who's calling.
 let lastCall = 0
 let queue: Promise<unknown> = Promise.resolve()
-function nominatim<T>(path: 'search' | 'reverse', params: Record<string, string>, signal?: AbortSignal): Promise<T> {
+export function nominatim<T>(path: 'search' | 'reverse', params: Record<string, string>, signal?: AbortSignal): Promise<T> {
   const run = queue.then(async () => {
     const wait = lastCall + 1100 - Date.now()
     if (wait > 0) await new Promise(r => setTimeout(r, wait))
@@ -219,7 +221,7 @@ function shortAddress(a: Record<string, string> = {}): string | undefined {
 const DESCRIBE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['kind', 'tags', 'price', 'minutes', 'best_at', 'blurb', 'keywords'],
+  required: ['kind', 'tags', 'price', 'minutes', 'best_at', 'blurb', 'keywords', 'public', 'profile'],
   properties: {
     kind: { type: 'string', enum: KINDS },
     tags: { type: 'array', items: { type: 'string', enum: VIBES } },
@@ -228,6 +230,8 @@ const DESCRIBE_SCHEMA = {
     best_at: { type: 'string', enum: ['morning', 'midday', 'evening', 'night'] },
     blurb: { type: 'string' },
     keywords: { type: 'array', items: { type: 'string' } },
+    public: { type: 'boolean', description: 'true if other travellers could visit it: an attraction, restaurant, café, bar, park, market or shop. false for a private home, an address, an office, a hotel room, a school or anything not open to visitors.' },
+    profile: { type: 'object', additionalProperties: false, required: [...PROFILE_REQUIRED], properties: PROFILE_PROPS },
   },
 } as const
 
@@ -239,13 +243,18 @@ const Described = z.object({
   best_at: z.enum(['morning', 'midday', 'evening', 'night']),
   blurb: z.string(),
   keywords: z.array(z.string()),
+  public: z.boolean(),
+  profile: ProfileOut,
 })
 
-const describeBrief = (city: City) => `You describe a place a traveller found themselves and added to their ${city.name} trip, for a trip planner. Use what you know about the place itself; if you don't recognise it, describe only what its map data says and keep it plain. Never invent awards, dishes or history. Blurb: one short line, under 60 characters, in the style "Solo-booth tonkotsu, open late." Price: 0 free to 3 splurge. Minutes: a typical visit. Keywords: up to 6 lowercase words people would search by (cuisine, style), or none. Tags: 1-3 that truly fit.`
+const describeBrief = (city: City) => `You describe a place a traveller found themselves and added to their ${city.name} trip, for a trip planner. Use what you know about the place itself; if you don't recognise it, describe only what its map data says and keep it plain. Never invent awards, dishes or history. Blurb: one short line, under 60 characters, in the style "Solo-booth tonkotsu, open late." Price: 0 free to 3 splurge. Minutes: a typical visit. Keywords: up to 6 lowercase words people would search by (cuisine, style), or none. Tags: 1-3 that truly fit. Public: whether other travellers could go there too. Profile: what it does well, what to know before going, and who it suits (first-timers, locals, families, couples, solo, groups, foodies, night-owls, early-birds, budget, splurge, crowd-averse, wanderers, adventurous, chill); known=false if you don't actually recognise the place.`
 
-async function describe(p: Place, city: City, osm: string, signal?: AbortSignal): Promise<Partial<Place>> {
+interface Described { place: Partial<Place>; public?: boolean }
+
+async function describe(p: Place, city: City, osm: string, signal?: AbortSignal): Promise<Described> {
   const about = `Name: ${p.name}\nWhere: ${p.custom?.address ?? city.name}, ${city.name}\nMap data: ${osm}`
   let json: string
+  let by: 'claude' | 'openai' = 'claude'
   if (brainEnabled) {
     const response = await client.beta.messages.create({
       ...FALLBACK,
@@ -255,7 +264,7 @@ async function describe(p: Place, city: City, osm: string, signal?: AbortSignal)
       output_config: { effort: 'low', format: { type: 'json_schema', schema: DESCRIBE_SCHEMA } },
       messages: [{ role: 'user', content: about }],
     }, { signal: anySignal(signal, 20_000) })
-    if (response.stop_reason !== 'end_turn') return {}
+    if (response.stop_reason !== 'end_turn') return { place: {} }
     json = textOf(response)
   } else if (openai) {
     const response = await openai.responses.create({
@@ -265,11 +274,12 @@ async function describe(p: Place, city: City, osm: string, signal?: AbortSignal)
       input: about,
       text: { format: { type: 'json_schema', name: 'place', strict: true, schema: DESCRIBE_SCHEMA as unknown as Record<string, unknown> } },
     }, { signal: anySignal(signal, 20_000) })
-    if (response.status !== 'completed') return {}
+    if (response.status !== 'completed') return { place: {} }
     json = response.output_text
-  } else return {}
+    by = 'openai'
+  } else return { place: {} }
   const d = Described.parse(JSON.parse(json))
-  return {
+  const place: Partial<Place> = {
     kind: d.kind,
     tags: d.tags.length ? [...new Set(d.tags)].slice(0, 3) : p.tags,
     price: Math.max(0, Math.min(3, d.price)) as Place['price'],
@@ -278,13 +288,33 @@ async function describe(p: Place, city: City, osm: string, signal?: AbortSignal)
     blurb: d.blurb.trim().slice(0, 90) || p.blurb,
     keywords: d.keywords.map(k => k.toLowerCase().trim()).filter(Boolean).slice(0, 6),
   }
+  const profile = profileFrom(d.profile, { ...p, ...place }, by)
+  return { place: profile ? { ...place, profile } : place, public: d.public }
+}
+
+// Somewhere other travellers could go, by what the map calls it: not a house, an office, a
+// school or a hotel. The model's own view is read on top of this.
+const VENUE_AMENITY = new Set(['restaurant', 'fast_food', 'food_court', 'cafe', 'ice_cream', 'bar', 'pub', 'biergarten', 'nightclub', 'marketplace', 'place_of_worship', 'theatre', 'arts_centre', 'cinema', 'casino', 'library', 'planetarium', 'fountain', 'public_bath', 'spa', 'events_venue', 'music_venue'])
+const STAYS = new Set(['hotel', 'hostel', 'guest_house', 'motel', 'apartment', 'chalet', 'camp_site', 'caravan_site', 'information', 'alpine_hut'])
+const LEISURE = new Set(['park', 'garden', 'nature_reserve', 'water_park', 'beach_resort', 'stadium', 'ice_rink', 'amusement_arcade', 'marina', 'playground', 'miniature_golf', 'escape_game', 'bowling_alley'])
+export function isVenue(h: Pick<OsmHit, 'category' | 'type'> | undefined): boolean {
+  if (!h?.category || !h.type) return false
+  switch (h.category) {
+    case 'tourism': return !STAYS.has(h.type)
+    case 'amenity': return VENUE_AMENITY.has(h.type)
+    case 'leisure': return LEISURE.has(h.type)
+    case 'natural': case 'historic': case 'shop': return true
+    default: return false
+  }
 }
 
 // ── resolve ──────────────────────────────────────────────────────────────────
 
 export interface ResolveRequest { link?: string; name?: string; city?: string; kind?: string }
 
-export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal): Promise<{ place: Place; note?: string }> {
+// `userId`: who's asking, when they're signed in. Given at all (null for a guest), a find that's
+// somewhere other travellers could visit goes into the city's shared catalog too (`shared`).
+export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal, userId?: string | null): Promise<{ place: Place; note?: string; shared?: boolean }> {
   const city = cityById(req.city)
   if (!city) throw new PlaceError('Tell me which city the trip is in first, then send the place again.')
   const typed = req.name?.trim().slice(0, 120) || undefined
@@ -341,17 +371,32 @@ export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal): P
     custom: { ...source, ...(address ? { address } : {}) },
   }
 
-  let note: string | undefined
-  if (km > 25) note = `It’s about ${Math.round(km)} km out of ${city.name}, so it may want a day of its own.`
+  const notes: string[] = []
+  if (km > 25) notes.push(`It’s about ${Math.round(km)} km out of ${city.name}, so it may want a day of its own.`)
+  let modelSays: boolean | undefined
   if (brainEnabled || openai) {
     const osm = hit ? `${hit.category}/${hit.type}; ${Object.entries(hit.extratags ?? {}).filter(([k]) => /cuisine|opening_hours|description|religion|website/.test(k)).map(([k, v]) => `${k}=${v}`).join('; ')}` : 'none'
     try {
-      Object.assign(place, await describe(place, city, osm, signal))
+      const d = await describe(place, city, osm, signal)
+      Object.assign(place, d.place)
+      modelSays = d.public
     } catch (err) {
       console.warn('[places] describing', place.name, (err as Error).message)
     }
   }
-  return { place, note }
+
+  // A real attraction, restaurant or bar joins the city's catalog for every traveller; a home,
+  // an office or an address stays the traveller's own.
+  let shared = false
+  if (userId !== undefined && isVenue(hit) && modelSays !== false && !/^\d+[\s,]/.test(place.name)) {
+    try {
+      shared = Boolean(await promoteFind(city.id, place, userId))
+      if (shared) notes.push(`It’s now in ${city.name}’s places for other travellers too.`)
+    } catch (err) {
+      console.warn('[places] sharing', place.name, (err as Error).message)
+    }
+  }
+  return { place, note: notes.join(' ') || undefined, shared }
 }
 
 const slug = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'place'

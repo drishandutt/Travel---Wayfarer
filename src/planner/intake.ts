@@ -112,7 +112,7 @@ export const QUICK_REPLIES: Record<BriefField, string[]> = {
 export function nextQuestion(b: TripBrief): string {
   switch (nextField(b)) {
     case 'destination':
-      return `Where are we heading? I’ve got deep local maps for ${CITIES.map(c => c.name).join(' and ')} right now, with more cities coming.`
+      return `Where are we heading? I’ve got deep local maps for ${CITIES.map(c => c.name).join(', ')} ready, and I can map most other cities in about a minute.`
     case 'days':
       return `How many days do you have there? I can map up to ${MAX_DAYS}.`
     case 'travelers':
@@ -143,10 +143,13 @@ const MISSED_NOTE: Record<string, string> = {
 
 // Read one message in light of the question on screen, and reply. Always moves
 // the conversation on: it says what it heard, and never repeats itself.
-export function converse(text: string, prev: TripBrief): { brief: TripBrief; reply: string } {
+// `lookup`: they were asked where, and named no city the app knows: the server may know it, or
+// build it (src/data/cityClient.ts); the caller then calls again with `destination` set.
+export function converse(text: string, prev: TripBrief, destination?: string): { brief: TripBrief; reply: string; lookup?: string } {
   const t = text.toLowerCase().replace(/[’‘]/g, "'")
   const asked = nextField(prev)
   let brief = extractBrief(text, prev)
+  if (destination) brief = { ...brief, destination }
 
   // A bare answer belongs to the question that was asked ("5", "two", "low").
   const bare = t.match(/\b(\d[\d,]*|one|two|three|four|five|six|seven|eight|nine|ten)\b/)?.[1]?.replace(/,/g, '')
@@ -180,8 +183,11 @@ export function converse(text: string, prev: TripBrief): { brief: TripBrief; rep
   const answered = !asked || nextField(brief) !== asked
   if (!answered && asked) {
     if (asked === 'destination') {
-      notes.push(`I’ve got maps for ${CITIES.map(c => c.name).join(' and ')} so far. Which one sounds good?`)
-      return { brief, reply: [...acknowledge(heard), ...notes].join(' ') }
+      notes.push(`I’ve got maps for ${CITIES.map(c => c.name).join(', ')} ready, and can build most cities. Which city sounds good?`)
+      const reply = [...acknowledge(heard), ...notes].join(' ')
+      // a city the app doesn't know yet may still be out there: the caller asks the server, and
+      // falls back to this reply if it isn't
+      return !destination && /\p{L}{3,}/u.test(text) ? { brief, reply, lookup: text } : { brief, reply }
     }
     if (asked === 'days') {
       notes.push('Just a number works, like “3”.')

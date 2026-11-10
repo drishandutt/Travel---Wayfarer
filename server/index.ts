@@ -17,6 +17,10 @@ import { openaiEnabled } from './openai'
 import { AgentError, agentEnabled, agentTurn } from './agent'
 import { captureServerConsole, flush as flushLogs } from './dev/log'
 import { chromiumPath, closeBrowser } from './share/browser'
+import { cityById } from '../src/data/cities'
+import { currentUser } from './money/auth'
+import { buildStatus, knownCities, lookupCity, profileCityInBackground, recordSignals } from './cities/store'
+import { cityDb } from './money/routes'
 
 // first, so nothing logged from here on is missed
 captureServerConsole()
@@ -27,8 +31,13 @@ captureServerConsole()
 //   POST /api/intake   -> { reply, brief }
 //   POST /api/plan     -> text/event-stream of PlannerEvent
 //   POST /api/hotels   -> text/event-stream of PlannerEvent
-//   POST /api/places/resolve -> { place, note? }  a traveller's own place, from a maps link or a name
+//   POST /api/places/resolve -> { place, note?, shared? }  a traveller's own place, from a maps link or a name
 //   GET  /api/places/videos  -> PlaceVideos       reels & videos of a place, by name and city
+//   GET  /api/cities         -> every city the app can plan
+//   GET  /api/cities/:id     -> the City (places, hotels, essentials), promoted finds and profiles included
+//   POST /api/cities/lookup  -> { status: known | building | failed | unknown, … }  the city a message names, built if need be
+//   GET  /api/cities/:id/status -> how a build is going
+//   POST /api/cities/:id/signals -> what a traveller kept and skipped on the deck, so places learn who they suit
 //   /api/money/*       -> shared expenses (server/money/routes.ts), the photo vault, reading
 //                         shared links (/share/read) and the dev tools (/dev/*, server/dev)
 
@@ -119,7 +128,9 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/places/resolve') {
       if (overLimit(`place:${clientIp(req)}`, 40, 3_600_000)) return json(res, 429, { error: 'That’s a lot of places in a short while. Try again in a bit.' })
       try {
-        return json(res, 200, await resolvePlace(await readJson<ResolveRequest>(req), abortOnClose(res).signal))
+        const db = await cityDb()
+        const user = db ? await currentUser(db, req).catch(() => null) : null
+        return json(res, 200, await resolvePlace(await readJson<ResolveRequest>(req), abortOnClose(res).signal, user?.id ?? null))
       } catch (err) {
         if (err instanceof PlaceError) return json(res, 422, { error: err.message })
         throw err
@@ -141,6 +152,43 @@ const server = createServer(async (req, res) => {
       if (url.searchParams.get('debug') === '1') return json(res, 200, await traceSocial(q))
       res.setHeader('Cache-Control', 'private, max-age=3600')
       return json(res, 200, await placeVideos(q))
+    }
+    // Cities: the hand-made ones, and any other built from public guides when someone names it.
+    if (req.method === 'GET' && url.pathname === '/api/cities') {
+      await cityDb()
+      return json(res, 200, { cities: knownCities() })
+    }
+    if (req.method === 'POST' && url.pathname === '/api/cities/lookup') {
+      await cityDb()
+      const { text } = await readJson<{ text?: string }>(req)
+      if (!text?.trim()) return json(res, 400, { error: 'Say which city.' })
+      // a lookup that starts a build reads a guide and asks a model; the rest is cheap
+      if (overLimit(`city:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'That’s a lot of cities in a short while. Try again in a bit.' })
+      return json(res, 200, await lookupCity(text.slice(0, 200), abortOnClose(res).signal))
+    }
+    const cityPath = url.pathname.match(/^\/api\/cities\/([a-z0-9-]{1,40})(?:\/(status|signals))?$/)
+    if (cityPath && req.method === 'GET' && cityPath[2] === 'status') {
+      const job = buildStatus(cityPath[1])
+      const city = cityById(cityPath[1])
+      if (!job && !city) return json(res, 404, { error: 'No such city' })
+      return json(res, 200, job ?? { id: city!.id, name: city!.name, status: 'ready', progress: `${city!.places.length} places` })
+    }
+    if (cityPath && req.method === 'GET' && !cityPath[2]) {
+      await cityDb()
+      const city = cityById(cityPath[1])
+      if (!city) return json(res, 404, { error: 'No such city' })
+      // a model's read on its best-known places, once per city, in the background
+      profileCityInBackground(city.id)
+      res.setHeader('Cache-Control', 'private, max-age=120')
+      return json(res, 200, city)
+    }
+    if (cityPath && req.method === 'POST' && cityPath[2] === 'signals') {
+      await cityDb()
+      if (overLimit(`signals:${clientIp(req)}`, 60, 3_600_000)) return json(res, 429, { error: 'Too many in a short while.' })
+      const body = await readJson<{ liked?: unknown; rejected?: unknown; brief?: TripBrief }>(req)
+      const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length <= 80).slice(0, 200) : [])
+      const n = await recordSignals(cityPath[1], ids(body.liked), ids(body.rejected), body.brief && typeof body.brief === 'object' ? { ...body.brief, vibes: Array.isArray(body.brief.vibes) ? body.brief.vibes : [] } : { vibes: [] })
+      return json(res, 200, { recorded: n })
     }
     if (req.method === 'POST' && url.pathname === '/api/agent') {
       if (!agentEnabled()) return json(res, 503, { error: 'The assistant isn’t switched on here.' })

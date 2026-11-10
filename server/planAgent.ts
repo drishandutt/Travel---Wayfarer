@@ -6,6 +6,7 @@ import { centroid, estimateTravel, fmtClock } from '../src/planner/geo'
 import { buildDay, dayShape, shortlist } from '../src/planner/core'
 import { resolveBudgetTier } from '../src/planner/intake'
 import { tuningLines } from '../src/planner/sliders'
+import { profileLine } from '../src/planner/profile'
 import { sleep, type Picks } from '../src/planner/engine'
 import { FALLBACK, MODEL, client, effortFor, textOf } from './claude'
 
@@ -73,9 +74,14 @@ How to plan:
 Be decisive: do not ask the user questions, and do not write prose outside tool calls.`
 }
 
+// One line per place. "who" is its profile where someone who knows the place, or travellers'
+// swipes, have said who it suits; the planner weighs it with the trip's own sliders.
 function catalogLines(city: City): string {
   return city.places
-    .map(p => `${p.id} | ${p.name} | ${p.kind} | ${p.tags.join(',')} | price ${p.price}/3 | ${p.minutes} min | best ${p.bestAt ?? 'any'} | fame ${p.rank?.toFixed(1) ?? '?'} | ${p.blurb}`)
+    .map(p => {
+      const who = profileLine(p)
+      return `${p.id} | ${p.name} | ${p.kind} | ${p.tags.join(',')} | price ${p.price}/3 | ${p.minutes} min | best ${p.bestAt ?? 'any'} | fame ${p.rank?.toFixed(1) ?? '?'} | ${p.blurb}${who ? ` | who: ${who}` : ''}`
+    })
     .join('\n')
 }
 
@@ -150,7 +156,7 @@ export async function* planWithClaude(brief: TripBrief, signal: AbortSignal, pic
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     {
       role: 'user',
-      content: `Trip brief:\n${briefText(brief)}\n\n${exact ? 'The traveller hand-picked every place below by swiping: keep all of them in shortlist_places unless one truly cannot fit.\n\n' : keepIds.size ? `This is a re-plan after the traveller changed their settings. Keep the places they chose (${[...keepIds].join(', ')}) unless one truly cannot fit, and choose the rest afresh for the brief as it is now.\n\n` : ''}Catalog (id | name | kind | tags | price | visit length | best time | fame 0-1 | note):\n${catalogLines(city)}\n\nPlan all ${totalDays} days.`,
+      content: `Trip brief:\n${briefText(brief)}\n\n${exact ? 'The traveller hand-picked every place below by swiping: keep all of them in shortlist_places unless one truly cannot fit.\n\n' : keepIds.size ? `This is a re-plan after the traveller changed their settings. Keep the places they chose (${[...keepIds].join(', ')}) unless one truly cannot fit, and choose the rest afresh for the brief as it is now.\n\n` : ''}Catalog (id | name | kind | tags | price | visit length | best time | fame 0-1 | note | who it suits, when known):\n${catalogLines(city)}\n\nPlan all ${totalDays} days.`,
     },
   ]
   const committed = new Map<number, DayPlan>()

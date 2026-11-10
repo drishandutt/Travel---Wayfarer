@@ -16,7 +16,10 @@ export async function detectBrain(): Promise<BrainStatus> {
   }
 }
 
-export async function claudeIntake(messages: ChatMessage[], brief: TripBrief): Promise<{ reply: string; brief: TripBrief }> {
+// `building`: the city they named is being mapped; wait for it (src/data/cityClient.ts).
+export interface IntakeReply { reply: string; brief: TripBrief; building?: { id: string; name: string; progress: string } }
+
+export async function claudeIntake(messages: ChatMessage[], brief: TripBrief): Promise<IntakeReply> {
   const res = await fetch('/api/intake', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -388,6 +388,12 @@ input { font: inherit; }
 .pc-meta .kind.mine, .dc-meta .kind.mine { padding: 1px 8px; border-radius: 999px; background: rgba(var(--amber-rgb), .16); color: var(--amber); text-transform: none; font-weight: 600; }
 .pc-source { display: inline-block; margin: -2px 0 8px; font-size: 12.5px; color: var(--paper-dim); text-decoration: none; }
 .pc-source:hover { color: var(--paper); text-decoration: underline; }
+.pc-meta .kind.found, .dc-meta .kind.found { padding: 1px 8px; border-radius: 999px; background: rgba(var(--paper-rgb), .1); color: var(--paper-dim); text-transform: none; font-weight: 600; }
+/* who the place suits, what it's good at and what to know: its profile */
+.pc-profile { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 2px 0 6px; font-size: 12.5px; line-height: 1.4; }
+.pc-profile dt { color: var(--paper-faint); }
+.pc-profile dd { margin: 0; color: var(--paper-dim); }
+.pc-profile dd::first-letter { text-transform: uppercase; }
 .pc-actions { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .pc-status { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--paper); }
 .pc-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }

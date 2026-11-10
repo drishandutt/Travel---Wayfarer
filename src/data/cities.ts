@@ -176,11 +176,47 @@ const FAME: Record<string, number> = {
 }
 for (const c of [tokyo, lisbon]) for (const p of c.places) if (FAME[p.id] !== undefined) p.rank = FAME[p.id]
 
+// The cities the app knows, by hand (above) or built from public guides (server/cities): the
+// server registers every city it has built, and the browser registers the one a trip is in as
+// it loads (src/data/cityClient.ts). The same array, always: imports see what's added.
 export const CITIES: City[] = [tokyo, lisbon, london]
+
+// Bumped whenever a city is registered or its places change, so cached views can tell.
+export let cityVersion = 0
+
+// Adds a city, or replaces the one with its id. Returns the registered copy.
+export function registerCity(city: City): City {
+  const at = CITIES.findIndex(c => c.id === city.id)
+  if (at >= 0) CITIES[at] = city
+  else CITIES.push(city)
+  cityVersion++
+  return city
+}
+
+// Puts places into a city's catalog (travellers' finds promoted for everyone, or profiles the
+// server has learned), replacing any with the same id. Returns how many were new.
+export function addCatalogPlaces(cityId: string, places: Place[]): number {
+  const at = CITIES.findIndex(c => c.id === cityId)
+  if (at < 0 || !places.length) return 0
+  const city = CITIES[at]
+  const next = [...city.places]
+  let added = 0
+  for (const p of places) {
+    const i = next.findIndex(x => x.id === p.id)
+    if (i >= 0) next[i] = p
+    else { next.push(p); added++ }
+  }
+  CITIES[at] = { ...city, places: next }
+  cityVersion++
+  return added
+}
 
 export function findCity(text: string): City | undefined {
   const t = text.toLowerCase()
-  return CITIES.find(c => c.aliases.some(a => t.includes(a)))
+  // the longest alias that fits, so "new york" beats "york"
+  let best: { city: City; len: number } | undefined
+  for (const c of CITIES) for (const a of c.aliases) if (t.includes(a) && (!best || a.length > best.len)) best = { city: c, len: a.length }
+  return best?.city
 }
 
 export function cityById(id?: string): City | undefined {
@@ -188,20 +224,21 @@ export function cityById(id?: string): City | undefined {
 }
 
 // The city as one trip sees it: everything we know there, plus the places its travellers
-// added themselves. Same object for the same brief, so it's cheap to call anywhere.
-const withCustom = new WeakMap<object, City>()
+// added themselves. Same object for the same brief and the same catalog, so it's cheap to call anywhere.
+const withCustom = new WeakMap<object, { base: City; out: City }>()
 export function tripCity(brief: TripBrief): City | undefined {
   const city = cityById(brief.destination)
   const own = brief.customPlaces
   if (!city || !own?.length) return city
-  let out = withCustom.get(own)
-  if (out?.id !== city.id) {
-    // a trip that moved city leaves the last city's finds behind
+  let held = withCustom.get(own)
+  if (held?.base !== city) {
+    // a trip that moved city leaves the last city's finds behind; a find the city now lists
+    // itself (promoted for everyone) is the catalog's copy
     const here = own.filter(p => !city.places.some(x => x.id === p.id) && roughKm(p.coord, city.center) <= NEARBY_KM)
-    out = { ...city, places: [...city.places, ...here] }
-    withCustom.set(own, out)
+    held = { base: city, out: { ...city, places: [...city.places, ...here] } }
+    withCustom.set(own, held)
   }
-  return out
+  return held.out
 }
 
 // How far out a traveller's own place can be and still belong to the city (day trips included).
