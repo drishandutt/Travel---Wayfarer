@@ -173,7 +173,7 @@ For the App Store, Apple can reject an app that's only a website (guideline 4.2)
 
 ## Planning together
 
-Everyone signs in first, with just an email (see [Accounts](#money-shared-expenses)). A trip can then be shared with a group, which has one **admin** and any number of normal users.
+Everyone signs in first, with an email and a code sent to it (see [Accounts](#money-shared-expenses)). A trip can then be shared with a group, which has one **admin** and any number of normal users.
 
 **Bringing people in.** Once the planner knows friends are coming and has its answers, the chat offers to bring them in. The admin adds emails or shares a link (`InviteFriends.tsx`). Anyone already signed up sees the trip right away; anyone else is asked to sign up, then they're straight in. Adding an email gives access immediately and opens the admin's own email app with the invite written, since the app has no email service of its own. Someone added while doing something else gets a nudge, or goes straight to the trip if they've nothing else on screen.
 
@@ -211,7 +211,11 @@ The server enforces this (`assertAdmin` in `server/money/store.ts`). On screen, 
 
 **Rate limits and IP addresses.** Limits per visitor read Railway's `X-Real-IP`, and sending a fake one doesn't get around them. Forum reports say that header has at times held a CDN address, which would make visitors share a limit; that hasn't been checked with real separate visitors. The limit on guessing a password goes by email address, so it doesn't depend on this.
 
-**Accounts.** Your email is your account: type it on any device and you're in, staying signed in with a year-long `HttpOnly` cookie. By design nothing is verified, so joining a trip takes seconds and no email provider is needed. The trade-off is real: an address isn't proof of who someone is, so anyone who knows it can sign in as that person, see their private expenses, and even set a password that locks them out. The account screen says so and offers an optional password, which then becomes required for that address. There's no email sending, so a forgotten password can't be reset; the group owner can *Release* the seat, which puts it back to unclaimed for another account to take through the group's new invite link. Private expenses follow the account, not the seat: whoever takes a released seat gets its shared history and nothing private. Passwords use scrypt, session tokens are stored hashed, and sign-ins and new accounts are rate limited. Everything cached in the browser belongs to one account (`claimLocal`): if a different person signs in on the same device, it's wiped first.
+**Accounts.** Your email is your account, and it has to be proven. Every sign-up and sign-in is two steps: `POST /api/money/auth/email` (the address, and a name for a new account) sends a six-digit code to that address, and `POST /api/money/auth/verify` (the code, and the password on an account that has one) signs in. A new account is created only when its code is right, already verified (`users.email_verified_at`). Codes (`email_codes`, stored hashed) work once, for 10 minutes; only the newest for an address works; five wrong tries spend it; asking again within 30 seconds keeps the same one; and an address gets at most 8 codes in 15 minutes. A session counts only for a verified account (`currentUser`), so sessions from before verification became mandatory open nothing until their owner confirms the address once. Changing your address (`/auth/secure`) sends a code to the new one, and nothing moves until it's typed in. The optional password is a second lock on top of the code; changing it needs the current one and signs out other devices. There's still no password reset: the code gets you in, and the group owner can *Release* a seat, which puts it back to unclaimed for another account to take through the group's new invite link. Private expenses follow the account, not the seat: whoever takes a released seat gets its shared history and nothing private. Passwords use scrypt, session tokens are stored hashed, the session cookie covers the whole API (`Path=/api`), and sign-ins, codes and new accounts are rate limited.
+
+**Sending the codes** (`server/mail.ts`): Resend's HTTP API when `RESEND_API_KEY` is set, from `WAYFARER_MAIL_FROM` (an address on a domain verified with Resend; without it, Resend's test sender, which only delivers to the Resend account's own address). In development without a key, the email is printed to the server console. In production without one, sign-in is refused with a clear message rather than letting anyone in unverified.
+
+Everything cached in the browser belongs to one account (`claimLocal`): if a different person signs in on the same device, it's wiped first.
 
 **Splitting.** `src/money/engine.ts` is pure, integer-only and shared by the browser and the server, so a live preview can't disagree with what gets stored. Amounts are integers in the currency's minor unit, so there's no float drift. Two rules always hold: an expense's shares add up to exactly its amount, and a group's balances add up to exactly zero.
 
@@ -281,7 +285,7 @@ A reel, video, post, web search, page or map shared to Wayfarer is read for the 
 
 ## Dev tools
 
-For the app's owner only: the email addresses in `WAYFARER_DEV_EMAILS` (comma-separated), or the built-in list in `server/dev/routes.ts` when that's unset. In dev with nothing set, anyone signed in. They open from **My trips → Dev tools**, or at `/?dev`. New tools go in as new tabs (`src/components/dev/DevTools.tsx`, one file per big tab in that folder).
+For the app's owner only, one account, by its id (`server/dev/owner.ts`): `WAYFARER_OWNER_ID` when set, otherwise the first account to confirm the owner's address (`WAYFARER_OWNER_EMAIL`, or the built-in one) with an emailed code, kept in `dev_settings` from then on. Changing that account's address keeps the dev tools with it, and whoever later takes the old address gets nothing. Nobody else gets in, in development either. They open from **My trips → Dev tools**, or at `/?dev`. New tools go in as new tabs (`src/components/dev/DevTools.tsx`, one file per big tab in that folder).
 
 - **Activity:** every activity, in `activity_events` (migration 6) for 90 days, written in batches like the logs (`server/dev/activity.ts`, `track(kind, …)`). Kinds are dotted, family first:
   - `http.request`: every API request and page load once answered (method, path, status, time), with who (`user_id`), from where (`ip`, browser) and which device (`x-wayfarer-device`, a random id per browser that `src/dev/activity.ts` adds to the app's own API calls, so what someone did before signing in joins up with them after). Built files, the log and activity uploads, the dev tools' own reads and a build's progress polls are left out.
@@ -398,7 +402,9 @@ server/
     profile.ts             A model's read on what places are good and bad at, and who they suit
     store.ts               Built cities, promoted finds, profiles and swipe signals in the database; the registry; build jobs; the review queue
     importer.ts            The owner's bulk imports: rows found on the map, shaped by the sheet, added to their city
+  mail.ts                  Sending email (sign-in codes) through Resend, or to the console in development
   dev/
+    owner.ts               Who owns the app (one account id), and so the dev tools
     routes.ts              The dev tools' API: logs, activity, the analyst, places, sessions, the link reader, tokens, settings
     log.ts                 Every log line, server and app, into dev_logs
     activity.ts            Every activity, server and app, into activity_events; reading it back
@@ -410,7 +416,7 @@ server/
   money/
     routes.ts              Money API: validation, permissions, live streams
     store.ts               Groups, people, expenses, payments (each change one transaction)
-    auth.ts                Accounts, sessions, password hashing, rate limits
+    auth.ts                Accounts, sessions, email codes, password hashing, rate limits
     db.ts                  Postgres (Supabase, or in-process for dev and tests), migrations
     importSqlite.ts        the one-time copy from the old SQLite file
     fx.ts                  Exchange rates with daily cache and fallback

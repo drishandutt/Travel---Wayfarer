@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { lastCode } from '../mail'
 import { createServer, type Server } from 'node:http'
 import { after, before, beforeEach, describe, it } from 'node:test'
 import { resetLimits } from '../money/auth'
@@ -16,7 +17,7 @@ let origin = ''
 let db: Db
 
 before(async () => {
-  process.env.WAYFARER_DEV_EMAILS = 'owner@example.test'
+  process.env.WAYFARER_OWNER_EMAIL = 'owner@example.test'
   db = await Db.local()
   const handle = createMoneyApi(db)
   attachLogDb(db)
@@ -30,7 +31,7 @@ beforeEach(() => resetLimits())
 
 after(async () => {
   attachLogDb(null)
-  delete process.env.WAYFARER_DEV_EMAILS
+  delete process.env.WAYFARER_OWNER_EMAIL
   server.closeAllConnections()
   await new Promise(r => server.close(r))
   await db.close()
@@ -49,11 +50,29 @@ async function call<T = Record<string, unknown>>(method: string, path: string, b
 async function signIn(email: string, name: string): Promise<Record<string, string>> {
   let r = await call('POST', '/auth/email', { email })
   if ((r.data as { next?: string }).next === 'name') r = await call('POST', '/auth/email', { email, name })
-  assert.ok(r.cookie, 'signed in')
-  return { Cookie: r.cookie! }
+  const v = await call('POST', '/auth/verify', { email, code: lastCode(email) })
+  assert.ok(v.cookie, 'signed in')
+  return { Cookie: v.cookie! }
 }
 
 describe('dev tools access', () => {
+  it('belongs to one account by id: the owner keeps it after moving address, and whoever takes the old one gets nothing', async () => {
+    const owner = await signIn('owner@example.test', 'Owner')
+    assert.equal((await call<{ admin: boolean }>('GET', '/dev/me', undefined, owner)).data.admin, true)
+    const moved = 'owner-moved@example.test'
+    assert.equal((await call<{ next: string }>('POST', '/auth/secure', { email: moved }, owner)).data.next, 'code')
+    assert.equal((await call('POST', '/auth/secure', { email: moved, code: lastCode(moved) }, owner)).status, 200)
+    assert.equal((await call<{ admin: boolean }>('GET', '/dev/me', undefined, owner)).data.admin, true, 'pinned by id')
+    const taker = await signIn('owner@example.test', 'Taker')
+    assert.equal((await call<{ admin: boolean }>('GET', '/dev/me', undefined, taker)).data.admin, false)
+    assert.equal((await call('GET', '/dev/activity', undefined, taker)).status, 403)
+    // and back, so the rest of the tests have their owner where they expect
+    assert.equal((await call('POST', '/auth/secure', { email: 'taker@example.test' }, taker)).status, 200)
+    await call('POST', '/auth/secure', { email: 'taker@example.test', code: lastCode('taker@example.test') }, taker)
+    await call('POST', '/auth/secure', { email: 'owner@example.test' }, owner)
+    assert.equal((await call('POST', '/auth/secure', { email: 'owner@example.test', code: lastCode('owner@example.test') }, owner)).status, 200)
+  })
+
   it('lets only the owner in', async () => {
     const owner = await signIn('owner@example.test', 'Owner')
     const other = await signIn('someone@example.test', 'Someone')

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { lastCode } from '../mail'
 import { createServer, type Server } from 'node:http'
 import { deflateRawSync } from 'node:zlib'
 import { after, before, beforeEach, describe, it } from 'node:test'
@@ -136,7 +137,7 @@ const town: City = {
 }
 
 before(async () => {
-  process.env.WAYFARER_DEV_EMAILS = 'owner@example.test'
+  process.env.WAYFARER_OWNER_EMAIL = 'owner@example.test'
   process.env.WAYFARER_ANALYST_HOURS = 'off'
   db = await Db.local()
   attachActivityDb(db)
@@ -154,7 +155,7 @@ beforeEach(() => resetLimits())
 after(async () => {
   attachActivityDb(null)
   attachCityDb(null)
-  delete process.env.WAYFARER_DEV_EMAILS
+  delete process.env.WAYFARER_OWNER_EMAIL
   server.closeAllConnections()
   await new Promise(r => server.close(r))
   await db.close()
@@ -167,14 +168,16 @@ async function call<T = Record<string, unknown>>(method: string, path: string, b
 }
 
 async function signIn(email: string, name: string): Promise<{ Cookie: string; id: string }> {
-  let r = await call<{ next?: string; user?: { id: string } }>('POST', '/auth/email', { email })
-  if (r.data.next === 'name') r = await call('POST', '/auth/email', { email, name })
-  return { Cookie: r.cookie!, id: r.data.user!.id }
+  const r = await call<{ next?: string }>('POST', '/auth/email', { email })
+  if (r.data.next === 'name') await call('POST', '/auth/email', { email, name })
+  const v = await call<{ user: { id: string } }>('POST', '/auth/verify', { email, code: lastCode(email) })
+  return { Cookie: v.cookie!, id: v.data.user.id }
 }
 
 describe('signing in for the whole API', () => {
   it('sets the session for /api, and moves an old /api/money session over once', async () => {
-    const first = await fetch(`${origin}/api/money/auth/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'mover@example.test', name: 'Mover' }) })
+    await call('POST', '/auth/email', { email: 'mover@example.test', name: 'Mover' })
+    const first = await fetch(`${origin}/api/money/auth/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'mover@example.test', code: lastCode('mover@example.test') }) })
     const set = first.headers.getSetCookie()
     assert.match(set[0], /^wf_session=[^;]+; Max-Age=\d+; Path=\/api; HttpOnly/)
     assert.match(set[1], /^wf_session=; Max-Age=0; Path=\/api\/money/)

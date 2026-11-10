@@ -4,7 +4,9 @@ import { z, ZodError } from 'zod'
 import { CATEGORY_IDS } from '../../src/money/categories'
 import { CURRENCIES, isCurrencyCode } from '../../src/money/currency'
 import { MAX_AMOUNT, SplitError } from '../../src/money/engine'
-import { checkPassword, clearLimit, clientIp, currentUser, endSession, hashPassword, overLimit, startSession, toAccount, widenSession, type UserRow } from './auth'
+import { CodeError, RESEND_MS, checkCode, checkPassword, clearLimit, clientIp, currentUser, endSession, hashPassword, issueCode, overLimit, spendCode, startSession, toAccount, widenSession, type CodePurpose, type UserRow } from './auth'
+import { MailError, codeMail, sendMail } from '../mail'
+import { claimOwner, loadOwner } from '../dev/owner'
 import { openDatabase, type Db } from './db'
 import { getRates } from './fx'
 import { importSqliteOnce } from './importSqlite'
@@ -220,6 +222,8 @@ function imageType(b: Buffer): string | null {
 // ── routes ────────────────────────────────────────────────────────────────────
 
 export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null, geocode: null, limits: vaultLimitsFromEnv() }) {
+  // who owns the dev tools, once claimed
+  void loadOwner(db)
   const routes: { method: string; re: RegExp; handler: Handler }[] = []
   const route = (method: string, path: string, handler: Handler) => {
     routes.push({ method, re: new RegExp(`^/api/money${path.replace(/:\w+/g, '([^/]+)')}$`), handler })
@@ -238,20 +242,63 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
 
   // The only way in. Your email is your account: a new one asks for a name, one with a
   // password asks for that, and otherwise you're signed in.
+  // Sign in or up, step one: an email (and a name, for a new account). A code goes to that
+  // address; nothing else happens until it's typed in (/auth/verify).
+  const sendCode = async (c: Ctx, to: string, purpose: CodePurpose, o: { userId?: string; name?: string } = {}) => {
+    if (overLimit(`code-send:${to}`, 8, 900_000)) throw new HttpError(429, 'That’s a lot of codes for one address. Wait a few minutes, then ask again.')
+    const issued = await issueCode(db, { email: to, purpose, userId: o.userId ?? null, name: o.name ?? null, ip: clientIp(c.req) })
+    if ('wait' in issued) return { resendIn: issued.wait, sent: false }
+    try {
+      await sendMail(codeMail(to, issued.code, purpose))
+    } catch (err) {
+      await spendCode(db, issued.id)
+      if (err instanceof MailError) throw new HttpError(503, err.message)
+      throw err
+    }
+    track('auth.code_sent', { ...from(c.req, o.userId ?? null), subject: to, detail: { purpose } })
+    return { resendIn: Math.round(RESEND_MS / 1000), sent: true }
+  }
+
   route('POST', '/auth/email', async c => {
     const ip = clientIp(c.req)
     if (overLimit(`login-ip:${ip}`, 40, 900_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
-    const body = await readBody(c.req, z.object({ email, name: name.optional(), password: z.string().max(200).optional() }))
-    let found = await db.one<UserRow>('SELECT * FROM users WHERE email = ?', body.email)
+    const body = await readBody(c.req, z.object({ email, name: name.optional() }))
+    const found = await db.one<UserRow>('SELECT * FROM users WHERE email = ?', body.email)
     if (!found) {
       if (!body.name) return { next: 'name' }
       if (overLimit(`signup:${ip}`, 30, 3_600_000)) throw new HttpError(429, 'Too many new accounts from here. Try again later.')
+      return { next: 'code', password: false, ...await sendCode(c, body.email, 'signup', { name: body.name }) }
+    }
+    return { next: 'code', password: Boolean(found.password_hash), ...await sendCode(c, body.email, 'signin') }
+  })
+
+  // Step two: the code from the email (and the password, on an account that has one). A new
+  // account is made only now, already verified.
+  route('POST', '/auth/verify', async c => {
+    const ip = clientIp(c.req)
+    if (overLimit(`verify-ip:${ip}`, 60, 900_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
+    const body = await readBody(c.req, z.object({ email, code: z.string().trim().regex(/^\d{6}$/, 'The code is six digits'), password: z.string().max(200).optional() }))
+    if (overLimit(`verify:${body.email}`, 15, 900_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and ask for a new code.')
+    let row
+    try {
+      row = await checkCode(db, body.email, body.code, ['signin', 'signup'])
+    } catch (err) {
+      if (err instanceof CodeError) {
+        if (err.status === 401) track('security.bad_code', { ...from(c.req), subject: body.email })
+        throw new HttpError(err.status, err.message)
+      }
+      throw err
+    }
+    let found = await db.one<UserRow>('SELECT * FROM users WHERE email = ?', body.email)
+    let made = false
+    if (!found) {
+      if (row.purpose !== 'signup' || !row.name) throw new HttpError(400, 'Start again: enter your email.')
       // two taps of the button arriving together make one account
-      await db.run('INSERT INTO users (id, name, email, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (email) DO NOTHING', randomUUID(), body.name, body.email, Date.now())
+      await db.run('INSERT INTO users (id, name, email, created_at, email_verified_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (email) DO NOTHING', randomUUID(), row.name, body.email, Date.now(), Date.now())
       found = (await db.one<UserRow>('SELECT * FROM users WHERE email = ?', body.email))!
-      track('auth.signup', { ...from(c.req, found.id), subject: found.id })
-      await publishAll(db, await store.linkWaitingSeats(db, found))
+      made = true
     } else if (found.password_hash) {
+      // the code stays good while they get the password right
       if (!body.password) return { next: 'password' }
       const key = `login:${body.email}`
       if (overLimit(key, 8, 900_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
@@ -261,28 +308,56 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
       }
       clearLimit(key)
     }
+    await spendCode(db, row.id)
+    const firstTime = !found.email_verified_at
+    if (firstTime) {
+      await db.run('UPDATE users SET email_verified_at = ? WHERE id = ?', Date.now(), found.id)
+      found = (await db.one<UserRow>('SELECT * FROM users WHERE id = ?', found.id))!
+    }
+    if (made) {
+      track('auth.signup', { ...from(c.req, found.id), subject: found.id })
+      await publishAll(db, await store.linkWaitingSeats(db, found))
+    }
     const switched = c.user && c.user.id !== found.id
     await endSession(db, c.req, c.res)
     await startSession(db, c.req, c.res, found.id)
-    track('auth.signin', { ...from(c.req, found.id), subject: found.id, detail: { password: Boolean(found.password_hash), ...(switched ? { switchedFrom: c.user!.id } : {}) } })
+    await claimOwner(db, found)
+    track('auth.signin', { ...from(c.req, found.id), subject: found.id, detail: { password: Boolean(found.password_hash), new: made, firstVerified: firstTime && !made, ...(switched ? { switchedFrom: c.user!.id } : {}) } })
     return { user: toAccount(found) }
   })
 
-  // Changes your address, and adds or changes the optional password.
+  // Changes your address (confirmed with a code sent to the new one), and adds or changes the
+  // optional password.
   route('POST', '/auth/secure', async c => {
     const user = needUser(c)
     if (overLimit(`secure:${user.id}`, 8, 900_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
-    const body = await readBody(c.req, z.object({ email, password: password.optional(), current: z.string().max(200).optional() }))
+    const body = await readBody(c.req, z.object({ email, password: password.optional(), current: z.string().max(200).optional(), code: z.string().trim().regex(/^\d{6}$/, 'The code is six digits').optional() }))
     if (user.password_hash && !(body.current && await checkPassword(body.current, user.password_hash))) {
       track('security.bad_password', { ...from(c.req, user.id), subject: user.id, detail: { while: 'changing account' } })
       throw new HttpError(403, 'Your current password isn’t right')
     }
     if (await db.one('SELECT 1 FROM users WHERE email = ? AND id != ?', body.email, user.id)) throw new HttpError(409, 'That email already has an account')
+    const moving = body.email !== user.email
+    let codeId: string | undefined
+    if (moving) {
+      // nothing changes until the new address is proven
+      if (!body.code) return { next: 'code', ...await sendCode(c, body.email, 'change', { userId: user.id }) }
+      try {
+        codeId = (await checkCode(db, body.email, body.code, ['change'], user.id)).id
+      } catch (err) {
+        if (err instanceof CodeError) {
+          if (err.status === 401) track('security.bad_code', { ...from(c.req, user.id), subject: body.email, detail: { while: 'changing email' } })
+          throw new HttpError(err.status, err.message)
+        }
+        throw err
+      }
+    }
     const hash = body.password ? await hashPassword(body.password) : user.password_hash
     // checked again inside: the address could have been taken while the password was hashing
     const updated = await db.tx(async () => {
       if (await db.one('SELECT 1 FROM users WHERE email = ? AND id != ?', body.email, user.id)) throw new HttpError(409, 'That email already has an account')
-      await db.run('UPDATE users SET email = ?, password_hash = ? WHERE id = ?', body.email, hash, user.id)
+      await db.run('UPDATE users SET email = ?, password_hash = ?, email_verified_at = ? WHERE id = ?', body.email, hash, moving ? Date.now() : user.email_verified_at, user.id)
+      if (codeId) await spendCode(db, codeId)
       if (body.password) {
         // signs out everywhere else, in case the old password was the problem
         await db.run('DELETE FROM sessions WHERE user_id = ?', user.id)
@@ -291,7 +366,7 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
       return (await db.one<UserRow>('SELECT * FROM users WHERE id = ?', user.id))!
     })
     await publishAll(db, await store.linkWaitingSeats(db, updated))
-    track('auth.account_changed', { ...from(c.req, user.id), subject: user.id, detail: { emailChanged: updated.email !== user.email, passwordSet: Boolean(body.password) } })
+    track('auth.account_changed', { ...from(c.req, user.id), subject: user.id, detail: { emailChanged: moving, passwordSet: Boolean(body.password) } })
     return { user: toAccount(updated) }
   })
 

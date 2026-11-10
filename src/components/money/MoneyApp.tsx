@@ -25,37 +25,68 @@ const errorText = (err: unknown) => (err instanceof NetworkError ? 'You seem to 
 // ── signing in ────────────────────────────────────────────────────────────────
 
 export function AuthScreen({ inviteName, onDone }: { inviteName?: string; onDone: (a: Account) => void }) {
-  // Your email is your account. The server says if it needs anything more: a name for a
-  // new address, or the password on an account that has added one.
-  const [step, setStep] = useState<'email' | 'name' | 'password'>('email')
+  // Your email is your account, and it has to be yours: every sign-up and sign-in sends a code
+  // there. A new address asks for a name first; an account with a password asks for that too.
+  const [step, setStep] = useState<'email' | 'name' | 'code'>('email')
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
+  const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
+  const [needsPassword, setNeedsPassword] = useState(false)
+  const [resendAt, setResendAt] = useState(0)
+  const [now, setNow] = useState(Date.now())
+  const [note, setNote] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (step !== 'code') return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [step])
 
+  // the email (and name): asks for a code
+  const ask = async () => {
+    const out = await api<{ next: 'name' | 'code'; password?: boolean; resendIn?: number; sent?: boolean }>('POST', '/auth/email', {
+      email: email.trim(),
+      ...(step === 'name' ? { name: name.trim() } : {}),
+    })
+    if (out.next === 'name') { setStep('name'); return }
+    setNeedsPassword(Boolean(out.password))
+    setResendAt(Date.now() + (out.resendIn ?? 30) * 1000)
+    setNote(out.sent === false ? `We sent a code to ${email.trim()} a moment ago. Use that one.` : `We sent a 6-digit code to ${email.trim()}.`)
+    setStep('code')
+  }
+  const verify = async () => {
+    const out = await api<{ user?: Account; next?: 'password' }>('POST', '/auth/verify', { email: email.trim(), code: code.trim(), ...(password ? { password } : {}) })
+    if (out.user) onDone(out.user)
+    else if (out.next === 'password') setNeedsPassword(true)
+  }
   const submit = async () => {
     setBusy(true)
     setError('')
     try {
-      const out = await api<{ user?: Account; next?: 'name' | 'password' }>('POST', '/auth/email', {
-        email: email.trim(),
-        ...(step === 'name' ? { name: name.trim() } : {}),
-        ...(step === 'password' ? { password } : {}),
-      })
-      if (out.user) onDone(out.user)
-      else if (out.next) setStep(out.next)
+      if (step === 'code') await verify()
+      else await ask()
     } catch (err) {
       setError(errorText(err))
     } finally {
       setBusy(false)
     }
   }
+  const resend = async () => {
+    setError('')
+    setCode('')
+    try { await ask() } catch (err) { setError(errorText(err)) }
+  }
   const back = () => {
     setStep('email')
+    setCode('')
     setPassword('')
+    setNeedsPassword(false)
+    setNote('')
     setError('')
   }
+  const wait = Math.max(0, Math.ceil((resendAt - now) / 1000))
 
   return (
     <div className="m-center">
@@ -64,13 +95,13 @@ export function AuthScreen({ inviteName, onDone }: { inviteName?: string; onDone
         {inviteName && <span className="eyebrow">You’re invited</span>}
         <h1>
           {step === 'name' ? 'Nice to meet you'
-            : step === 'password' ? 'Welcome back'
+            : step === 'code' ? 'Check your email'
             : inviteName ? <>Join <em>{inviteName}</em></>
             : <>Plan together. <em>Split it fairly.</em></>}
         </h1>
 
         {step === 'email' && (
-          <Field label="Email" hint="Nothing to confirm. Use it on any device.">
+          <Field label="Email" hint="We’ll email you a code to confirm it’s you.">
             <input type="email" autoFocus required value={email} maxLength={200} onChange={e => setEmail(e.target.value)} autoComplete="email" inputMode="email" placeholder="you@example.com" />
           </Field>
         )}
@@ -79,14 +110,29 @@ export function AuthScreen({ inviteName, onDone }: { inviteName?: string; onDone
             <input autoFocus required value={name} maxLength={60} onChange={e => setName(e.target.value)} autoComplete="given-name" placeholder="Your name" />
           </Field>
         )}
-        {step === 'password' && (
-          <Field label={`Password for ${email.trim()}`}>
-            <input type="password" autoFocus required value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" />
-          </Field>
+        {step === 'code' && (
+          <>
+            {note && <p className="m-note">{note} It works for 10 minutes.</p>}
+            <Field label="Code">
+              <input className="m-code" autoFocus required value={code} onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" placeholder="123456" aria-label="6-digit code" />
+            </Field>
+            {needsPassword && (
+              <Field label="Password">
+                <input type="password" required value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" />
+              </Field>
+            )}
+          </>
         )}
 
         {error && <p className="m-note bad" role="alert">{error}</p>}
-        <button className="cta" disabled={busy}>{busy ? 'One moment…' : step === 'email' ? 'Continue' : step === 'name' ? 'Get started' : 'Sign in'}</button>
+        <button className="cta" disabled={busy || (step === 'code' && code.length !== 6)}>{busy ? 'One moment…' : step === 'email' ? 'Continue' : step === 'name' ? 'Send my code' : 'Sign in'}</button>
+        {step === 'code' && (
+          <p className="m-note">
+            No email? Check spam, or{' '}
+            {wait > 0 ? <span>ask for a new code in {wait}s</span> : <button type="button" className="m-link" onClick={resend}>send a new code</button>}.
+          </p>
+        )}
         {step !== 'email' && <p className="m-note">Not {email.trim()}? <button type="button" className="m-link" onClick={back}>Use a different email</button></p>}
       </form>
     </div>

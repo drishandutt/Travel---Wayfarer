@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { signInVia } from './signInForTests'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -72,8 +73,8 @@ class Person {
 async function person(name: string): Promise<Person> {
   const p = new Person()
   p.email = `${name.toLowerCase()}-${randomUUID()}@example.com`
-  const out = await p.ok<{ user: { id: string } }>('POST', '/auth/email', { email: p.email, name })
-  p.id = out.user.id
+  const out = await signInVia((m, path, b) => p.call(m, path, b), p.email, name)
+  p.id = out.id
   return p
 }
 

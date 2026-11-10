@@ -233,6 +233,9 @@ export function AccountCard({ className = 'span-6' }: { className?: string }) {
   const [current, setCurrent] = useState('')
   const [msg, setMsg] = useState<{ good: boolean; text: string } | null>(null)
   const [showSecure, setShowSecure] = useState(false)
+  // a new address is confirmed with a code sent to it before anything changes
+  const [code, setCode] = useState('')
+  const [codeFor, setCodeFor] = useState<string | null>(null)
 
   const saveProfile = async () => {
     try {
@@ -245,10 +248,19 @@ export function AccountCard({ className = 'span-6' }: { className?: string }) {
   }
   const secure = async () => {
     try {
-      const { user } = await api<{ user: Account }>('POST', '/auth/secure', { email: email.trim(), password: password || undefined, current: current || undefined })
-      signedIn(user)
+      const to = email.trim()
+      const out = await api<{ user?: Account; next?: 'code'; sent?: boolean }>('POST', '/auth/secure', { email: to, password: password || undefined, current: current || undefined, ...(codeFor === to && code ? { code } : {}) })
+      if (out.next === 'code') {
+        setCodeFor(to)
+        setCode('')
+        setMsg({ good: true, text: out.sent === false ? `We sent a code to ${to} a moment ago. Type it in below.` : `We sent a 6-digit code to ${to}. Type it in below to confirm it’s yours.` })
+        return
+      }
+      signedIn(out.user!)
       setPassword('')
       setCurrent('')
+      setCode('')
+      setCodeFor(null)
       setShowSecure(false)
       setMsg({ good: true, text: 'Saved' })
     } catch (err) {
@@ -261,9 +273,8 @@ export function AccountCard({ className = 'span-6' }: { className?: string }) {
       <header className="card-head"><h2>Account</h2></header>
       <p className="m-note">Signed in as <b>{account.email}</b>.</p>
       {!account.hasPassword && (
-        <p className="m-banner warn">
-          Sign-in only asks for an email, so anyone who knows yours can sign in as you and see your private expenses.{' '}
-          <button className="m-link" onClick={() => setShowSecure(true)}>Add a password</button> to stop that.
+        <p className="m-note">
+          Signing in takes a code sent to your email. For a second lock, <button className="m-link" onClick={() => setShowSecure(true)}>add a password</button> too.
         </p>
       )}
       <form className="m-stack" onSubmit={e => { e.preventDefault(); saveProfile() }}>
@@ -274,7 +285,10 @@ export function AccountCard({ className = 'span-6' }: { className?: string }) {
       {!showSecure && <p className="m-note"><button className="m-link" onClick={() => setShowSecure(true)}>{account.hasPassword ? 'Change email or password' : 'Change email'}</button></p>}
       {showSecure && (
         <form className="m-stack m-secure" onSubmit={e => { e.preventDefault(); secure() }}>
-          <Field label="Email"><input type="email" required value={email} maxLength={200} onChange={e => setEmail(e.target.value)} autoComplete="email" /></Field>
+          <Field label="Email" hint={email.trim().toLowerCase() !== account.email ? 'We’ll send a code to the new address to confirm it’s yours.' : undefined}><input type="email" required value={email} maxLength={200} onChange={e => { setEmail(e.target.value); setCodeFor(null) }} autoComplete="email" /></Field>
+          {codeFor && codeFor === email.trim() && (
+            <Field label={`Code sent to ${codeFor}`}><input required value={code} onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder="123456" /></Field>
+          )}
           {account.hasPassword && <Field label="Current password"><input type="password" required value={current} onChange={e => setCurrent(e.target.value)} autoComplete="current-password" /></Field>}
           <Field label={account.hasPassword ? 'New password' : 'Password'} hint={`Optional. At least 8 characters. There’s no reset by email, so keep it somewhere safe.`}><input type="password" minLength={8} value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" /></Field>
           <div className="m-form-actions">

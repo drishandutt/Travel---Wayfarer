@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { signInVia } from './signInForTests'
+import { lastCode, lastMail } from '../mail'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -61,12 +63,20 @@ class Person {
     return data
   }
   state(groupId: string) { return this.ok<GroupState>('GET', `/groups/${groupId}`) }
+  // the whole sign-in: email, name for a new account, the emailed code, a password if set
+  signIn(email: string, name?: string, password?: string) { return signInVia((m, path, b) => this.call(m, path, b), email, name, password) }
+  // moving the account to a new address, confirmed with the code sent there
+  async moveTo(address: string, extra: Record<string, unknown> = {}) {
+    const first = await this.ok<{ next?: string }>('POST', '/auth/secure', { email: address, ...extra })
+    assert.equal(first.next, 'code')
+    return this.ok<{ user: { email: string } }>('POST', '/auth/secure', { email: address, code: lastCode(address), ...extra })
+  }
 }
 
 async function person(name: string): Promise<Person> {
   const p = new Person()
   p.email = `${name.toLowerCase().replace(/\W+/g, '')}-${randomUUID()}@example.com`
-  await p.ok('POST', '/auth/email', { email: p.email, name })
+  await p.signIn(p.email, name)
   return p
 }
 
@@ -88,44 +98,92 @@ async function trio() {
 }
 
 describe('accounts', () => {
-  it('starts with just an email and a name, stays signed in, and signs out', async () => {
+  it('signs up with an email, a name and the code sent there, stays signed in, and signs out', async () => {
     const p = new Person()
     const mail = `${randomUUID()}@example.com`
     assert.equal((await p.call('GET', '/groups')).status, 401)
     assert.deepEqual(await p.ok('POST', '/auth/email', { email: mail }), { next: 'name' })
-    assert.equal((await p.call('GET', '/groups')).status, 401, 'asking for a name signs nobody in')
-    const { user } = await p.ok<{ user: { name: string; email: string; hasPassword: boolean } }>('POST', '/auth/email', { email: mail, name: '  Dev  ' })
+    const asked = await p.ok<{ next: string; password: boolean; resendIn: number; sent: boolean }>('POST', '/auth/email', { email: mail, name: '  Dev  ' })
+    assert.deepEqual(asked, { next: 'code', password: false, resendIn: 30, sent: true })
+    assert.equal((await p.call('GET', '/groups')).status, 401, 'asking for a code signs nobody in')
+    assert.equal(await db.one('SELECT 1 FROM users WHERE email = ?', mail), undefined, 'no account until the code is right')
+    assert.match(lastMail(mail)!.subject, /^\d{6} is your Wayfarer code$/)
+    const { user } = await p.ok<{ user: { name: string; email: string; hasPassword: boolean } }>('POST', '/auth/verify', { email: mail, code: lastCode(mail) })
     assert.equal(user.name, 'Dev')
     assert.equal(user.email, mail)
     assert.equal(user.hasPassword, false)
+    assert.ok((await db.one<{ email_verified_at: number }>('SELECT email_verified_at FROM users WHERE email = ?', mail))!.email_verified_at)
     assert.equal((await p.call('GET', '/groups')).status, 200)
     await p.ok('POST', '/auth/logout', {})
     assert.equal((await p.call('GET', '/groups')).status, 401)
   })
 
-  it('the same email reaches the same account from any device, with nothing to confirm', async () => {
+  it('every sign-in needs a fresh code from the inbox, on any device', async () => {
     const phone = await person('Dev')
     const g = await phone.ok<GroupState>('POST', '/groups', { name: 'Kept', currency: 'USD' })
     const laptop = new Person()
-    await laptop.ok('POST', '/auth/email', { email: phone.email.toUpperCase() })
+    assert.equal((await laptop.ok<{ next: string }>('POST', '/auth/email', { email: phone.email.toUpperCase() })).next, 'code')
+    assert.equal((await laptop.call('GET', '/groups')).status, 401, 'knowing the address is no longer enough')
+    await laptop.signIn(phone.email)
     const { groups } = await laptop.ok<{ groups: GroupSummary[] }>('GET', '/groups')
     assert.deepEqual(groups.map(x => x.id), [g.group.id])
     assert.equal((await laptop.state(g.group.id)).me, g.me)
+  })
+
+  it('a code works once, only the newest one works, and wrong ones run out', async () => {
+    const a = await person('A')
+    const p = new Person()
+    await p.ok('POST', '/auth/email', { email: a.email })
+    const first = lastCode(a.email)!
+    // asking again straight away keeps the same code
+    assert.equal((await p.ok<{ sent: boolean; resendIn: number }>('POST', '/auth/email', { email: a.email })).sent, false)
+    assert.equal(lastCode(a.email), first)
+    const wrong = first === '000000' ? '111111' : '000000'
+    const tries: number[] = []
+    for (let i = 0; i < 6; i++) tries.push((await p.call('POST', '/auth/verify', { email: a.email, code: wrong })).status)
+    assert.deepEqual(tries, [401, 401, 401, 401, 401, 429])
+    assert.equal((await p.call('POST', '/auth/verify', { email: a.email, code: first })).status, 429, 'used up, even the right one')
+    await db.run('UPDATE email_codes SET created_at = created_at - 60000 WHERE email = ?', a.email)
+    assert.equal((await p.ok<{ sent: boolean }>('POST', '/auth/email', { email: a.email })).sent, true)
+    const fresh = lastCode(a.email)!
+    await p.ok('POST', '/auth/verify', { email: a.email, code: fresh })
+    assert.equal((await new Person().call('POST', '/auth/verify', { email: a.email, code: fresh })).status, 400, 'once')
+    assert.equal((await p.call('POST', '/auth/verify', { email: a.email, code: '12345' })).status, 400, 'six digits')
+  })
+
+  it('a code expires', async () => {
+    const a = await person('A')
+    const p = new Person()
+    await p.ok('POST', '/auth/email', { email: a.email })
+    await db.run('UPDATE email_codes SET expires_at = 1 WHERE email = ? AND used_at IS NULL', a.email)
+    const r = await p.call<{ error: string }>('POST', '/auth/verify', { email: a.email, code: lastCode(a.email) })
+    assert.equal(r.status, 400)
+    assert.match(r.data.error, /expired/)
+  })
+
+  it('accounts and sessions from before verification open nothing until the address is confirmed', async () => {
+    const a = await person('Old')
+    await db.run('UPDATE users SET email_verified_at = NULL WHERE email = ?', a.email)
+    assert.equal((await a.call('GET', '/groups')).status, 401)
+    await a.signIn(a.email)
+    assert.equal((await a.call('GET', '/groups')).status, 200)
   })
 
   it('refuses what isn’t an email', async () => {
     for (const bad of ['', 'nope', 'a@', '@b.com']) assert.equal((await new Person().call('POST', '/auth/email', { email: bad, name: 'A' })).status, 400, bad)
   })
 
-  it('a password, once added, is required', async () => {
+  it('a password, once added, is asked for after the code', async () => {
     const phone = await person('Dev')
     await phone.ok('POST', '/auth/secure', { email: phone.email, password: 'long enough pw' })
     const laptop = new Person()
-    assert.deepEqual(await laptop.ok('POST', '/auth/email', { email: phone.email }), { next: 'password' })
+    assert.equal((await laptop.ok<{ password: boolean }>('POST', '/auth/email', { email: phone.email })).password, true)
+    const code = lastCode(phone.email)
+    assert.deepEqual(await laptop.ok('POST', '/auth/verify', { email: phone.email, code }), { next: 'password' })
     assert.equal((await laptop.call('GET', '/groups')).status, 401)
-    assert.equal((await laptop.call('POST', '/auth/email', { email: phone.email, password: 'wrong password' })).status, 401)
+    assert.equal((await laptop.call('POST', '/auth/verify', { email: phone.email, code, password: 'wrong password' })).status, 401)
     assert.equal((await laptop.call('GET', '/groups')).status, 401)
-    await laptop.ok('POST', '/auth/email', { email: phone.email, password: 'long enough pw' })
+    await laptop.ok('POST', '/auth/verify', { email: phone.email, code, password: 'long enough pw' })
     assert.equal((await laptop.call('GET', '/groups')).status, 200)
   })
 
@@ -140,46 +198,61 @@ describe('accounts', () => {
     assert.equal((await b.call('POST', '/auth/secure', { email: a.email })).status, 409)
     const sessions = await db.all<{ token_hash: string }>('SELECT token_hash FROM sessions')
     assert.ok(!sessions.some(x => a.cookie.includes(x.token_hash)), 'session tokens are stored hashed')
+    const codes = await db.all<{ code_hash: string }>('SELECT code_hash FROM email_codes')
+    assert.ok(codes.every(c => /^[0-9a-f]{64}$/.test(c.code_hash)), 'codes are stored hashed')
   })
 
   it('changing a password needs the current one and signs out other devices', async () => {
     const a = await person('Dev')
     await a.ok('POST', '/auth/secure', { email: a.email, password: 'first password' })
     const b = new Person()
-    await b.ok('POST', '/auth/email', { email: a.email, password: 'first password' })
+    await b.signIn(a.email, undefined, 'first password')
     assert.equal((await a.call('POST', '/auth/secure', { email: a.email, password: 'second password', current: 'nope' })).status, 403)
     await a.ok('POST', '/auth/secure', { email: a.email, password: 'second password', current: 'first password' })
     assert.equal((await b.call('GET', '/groups')).status, 401)
     assert.equal((await a.call('GET', '/groups')).status, 200)
   })
 
-  it('changing your email moves the account, and the old address opens nothing', async () => {
+  it('changing your email needs a code from the new address, then moves the account', async () => {
     const a = await person('Dev')
     const g = await a.ok<GroupState>('POST', '/groups', { name: 'Kept', currency: 'USD' })
     const moved = `${randomUUID()}@example.com`
-    await a.ok('POST', '/auth/secure', { email: moved })
+    assert.equal((await a.ok<{ next: string }>('POST', '/auth/secure', { email: moved })).next, 'code')
+    assert.equal((await db.one<{ email: string }>('SELECT email FROM users WHERE email = ?', a.email))?.email, a.email, 'nothing moves yet')
+    assert.equal((await a.call('POST', '/auth/secure', { email: moved, code: lastCode(moved) === '000000' ? '111111' : '000000' })).status, 401)
+    await a.ok('POST', '/auth/secure', { email: moved, code: lastCode(moved) })
     const elsewhere = new Person()
-    await elsewhere.ok('POST', '/auth/email', { email: moved })
+    await elsewhere.signIn(moved)
     assert.equal((await elsewhere.state(g.group.id)).me, g.me)
     assert.deepEqual(await new Person().ok('POST', '/auth/email', { email: a.email }), { next: 'name' })
   })
 
-  it('slows down password guessing', async () => {
+  it('slows down password guessing, even with the code', async () => {
     const owner = await person('A')
     await owner.ok('POST', '/auth/secure', { email: owner.email, password: 'correct horse' })
     const attacker = new Person()
+    await attacker.ok('POST', '/auth/email', { email: owner.email })
+    const code = lastCode(owner.email)
     const codes: number[] = []
-    for (let i = 0; i < 10; i++) codes.push((await attacker.call('POST', '/auth/email', { email: owner.email, password: `guess number ${i}` })).status)
+    for (let i = 0; i < 10; i++) codes.push((await attacker.call('POST', '/auth/verify', { email: owner.email, code, password: `guess number ${i}` })).status)
     assert.deepEqual(codes.slice(0, 8), Array(8).fill(401))
     assert.equal(codes[9], 429)
-    assert.equal((await attacker.call('POST', '/auth/email', { email: owner.email, password: 'correct horse' })).status, 429, 'even the right one, until it cools down')
+    assert.equal((await attacker.call('POST', '/auth/verify', { email: owner.email, code, password: 'correct horse' })).status, 429, 'even the right one, until it cools down')
   })
 
-  it('limits how many accounts one address can create', async () => {
+  it('limits how many accounts one address can start, and how many codes one inbox gets', async () => {
     const codes: number[] = []
     for (let i = 0; i < 31; i++) codes.push((await new Person().call('POST', '/auth/email', { email: `bot${i}-${randomUUID()}@example.com`, name: `Bot ${i}` })).status)
     assert.equal(codes[29], 200)
     assert.equal(codes[30], 429)
+    resetLimits()
+    const inbox = `${randomUUID()}@example.com`
+    const sends: number[] = []
+    for (let i = 0; i < 9; i++) {
+      await db.run('UPDATE email_codes SET created_at = created_at - 60000 WHERE email = ?', inbox)
+      sends.push((await new Person().call('POST', '/auth/email', { email: inbox, name: 'Spam' })).status)
+    }
+    assert.deepEqual(sends, [...Array(8).fill(200), 429])
   })
 })
 
@@ -194,7 +267,7 @@ describe('access by email', () => {
     await asha.ok('POST', `/groups/${groupId}/expenses`, expenseBody({ amount: 2000, payers: [{ memberId: A, amount: 2000 }], split: equalBetween(A, memberId) }))
 
     const priya = new Person()
-    await priya.ok('POST', '/auth/email', { email: mail, name: 'Priya' })
+    await priya.signIn(mail, 'Priya')
     const { groups } = await priya.ok<{ groups: GroupSummary[] }>('GET', '/groups')
     assert.deepEqual(groups.map(g => g.id), [groupId])
     const s = await priya.state(groupId)
@@ -263,10 +336,10 @@ describe('access by email', () => {
     const { memberId } = await asha.ok<{ memberId: string }>('POST', `/groups/${groupId}/members`, { name: 'Priya', email: typo })
     await asha.ok('PATCH', `/groups/${groupId}/members/${memberId}`, { email: right })
     const stranger = new Person()
-    await stranger.ok('POST', '/auth/email', { email: typo, name: 'Stranger' })
+    await stranger.signIn(typo, 'Stranger')
     assert.equal((await stranger.call('GET', `/groups/${groupId}`)).status, 404)
     const priya = new Person()
-    await priya.ok('POST', '/auth/email', { email: right, name: 'Priya' })
+    await priya.signIn(right, 'Priya')
     assert.equal((await priya.state(groupId)).me, memberId)
   })
 
@@ -286,7 +359,7 @@ describe('access by email', () => {
     assert.equal(g.members.length, 4, 'owner, dev, waiting, Cara: no duplicates, and not the owner twice')
     assert.equal((await dev.state(g.group.id)).group.id, g.group.id)
     const newcomer = new Person()
-    await newcomer.ok('POST', '/auth/email', { email: waiting, name: 'New' })
+    await newcomer.signIn(waiting, 'New')
     assert.equal((await newcomer.state(g.group.id)).group.id, g.group.id)
     assert.equal((await owner.call('POST', '/groups', { name: 'G', currency: 'USD', members: ['bad@'] })).status, 400)
   })
@@ -296,7 +369,7 @@ describe('access by email', () => {
     const address = `${randomUUID()}@example.com`
     const { memberId } = await asha.ok<{ memberId: string }>('POST', `/groups/${groupId}/members`, { email: address })
     const dev = await person('Dev')
-    await dev.ok('POST', '/auth/secure', { email: address })
+    await dev.moveTo(address)
     assert.equal((await dev.state(groupId)).me, memberId)
   })
 
@@ -304,7 +377,7 @@ describe('access by email', () => {
     const { asha, ben, groupId, B } = await trio()
     const address = `${randomUUID()}@example.com`
     await asha.ok('POST', `/groups/${groupId}/members`, { name: 'Ben again', email: address })
-    await ben.ok('POST', '/auth/secure', { email: address })
+    await ben.moveTo(address)
     const s = await ben.state(groupId)
     assert.equal(s.me, B)
     assert.equal(s.members.filter(m => m.joined && m.name.startsWith('Ben')).length, 1)
@@ -314,7 +387,7 @@ describe('access by email', () => {
     const { asha, ben, groupId, B } = await trio()
     await asha.ok('DELETE', `/groups/${groupId}/members/${B}`)
     const again = new Person()
-    await again.ok('POST', '/auth/email', { email: ben.email })
+    await again.signIn(ben.email)
     assert.equal((await again.call('GET', `/groups/${groupId}`)).status, 404)
     const { memberId } = await asha.ok<{ memberId: string }>('POST', `/groups/${groupId}/members`, { email: ben.email })
     assert.equal(memberId, B)
@@ -327,7 +400,7 @@ describe('access by email', () => {
     const { memberId } = await asha.ok<{ memberId: string }>('POST', `/groups/${groupId}/members`, { email: address })
     await asha.ok('DELETE', `/groups/${groupId}/members/${memberId}`)
     const late = new Person()
-    await late.ok('POST', '/auth/email', { email: address, name: 'Late' })
+    await late.signIn(address, 'Late')
     assert.equal((await late.call('GET', `/groups/${groupId}`)).status, 404)
   })
 

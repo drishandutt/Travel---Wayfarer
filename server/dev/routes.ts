@@ -12,6 +12,8 @@ import { ShareError, readShare } from '../share/read'
 import { listCookieSites, parseCookies, saveCookies } from './cookies'
 import { clip, flush, record, type Level } from './log'
 import { checkOpenAIKey, openaiKeyInfo, setOpenAIKey } from '../openai'
+import { isDevAdmin } from './owner'
+import { mailConfigured } from '../mail'
 import { OPENAI_KEY, setSetting, settingMeta } from './settings'
 import { cleanDetail, from, parseDetail, queryActivity, track } from './activity'
 import { analyse, analystEnabled, digest, listReports, pseudonym, userProfile } from './analyst'
@@ -22,16 +24,14 @@ import { buildStatus } from '../cities/store'
 import { CITIES } from '../../src/data/cities'
 
 // The dev tools' API, under /api/money/dev (where the sign-in cookie goes), and the share
-// reader's. Only the people in WAYFARER_DEV_EMAILS get the dev tools; the extension signs
+// reader's. Only the owner's account gets the dev tools (./owner.ts); the extension signs
 // in with a token made in them instead.
 
 interface Ctx { req: IncomingMessage; res: ServerResponse; url: URL; params: string[]; user: UserRow | null }
 
 const PRODUCTION = process.env.NODE_ENV === 'production'
-// Whose dev tools these are. In dev with nothing set, anyone signed in, so it can be tried out.
-const DEFAULT_ADMINS = ['drishandutt9@gmail.com']
-const admins = () => (process.env.WAYFARER_DEV_EMAILS ?? DEFAULT_ADMINS.join(',')).split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
-export const isDevAdmin = (u: UserRow | null) => Boolean(u && (admins().includes(u.email) || (!PRODUCTION && !process.env.WAYFARER_DEV_EMAILS)))
+// Whose dev tools these are: one account, by id (./owner.ts). Nobody else, in development too.
+export { isDevAdmin }
 
 const tokenHash = (t: string) => createHash('sha256').update(t).digest('hex')
 
@@ -101,7 +101,8 @@ export function registerDevRoutes(
     return {
       browser: chromiumPath(),
       ai: brainEnabled ? 'claude' : openaiEnabled ? 'openai' : null,
-      admins: process.env.WAYFARER_DEV_EMAILS ? 'WAYFARER_DEV_EMAILS' : PRODUCTION ? 'built-in list' : 'anyone signed in (dev)',
+      owner: process.env.WAYFARER_OWNER_ID ? 'WAYFARER_OWNER_ID' : 'the first verified sign-in as the owner’s address',
+      mail: mailConfigured() ? 'resend' : PRODUCTION ? null : 'console (dev)',
       uptime: Math.round(process.uptime()),
       memory: Math.round(process.memoryUsage().rss / 1024 / 1024),
     }

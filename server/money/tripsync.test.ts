@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { signInVia } from './signInForTests'
 import { mkdtempSync, rmSync } from 'node:fs'
 import http, { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -107,7 +108,7 @@ class Person {
 async function person(name: string) {
   const p = new Person()
   p.email = `${name}${++n}@example.com`
-  await p.call('POST', '/auth/email', { email: p.email, name })
+  await signInVia((m, path, b) => p.call(m, path, b), p.email, name)
   return p
 }
 

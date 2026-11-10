@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { signInVia } from './signInForTests'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -65,7 +66,7 @@ class Person {
 async function person(name: string): Promise<Person> {
   const p = new Person()
   p.email = `${name.toLowerCase()}-${randomUUID()}@example.com`
-  await p.ok('POST', '/auth/email', { email: p.email, name })
+  await signInVia((m, path, b) => p.call(m, path, b), p.email, name)
   return p
 }
 
@@ -168,9 +169,18 @@ describe('moving the live data from SQLite', () => {
     try {
       await importSqliteOnce(fresh, oldFile())
       const url = `http://localhost:${(local.address() as { port: number }).port}/api/money`
-      const signIn = await fetch(`${url}/auth/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'OLD@example.com' }) })
-      const cookie = signIn.headers.get('set-cookie')!.split(';')[0]
-      assert.equal((await signIn.json() as { user: { id: string } }).user.id, 'u1')
+      // a session from before email codes opens nothing until the address is confirmed
+      let cookie = ''
+      const send = async (method: string, path: string, body?: unknown) => {
+        const res = await fetch(`${url}${path}`, { method, headers: { 'Content-Type': 'application/json', ...(cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) })
+        const set = res.headers.get('set-cookie')
+        if (set) cookie = set.split(';')[0]
+        const text = await res.text()
+        return { status: res.status, data: text ? JSON.parse(text) : {} }
+      }
+      assert.equal((await fetch(`${url}/groups`, { headers: { cookie: 'wf_session=whatever' } })).status, 401)
+      const me = await signInVia(send, 'OLD@example.com')
+      assert.equal(me.id, 'u1')
       const get = async <T>(path: string) => await (await fetch(`${url}${path}`, { headers: { cookie } })).json() as T
       const [summary] = (await get<{ groups: GroupSummary[] }>('/groups')).groups
       assert.deepEqual({ name: summary.name, role: summary.role, phase: summary.phase, myNet: summary.myNet }, { name: 'Old trip', role: 'owner', phase: 'swipe', myNet: 150000 })
@@ -179,7 +189,9 @@ describe('moving the live data from SQLite', () => {
       assert.deepEqual(state.comments.map(c => c.body), ['thanks!'])
       // the seat waiting for an address is still waiting, and joins when that address signs up
       assert.equal(state.members.find(m => m.id === 'm3')!.joined, false)
-      await fetch(`${url}/auth/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'later@example.com', name: 'Later' }) })
+      const mine = cookie
+      await signInVia(async (method, path, body) => { const res = await fetch(`${url}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return { status: res.status, data: await res.json() } }, 'later@example.com', 'Later')
+      cookie = mine
       assert.equal((await get<GroupState>('/groups/g1')).members.find(m => m.id === 'm3')!.joined, true)
     } finally {
       local.closeAllConnections()
@@ -240,7 +252,7 @@ describe('the admin runs the trip', () => {
     const { groupId, pending, publish } = await trip()
     await publish()
     const newcomer = new Person()
-    await newcomer.ok('POST', '/auth/email', { email: pending, name: 'New' })
+    await signInVia((m, path, b) => newcomer.call(m, path, b), pending, 'New')
     assert.equal((await read(newcomer, groupId)).plan?.phase, 'swipe')
   })
 

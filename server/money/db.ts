@@ -467,6 +467,35 @@ export const MIGRATIONS = [`
       REVOKE ALL ON SEQUENCE activity_events_id_seq FROM anon, authenticated;
     END IF;
   END $$;
+`, `
+  -- Email verification is required. An account is verified once its owner types a code sent
+  -- to its address; until then its sessions open nothing.
+  ALTER TABLE users ADD COLUMN email_verified_at BIGINT;
+
+  -- Codes sent by email: to sign in or up, or to move an account to a new address. Only a hash
+  -- is kept. name is the name a new account asked for, made once the code is right.
+  CREATE TABLE email_codes (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL CHECK (email = lower(email)),
+    purpose TEXT NOT NULL CHECK (purpose IN ('signin', 'signup', 'change')),
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT,
+    code_hash TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    used_at BIGINT,
+    ip TEXT
+  );
+  CREATE INDEX email_codes_email ON email_codes(email, created_at DESC);
+
+  ALTER TABLE email_codes ENABLE ROW LEVEL SECURITY;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON email_codes FROM anon, authenticated;
+    END IF;
+  END $$;
 `]
 
 // A transaction is one connection, and one connection runs one query at a time: reads that

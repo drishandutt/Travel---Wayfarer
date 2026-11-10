@@ -479,3 +479,6 @@ li:first-child > .m-exp { border-top: 0; }
 @media (prefers-reduced-motion: reduce) {
   .m-debt-arc svg, .m-debt-head, .m-live.live i, .m-page, .m-toast, .m-modal { animation: none; }
 }
+
+/* the emailed sign-in code */
+.m-code { font-size: 22px !important; letter-spacing: .35em; font-variant-numeric: tabular-nums; text-align: center; }
