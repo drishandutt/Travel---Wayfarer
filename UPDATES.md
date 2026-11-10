@@ -4,6 +4,7 @@ Raw notes on feature ideas as they come up. The organised master list is [FEATUR
 
 ## 2026-11-09
 
+- **Admins can delete shared trips** from My trips (the ✕ on a trip you run). It goes for everyone: the plan, votes, chat and shared expenses. With anyone else in it, or money spent, you type the trip's name first.
 - **Tune the trip after it's planned.** Over a drawn plan, *Tune the trip* in the chat opens the same sliders. *Show me options* doesn't choose for you: the days keep their places and re-time to the new pace, start and walking, and a deck of places and food that fit the new settings opens to swipe. Only what you keep is added. “Undo” brings the old settings back.
 - **Two decks: places, then food and drink.** The swipe deck deals places first, then food and drink, with a tab for each showing its progress, so you can switch between them. Between the two there's a pause to swipe food or skip it. Food cards show which meal they suit and their cuisine.
 - **Nine more sliders** under *More ways to tune*: pace, early bird ↔ night owl, plan ↔ wander, walking, food focus, crowds, where the money goes (stay vs days), chill ↔ adventurous, and kids. Each changes the plan: stops per day, start time, breaks, how far it walks before a ride, visit length, which places score up, and which hotel fits. Untouched, they change nothing. The Claude planner and the assistant are told which ones were moved, in words.

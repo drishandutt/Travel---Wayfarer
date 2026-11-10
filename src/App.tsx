@@ -593,6 +593,37 @@ function TripApp({ acct }: { acct: AccountHandle }) {
 
   const removeTrip = (id: string) => setTrips(deleteTrip(id))
 
+  // An admin deleting a shared trip: it goes for everyone (plan, votes, chat and shared
+  // expenses), and so do this browser's copies of it. With anyone else in it, or money spent,
+  // they type its name first, as deleting the group from Money asks.
+  const deleteShared = async (g: GroupSummary) => {
+    const others = g.memberCount > 1 || g.total > 0
+    if (others) {
+      const typed = prompt(`This deletes “${g.name}” for all ${g.memberCount} ${g.memberCount === 1 ? 'person' : 'people'}: the plan, votes, chat${g.total > 0 ? ' and every shared expense' : ''}. It can’t be undone. Type the trip’s name to confirm.`)
+      if (typed === null) return
+      if (typed.trim() !== g.name) { toast('That didn’t match, so nothing was deleted'); return }
+    } else if (!confirm(`Delete “${g.name}”? It can’t be undone.`)) return
+    try {
+      await api('DELETE', `/groups/${g.id}`)
+    } catch (err) {
+      toast((err as Error).message)
+      return
+    }
+    let left = trips
+    for (const t of trips.filter(t => t.brief.moneyGroupId === g.id)) left = deleteTrip(t.id)
+    setTrips(left)
+    if (activeGroup === g.id) {
+      abort.current?.abort()
+      setActiveGroup(null)
+      saveCurrent(null)
+      dispatch({ type: 'reset' })
+    } else if (latest.current.brief.moneyGroupId === g.id) {
+      dispatch({ type: 'brief', brief: { ...latest.current.brief, moneyGroupId: undefined } })
+    }
+    refreshGroups().catch(() => {})
+    toast(`Deleted “${g.name}” for everyone`)
+  }
+
   // A clean slate (New trip, Start over). Your plan so far stays in My trips rather than disappearing.
   const newTrip = () => {
     abort.current?.abort()
@@ -788,7 +819,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         : { left: tucked.chat && state.phase !== 'swipe' ? 60 : 440, right: tucked.journal || state.phase === 'intake' ? 60 : 460 }} />
       <div className="vignette" />
 
-      <TopBar state={state} brain={brain} trips={trips} onOpen={openTrip} onDelete={removeTrip} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} moneyBadge={moneyBadge} onPhotos={() => setVaultOpen({})}
+      <TopBar state={state} brain={brain} trips={trips}  onOpen={openTrip} onDelete={removeTrip} onDeleteGroup={account ? deleteShared : undefined} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} moneyBadge={moneyBadge} onPhotos={() => setVaultOpen({})}
         groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} email={account?.email ?? null} onSignOut={signOut} />
 
       {newGroup && (

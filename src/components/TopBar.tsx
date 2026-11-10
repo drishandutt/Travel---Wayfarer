@@ -23,6 +23,7 @@ interface Props {
   trips: SavedTrip[]
   onOpen: (trip: SavedTrip) => void
   onDelete: (id: string) => void
+  onDeleteGroup?: (group: GroupSummary) => void   // an admin deleting a shared trip, for everyone
   theme: Theme
   onToggleTheme: () => void
   onMoney: () => void
@@ -40,7 +41,7 @@ interface Props {
   onSignOut: () => void
 }
 
-function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut, onDevTools }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut' | 'onDevTools'>) {
+function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut, onDevTools }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'onDeleteGroup' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut' | 'onDevTools'>) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   // A trip you run for a group is listed as the group. Anything else stays reachable on its
@@ -68,6 +69,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOp
                 <b>{g.name}</b>
                 <small>{g.memberCount} {g.memberCount === 1 ? 'person' : 'people'}{g.role === 'owner' ? ' · Admin' : ''}</small>
               </button>
+              {g.role === 'owner' && onDeleteGroup && <button className="del" aria-label={`Delete ${g.name} for everyone`} onClick={() => { setOpen(false); onDeleteGroup(g) }}>✕</button>}
             </div>
           ))}
           {groups.length > 0 && mine.length > 0 && <h4 className="trips-head">Personal</h4>}
@@ -94,7 +96,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, groups, activeGroup, onOp
   )
 }
 
-export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleTheme, onMoney, onPhotos, moneyBadge, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, email, onSignOut }: Props) {
+export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, moneyBadge, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, email, onSignOut }: Props) {
   const b = state.brief
   const city = cityById(b.destination)
   const at = STEPS.findIndex(s => s.id === state.phase)
@@ -115,7 +117,7 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, theme, onToggleT
             aria-label={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'Offline planner'}
             title={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'No ANTHROPIC_API_KEY on the server: using the offline planner'} />
         )}
-        <TripsMenu trips={trips} current={state.tripId} onOpen={onOpen} onDelete={onDelete} groups={groups} activeGroup={activeGroup} onOpenGroup={onOpenGroup} onNewTrip={onNewTrip} email={email} onSignOut={onSignOut} onDevTools={onDevTools} />
+        <TripsMenu trips={trips} current={state.tripId} onOpen={onOpen} onDelete={onDelete} onDeleteGroup={onDeleteGroup} groups={groups} activeGroup={activeGroup} onOpenGroup={onOpenGroup} onNewTrip={onNewTrip} email={email} onSignOut={onSignOut} onDevTools={onDevTools} />
         <button className="money-btn" onClick={onMoney} aria-label={moneyBadge ? `Money: ${moneyBadge.net > 0 ? 'you are owed' : 'you owe'} ${fmtMoney(Math.abs(moneyBadge.net), moneyBadge.currency)}` : 'Money'}>
           Money
           {moneyBadge && <span className={`money-amt ${moneyBadge.net > 0 ? 'pos' : 'neg'}`}>{moneyBadge.net > 0 ? '+' : '−'}{fmtMoney(Math.abs(moneyBadge.net), moneyBadge.currency, { compact: true })}</span>}
