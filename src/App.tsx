@@ -206,6 +206,16 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     if (!account) return
     api<{ admin: boolean }>('GET', '/dev/me').then(r => setDevAdmin(r.admin)).catch(() => {})
   }, [account])
+  // finds waiting for the owner's review, so the Trips menu can say so on the go
+  const [devReviews, setDevReviews] = useState(0)
+  useEffect(() => {
+    if (!devAdmin) { setDevReviews(0); return }
+    const load = () => { if (document.visibilityState === 'visible') api<{ reviews: unknown[] }>('GET', '/dev/places/reviews').then(r => setDevReviews(r.reviews.length)).catch(() => {}) }
+    load()
+    const t = setInterval(load, 60_000)
+    document.addEventListener('visibilitychange', load)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', load) }
+  }, [devAdmin, devOpen])
 
   const [brain, setBrain] = useState<BrainStatus | null>(null)
   useEffect(() => { detectBrain().then(setBrain) }, [])
@@ -910,7 +920,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       <div className="vignette" />
 
       <TopBar state={state} brain={brain} trips={trips}  onOpen={openTrip} onDelete={removeTrip} onDeleteGroup={account ? deleteShared : undefined} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} moneyBadge={moneyBadge} onPhotos={() => setVaultOpen({})}
-        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} email={account?.email ?? null} onSignOut={signOut} />
+        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} devReviews={devReviews} email={account?.email ?? null} onSignOut={signOut} />
 
       {newGroup && (
         <div className="trip-nudge" role="status">
