@@ -496,6 +496,51 @@ export const MIGRATIONS = [`
       REVOKE ALL ON email_codes FROM anon, authenticated;
     END IF;
   END $$;
+`, `
+  -- Wayfarer as an MCP server (server/mcp): apps like Claude sign in on a person's behalf with
+  -- OAuth. Clients register themselves; codes and tokens are kept only as hashes.
+  CREATE TABLE oauth_clients (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    ip TEXT
+  );
+  CREATE TABLE oauth_codes (
+    code_hash TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    redirect_uri TEXT NOT NULL,
+    challenge TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    used_at BIGINT,
+    token_id TEXT
+  );
+  CREATE TABLE oauth_tokens (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    access_hash TEXT NOT NULL UNIQUE,
+    access_expires BIGINT NOT NULL,
+    refresh_hash TEXT NOT NULL UNIQUE,
+    refresh_expires BIGINT NOT NULL,
+    scope TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    last_used_at BIGINT,
+    revoked_at BIGINT
+  );
+  CREATE INDEX oauth_tokens_user ON oauth_tokens(user_id);
+
+  ALTER TABLE oauth_clients ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE oauth_codes ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON oauth_clients, oauth_codes, oauth_tokens FROM anon, authenticated;
+    END IF;
+  END $$;
 `]
 
 // A transaction is one connection, and one connection runs one query at a time: reads that

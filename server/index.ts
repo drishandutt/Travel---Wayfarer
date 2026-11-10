@@ -22,6 +22,7 @@ import { currentUser } from './money/auth'
 import { buildStatus, knownCities, lookupCity, profileCityInBackground, recordSignals } from './cities/store'
 import { cityDb } from './money/routes'
 import { flushActivity, from, track } from './dev/activity'
+import { oauthAndMcp } from './mcp/http'
 import type { UserRow } from './money/auth'
 
 // first, so nothing logged from here on is missed
@@ -188,6 +189,13 @@ const server = createServer(async (req, res) => {
       if (url.searchParams.get('debug') === '1') return json(res, 200, await traceSocial(q))
       res.setHeader('Cache-Control', 'private, max-age=3600')
       return json(res, 200, await placeVideos(q))
+    }
+    // Wayfarer as an MCP server for Claude and other clients (server/mcp): OAuth discovery,
+    // sign-in and tokens, then the MCP endpoint. Before the Claude check: none of it needs a key.
+    if (url.pathname.startsWith('/.well-known/oauth-') || url.pathname.startsWith('/api/oauth/') || url.pathname === '/api/mcp') {
+      const db = await cityDb()
+      if (!db) return json(res, 503, { error: 'temporarily_unavailable', error_description: 'Accounts aren’t available on this server.' })
+      return await oauthAndMcp(db, req, res, url)
     }
     // Cities: the hand-made ones, and any other built from public guides when someone names it.
     if (req.method === 'GET' && url.pathname === '/api/cities') {

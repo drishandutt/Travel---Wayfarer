@@ -7,6 +7,7 @@ import { MAX_AMOUNT, SplitError } from '../../src/money/engine'
 import { CodeError, RESEND_MS, checkCode, checkPassword, clearLimit, clientIp, currentUser, endSession, hashPassword, issueCode, overLimit, spendCode, startSession, toAccount, widenSession, type CodePurpose, type UserRow } from './auth'
 import { MailError, codeMail, sendMail } from '../mail'
 import { claimOwner, loadOwner } from '../dev/owner'
+import { connections, disconnect, mcpUrl } from '../mcp/oauth'
 import { openDatabase, type Db } from './db'
 import { getRates } from './fx'
 import { importSqliteOnce } from './importSqlite'
@@ -161,7 +162,7 @@ const listeners = new Map<string, Set<{ res: ServerResponse; userId: string }>>(
 // Writing to a stream that has ended would raise an unhandled error and stop the whole server.
 const writeLive = (res: ServerResponse, text: string) => { if (!res.writableEnded && !res.destroyed) res.write(text) }
 
-async function publish(db: Db, groupId: string) {
+export async function publish(db: Db, groupId: string) {
   const versions = await store.versionsOf(db, groupId)
   const message = `data: ${JSON.stringify(versions)}\n\n`
   for (const l of listeners.get(groupId) ?? []) writeLive(l.res, message)
@@ -368,6 +369,19 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
     await publishAll(db, await store.linkWaitingSeats(db, updated))
     track('auth.account_changed', { ...from(c.req, user.id), subject: user.id, detail: { emailChanged: moving, passwordSet: Boolean(body.password) } })
     return { user: toAccount(updated) }
+  })
+
+  // Apps connected to the account through Wayfarer's MCP server (Claude and others), and the
+  // address to connect one with.
+  route('GET', '/auth/connections', async c => {
+    const user = needUser(c)
+    return { connections: await connections(db, user.id), mcpUrl: mcpUrl(c.req) }
+  })
+
+  route('DELETE', '/auth/connections/:id', async c => {
+    const user = needUser(c)
+    if (!await disconnect(db, user.id, c.params[0])) throw new HttpError(404, 'That app isn’t connected')
+    return { ok: true }
   })
 
   route('POST', '/auth/logout', async c => {

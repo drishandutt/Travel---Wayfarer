@@ -298,7 +298,8 @@ function GroupList({ trip, prefillLabel, onOpen, onClose }: { trip: MoneyTrip; p
         </form>
       )}
 
-      {groups && groups.length > 0 && <AccountCard className="m-account-card" />}
+      {/* the account (and connecting Claude) is reachable before any group exists too */}
+      {groups && <AccountCard className="m-account-card" />}
     </div>
   )
 }

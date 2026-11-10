@@ -288,6 +288,28 @@ A reel, video, post, web search, page or map shared to Wayfarer is read for the 
 - **Adding** (`src/components/share/ShareSheet.tsx`, `App.tsx`): the sheet lists the places, ticked, and the trips they can go in: the one on screen, the group trips you run, and your saved trips. The one with most of the places' city comes first, and places from another city can't be ticked. Choosing a trip that isn't open opens it, waits for its plan, then adds each place the way a place typed into chat is added (`resolvePlace`), so it lands in the deck or a day as usual.
 - **Logins** come from the dev tools (below).
 
+## Wayfarer in Claude (MCP)
+
+Wayfarer is also a remote **MCP server**, so people can use it from Claude (or any MCP client) as a custom connector: research and add places, change the plan, look for flights and hotels against the itinerary, analyse spending, split costs, chat with the group, even make a whole new trip, all by talking. The address is `https://<site>/api/mcp`; the account screen (Money → Account → *Use Wayfarer from Claude*) shows it, with steps, and lists connected apps with **Disconnect**.
+
+**Signing in** (`server/mcp/oauth.ts`): OAuth 2.1, the way MCP clients expect. A client finds the server through `/.well-known/oauth-protected-resource/api/mcp` and `/.well-known/oauth-authorization-server`, registers itself (`/api/oauth/register`, dynamic client registration; redirects must be https, or http back to the same computer), and sends the person to `/api/oauth/authorize`. That page signs them in with an emailed code if they aren't already (the same `/api/money/auth` endpoints and cookie as the app), then asks *Allow Claude?* with what it can do. PKCE (S256) is required. Codes last 5 minutes and work once; a code used twice revokes what it made. Access tokens last an hour; refresh tokens 60 days and are replaced on each use, and an old one coming back cuts the app off entirely. Everything is stored as hashes (`oauth_clients`, `oauth_codes`, `oauth_tokens`, migration 9). The page can't be framed and only posts back to itself. `WAYFARER_PUBLIC_URL` overrides the address the server reports for itself.
+
+**Sessions** (`server/mcp/index.ts`, Streamable HTTP via the official SDK, pinned): each MCP session belongs to the person whose token started it and is about one trip. The server's instructions tell the model to call `list_trips` first, show them, ask which one, and call `choose_trip`; every other tool refuses until then. Sessions are kept in memory and dropped after 3 hours idle.
+
+**Tools** (`server/mcp/tools.ts`), each acting as the person, through the same store functions and reducer actions as the app, so the same rules hold (only the admin changes the plan; the server checks seats and roles):
+- *Trips:* `list_trips`, `choose_trip`, `trip_overview`, `get_itinerary`, `itinerary_text`, `update_trip` (dates, travellers, budget), `create_trip` (a city, built first if Wayfarer hasn't mapped it, planned by the offline planner, given a group and published, so it's in their app).
+- *Places and research:* `search_places`, `suggest_places` (scored for the trip), `place_details` (with its profile), `place_videos`, and `add_places`: up to 15 real places Claude found on the web, by local name or maps link, resolved on OpenStreetMap and decided exactly like a find in the app (shared with the city, kept private, or sent to the owner's review queue).
+- *The plan:* `add_stop`, `remove_stop`, `move_stop`, `reorder_stop`, `tidy_day`, `fill_gap`, `list_hotels`, `choose_hotel`, `change_trip` (the chat's edit engine: "add a day", "more relaxed"), `undo`.
+- *Flights and hotels:* `travel_needs` gives the city, dates, nights, travellers, budget and the best area to stay (the middle of the planned days); Claude searches the web itself; `save_booking` records what was booked in the trip chat, and as a shared expense with a cost.
+- *Money:* `money_summary` (totals, budget pace, who owes whom, by category, day and person, planned vs actual), `list_expenses` (rows for analysis, filterable), `add_expense` (any currency, converted at today's rate), `record_payment`, `delete_expense` (restorable).
+- *People and chat:* `list_people`, `invite_person`, `read_chat`, `post_note`.
+
+Plan changes (`server/mcp/trip.ts`) build the app's state from the shared plan, run the reducer actions, and publish the result as the next plan version with the version they started from, then notify the trip's live streams, so the admin's screen and everyone else's update at once. Someone publishing in between makes it start again from their version (once). The session keeps its own copy, so `undo` works within it. Only trips on the server are reachable: every trip is once its itinerary is approved; a draft still only in a browser isn't.
+
+Three prompts come with it: *Research places for my trip*, *Find flights and hotels*, *Analyse our spending*. Every tool call is in the activity log (`mcp.tool`, with the client's name), as are sessions, trips chosen and made, and every OAuth step (`oauth.*`, and `security.oauth_*` for reused codes and refresh tokens); 900 tool calls an hour per person.
+
+Not yet: the documents vault (when it exists, it gets tools here), and photos.
+
 ## Dev tools
 
 For the app's owner only, one account, by its id (`server/dev/owner.ts`): `WAYFARER_OWNER_ID` when set, otherwise the first account to confirm the owner's address (`WAYFARER_OWNER_EMAIL`, or the built-in one) with an emailed code, kept in `dev_settings` from then on. Changing that account's address keeps the dev tools with it, and whoever later takes the old address gets nothing. Nobody else gets in, in development either. They open from **My trips → Dev tools**, or at `/?dev`, in a browser or in the iPhone app (which loads the live site, so the dev tools come with every push). Finds waiting for review show as a dot on *My trips* and a count beside *Dev tools* and on the *Places* tab; on a phone the tabs sit in a four-column grid so they're all in view. New tools go in as new tabs (`src/components/dev/DevTools.tsx`, one file per big tab in that folder).
@@ -408,6 +430,12 @@ server/
     store.ts               Built cities, promoted finds, profiles and swipe signals in the database; the registry; build jobs; the review queue
     importer.ts            The owner's bulk imports: rows found on the map, shaped by the sheet, added to their city
   mail.ts                  Sending email (sign-in codes) through Resend or Gmail, or to the console in development
+  mcp/
+    http.ts                OAuth discovery, sign-in, tokens and the MCP endpoint, mounted by index.ts
+    oauth.ts               OAuth 2.1 for MCP clients: registration, the consent page, tokens, connected apps
+    index.ts               MCP sessions (one trip each), the instructions and prompts
+    tools.ts               Every tool: trips, places and research, the plan, flights and hotels, money, people
+    trip.ts                A session's trip: loading it, and changing the plan through the app's reducer
   dev/
     owner.ts               Who owns the app (one account id), and so the dev tools
     routes.ts              The dev tools' API: logs, activity, the analyst, places, sessions, the link reader, tokens, settings
