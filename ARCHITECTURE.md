@@ -213,7 +213,10 @@ The server enforces this (`assertAdmin` in `server/money/store.ts`). On screen, 
 
 **Accounts.** Your email is your account, and it has to be proven. Every sign-up and sign-in is two steps: `POST /api/money/auth/email` (the address, and a name for a new account) sends a six-digit code to that address, and `POST /api/money/auth/verify` (the code, and the password on an account that has one) signs in. A new account is created only when its code is right, already verified (`users.email_verified_at`). Codes (`email_codes`, stored hashed) work once, for 10 minutes; only the newest for an address works; five wrong tries spend it; asking again within 30 seconds keeps the same one; and an address gets at most 8 codes in 15 minutes. A session counts only for a verified account (`currentUser`), so sessions from before verification became mandatory open nothing until their owner confirms the address once. Changing your address (`/auth/secure`) sends a code to the new one, and nothing moves until it's typed in. The optional password is a second lock on top of the code; changing it needs the current one and signs out other devices. There's still no password reset: the code gets you in, and the group owner can *Release* a seat, which puts it back to unclaimed for another account to take through the group's new invite link. Private expenses follow the account, not the seat: whoever takes a released seat gets its shared history and nothing private. Passwords use scrypt, session tokens are stored hashed, the session cookie covers the whole API (`Path=/api`), and sign-ins, codes and new accounts are rate limited.
 
-**Sending the codes** (`server/mail.ts`): Resend's HTTP API when `RESEND_API_KEY` is set, from `WAYFARER_MAIL_FROM` (an address on a domain verified with Resend; without it, Resend's test sender, which only delivers to the Resend account's own address). In development without a key, the email is printed to the server console. In production without one, sign-in is refused with a clear message rather than letting anyone in unverified.
+**Sending the codes** (`server/mail.ts`), the first that's configured:
+- **Resend**, when `RESEND_API_KEY` is set, from `WAYFARER_MAIL_FROM` (an address on a domain verified with Resend; without it, Resend's test sender, which only delivers to the Resend account's own address).
+- **Gmail**, when `GMAIL_USER` and `GMAIL_APP_PASSWORD` are both set: through Gmail's SMTP server (nodemailer, pinned), from that Gmail address with the name "Wayfarer". The password is a Google *app password* (Google account → Security → 2-Step Verification on → App passwords), not the account's own; spaces in it are ignored. Gmail sends about 500 messages a day from a personal account, and codes from a personal address are likelier to land in spam, so this is for the beta; move to Resend with a domain for a launch.
+- In development with neither, the email is printed to the server console. In production with neither, sign-in is refused with a clear message rather than letting anyone in unverified. Dev tools' status shows which one is in use.
 
 Everything cached in the browser belongs to one account (`claimLocal`): if a different person signs in on the same device, it's wiped first.
 
@@ -402,7 +405,7 @@ server/
     profile.ts             A model's read on what places are good and bad at, and who they suit
     store.ts               Built cities, promoted finds, profiles and swipe signals in the database; the registry; build jobs; the review queue
     importer.ts            The owner's bulk imports: rows found on the map, shaped by the sheet, added to their city
-  mail.ts                  Sending email (sign-in codes) through Resend, or to the console in development
+  mail.ts                  Sending email (sign-in codes) through Resend or Gmail, or to the console in development
   dev/
     owner.ts               Who owns the app (one account id), and so the dev tools
     routes.ts              The dev tools' API: logs, activity, the analyst, places, sessions, the link reader, tokens, settings

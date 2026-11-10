@@ -13,7 +13,7 @@ import { listCookieSites, parseCookies, saveCookies } from './cookies'
 import { clip, flush, record, type Level } from './log'
 import { checkOpenAIKey, openaiKeyInfo, setOpenAIKey } from '../openai'
 import { isDevAdmin } from './owner'
-import { mailConfigured } from '../mail'
+import { mailConfigured, mailProvider } from '../mail'
 import { OPENAI_KEY, setSetting, settingMeta } from './settings'
 import { cleanDetail, from, parseDetail, queryActivity, track } from './activity'
 import { analyse, analystEnabled, digest, listReports, pseudonym, userProfile } from './analyst'
@@ -102,7 +102,7 @@ export function registerDevRoutes(
       browser: chromiumPath(),
       ai: brainEnabled ? 'claude' : openaiEnabled ? 'openai' : null,
       owner: process.env.WAYFARER_OWNER_ID ? 'WAYFARER_OWNER_ID' : 'the first verified sign-in as the owner’s address',
-      mail: mailConfigured() ? 'resend' : PRODUCTION ? null : 'console (dev)',
+      mail: mailProvider() ?? (mailConfigured() ? 'test' : PRODUCTION ? null : 'console (dev)'),
       uptime: Math.round(process.uptime()),
       memory: Math.round(process.memoryUsage().rss / 1024 / 1024),
     }
