@@ -637,7 +637,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   const openTripMoney = async (prefill?: ExpensePrefill) => setMoneyOpen({ scope: await tripSpace(), prefill })
   const openTripPhotos = async () => setVaultOpen({ scope: await tripSpace() })
   const tripBalance = groups?.find(g => g.id === activeGroup) ?? null
-  const moneyBadge = useMoneyBadge(Boolean(moneyOpen))
+  useMoneyBadge(Boolean(moneyOpen)) // keeps local groups claimed and synced; the balance itself isn't shown
   const hasPlan = (state.phase === 'review' || state.phase === 'final') && state.days.length > 0
   const moneyTrip = useMemo<MoneyTrip>(() => ({
     summary: hasPlan && !member ? tripSummaryOf(state) : null,
@@ -919,7 +919,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         : { left: tucked.chat && state.phase !== 'swipe' ? 60 : 440, right: tucked.journal || state.phase === 'intake' ? 60 : 460 }} />
       <div className="vignette" />
 
-      <TopBar state={state} brain={brain} trips={trips}  onOpen={openTrip} onDelete={removeTrip} onDeleteGroup={account ? deleteShared : undefined} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} moneyBadge={moneyBadge} onPhotos={() => setVaultOpen({})}
+      <TopBar state={state} brain={brain} trips={trips}  onOpen={openTrip} onDelete={removeTrip} onDeleteGroup={account ? deleteShared : undefined} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} onPhotos={() => setVaultOpen({})}
         groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} devReviews={devReviews} email={account?.email ?? null} onSignOut={signOut} />
 
       {newGroup && (

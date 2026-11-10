@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ApiError, api } from '../../money/client'
 import { CURRENCIES } from '../../money/currency'
 import { netBalances } from '../../money/engine'
@@ -6,6 +6,7 @@ import { unsentCount } from '../../money/hooks'
 import { copyText } from '../../money/util'
 import type { Account } from '../../money/types'
 import { Avatar, Field, Modal, useAccountCtx, useCtx } from './parts'
+import { ConnectClaudeCard } from '../ConnectClaude'
 
 function InviteCard() {
   const { s, g, toast, me } = useCtx()
@@ -298,51 +299,13 @@ export function AccountCard({ className = 'span-6' }: { className?: string }) {
         </form>
       )}
       {msg && <p className={`m-note ${msg.good ? 'good' : 'bad'}`} role="status">{msg.text}</p>}
-      <ClaudeConnect />
+      <ConnectClaudeCard />
       <button className="m-link" onClick={() => {
         const unsent = unsentCount()
         if (unsent && !confirm(`You have ${unsent} change${unsent > 1 ? 's' : ''} that ${unsent > 1 ? 'haven’t' : 'hasn’t'} synced yet. Signing out discards ${unsent > 1 ? 'them' : 'it'}. Sign out anyway?`)) return
         signOut()
       }}>Sign out</button>
     </section>
-  )
-}
-
-// Using Wayfarer from Claude (or another MCP app): the address to add as a connector, and the
-// apps connected to this account, each with a way to cut it off.
-interface Connection { id: string; name: string; connectedAt: number; lastUsedAt: number | null }
-function ClaudeConnect() {
-  const [info, setInfo] = useState<{ connections: Connection[]; mcpUrl: string } | null>(null)
-  const [copied, setCopied] = useState(false)
-  const [error, setError] = useState('')
-  const load = () => api<{ connections: Connection[]; mcpUrl: string }>('GET', '/auth/connections').then(setInfo).catch(err => setError((err as Error).message))
-  useEffect(() => { void load() }, [])
-  const cut = async (c: Connection) => {
-    if (!confirm(`Disconnect ${c.name}? It loses access to your trips straight away.`)) return
-    try { await api('DELETE', `/auth/connections/${encodeURIComponent(c.id)}`); void load() } catch (err) { setError((err as Error).message) }
-  }
-  if (!info) return error ? <p className="m-note bad">{error}</p> : null
-  const when = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
-  return (
-    <div className="m-claude">
-      <h3>Use Wayfarer from Claude</h3>
-      <p className="m-note">Plan, research places, look for flights and hotels and sort out money by talking to Claude. In Claude, open <b>Settings → Connectors → Add custom connector</b>, paste this address, then sign in with your email when it asks.</p>
-      <div className="m-copyrow">
-        <code>{info.mcpUrl}</code>
-        <button className="ghost m-small" onClick={() => { copyText(info.mcpUrl); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>{copied ? 'Copied' : 'Copy'}</button>
-      </div>
-      {info.connections.length > 0 && (
-        <ul className="m-connections">
-          {info.connections.map(c => (
-            <li key={c.id}>
-              <span><b>{c.name}</b><small>connected {when(c.connectedAt)}{c.lastUsedAt ? ` · last used ${when(c.lastUsedAt)}` : ''}</small></span>
-              <button className="m-link danger-link" onClick={() => void cut(c)}>Disconnect</button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {error && <p className="m-note bad">{error}</p>}
-    </div>
   )
 }
 

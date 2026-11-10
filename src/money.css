@@ -411,8 +411,6 @@ li:first-child > .m-exp { border-top: 0; }
 /* top bar + map entry points */
 .money-btn { align-self: center; flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--glass); backdrop-filter: blur(20px) saturate(1.4); font-family: var(--body); font-size: 13px; font-weight: 500; color: var(--paper); white-space: nowrap; transition: background .2s; }
 .money-btn:hover { background: var(--glass-hi); }
-.money-amt { font-size: 12.5px; font-weight: 600; }
-.money-amt.pos { color: var(--mint); } .money-amt.neg { color: var(--coral); }
 .pc-log { align-self: flex-start; padding: 7px 14px; border-radius: 999px; border: 0; background: rgba(var(--paper-rgb), .08); color: var(--paper); font-size: 13px; font-weight: 500; }
 .pc-log:hover { background: rgba(var(--paper-rgb), .14); }
 
@@ -492,3 +490,16 @@ li:first-child > .m-exp { border-top: 0; }
 .m-connections li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
 .m-connections span { display: flex; flex-direction: column; min-width: 0; }
 .m-connections small { color: var(--paper-faint); font-size: 12px; }
+
+/* the Use-with-Claude guide (src/components/ConnectClaude.tsx) */
+.m-claude-guide h4 { margin: 18px 0 6px; font-size: 13px; color: var(--paper-dim); font-weight: 600; }
+.m-claude-guide .m-lede { margin-top: 0; }
+.m-claude-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 4px; }
+.m-claude-tabs button { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--paper-dim); font-size: 13px; }
+.m-claude-tabs button.on { background: var(--paper); color: var(--ink); border-color: var(--paper); font-weight: 600; }
+.m-steps { margin: 8px 0; padding-left: 22px; font-size: 14px; line-height: 1.55; }
+.m-steps li { margin: 6px 0; }
+.m-steps a { color: var(--paper); }
+.m-cmd { margin: 6px 0; padding: 10px 12px; border-radius: 10px; background: rgba(var(--paper-rgb), .06); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+.m-asks { margin: 4px 0; padding-left: 18px; font-size: 13.5px; color: var(--paper-dim); line-height: 1.5; }
+.m-claude .m-link { display: inline-block; margin: 2px 0 6px; }

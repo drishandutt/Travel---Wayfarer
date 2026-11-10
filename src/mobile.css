@@ -170,9 +170,6 @@
   .trips-long { display: none; }
   .trips-short { display: inline; }
 }
-@media (max-width: 340px) {
-  .money-amt { display: none; }
-}
 
 /* touch screens: no hover, so show what hover would reveal */
 @media (hover: none) {

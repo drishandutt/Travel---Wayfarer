@@ -1,0 +1,129 @@
+import { useCallback, useEffect, useState } from 'react'
+import { api } from '../money/client'
+import { copyText } from '../money/util'
+import { Modal } from './money/parts'
+
+// How to use Wayfarer from Claude (server/mcp): the address to add as a connector, step by step
+// for Claude on the web or desktop, on a phone, and in Claude Code, things to ask, and the apps
+// already connected to this account with a way to cut each one off. The same guide opens from
+// the Trips menu and from Money → Account, in a browser and in the iPhone app.
+
+interface Connection { id: string; name: string; connectedAt: number; lastUsedAt: number | null }
+interface Info { connections: Connection[]; mcpUrl: string }
+
+type Where = 'web' | 'phone' | 'code'
+
+const ASK = [
+  'Let’s work on my Lisbon trip. What’s on day 2?',
+  'Find three hidden-gem restaurants near my day 1 stops and add the best one.',
+  'Find flights from London and a hotel in the best area for my dates.',
+  'Who owes whom, and where did most of our money go?',
+  'Plan me a 3-day food trip to Kyoto.',
+]
+
+function useConnections() {
+  const [info, setInfo] = useState<Info | null>(null)
+  const [error, setError] = useState('')
+  const load = useCallback(() => api<Info>('GET', '/auth/connections').then(i => { setInfo(i); setError('') }).catch(err => setError((err as Error).message)), [])
+  useEffect(() => { void load() }, [load])
+  const disconnect = async (c: Connection) => {
+    if (!confirm(`Disconnect ${c.name}? It loses access to your trips straight away.`)) return
+    try { await api('DELETE', `/auth/connections/${encodeURIComponent(c.id)}`); void load() } catch (err) { setError((err as Error).message) }
+  }
+  return { info, error, disconnect }
+}
+
+const when = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+
+function Address({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="m-copyrow">
+      <code>{url}</code>
+      <button className="cta m-small" onClick={async () => { await copyText(url); setCopied(true); setTimeout(() => setCopied(false), 1600) }}>{copied ? 'Copied' : 'Copy'}</button>
+    </div>
+  )
+}
+
+function Connected({ list, onDisconnect }: { list: Connection[]; onDisconnect: (c: Connection) => void }) {
+  if (!list.length) return <p className="m-note">Nothing connected yet.</p>
+  return (
+    <ul className="m-connections">
+      {list.map(c => (
+        <li key={c.id}>
+          <span><b>{c.name}</b><small>connected {when(c.connectedAt)}{c.lastUsedAt ? ` · last used ${when(c.lastUsedAt)}` : ''}</small></span>
+          <button className="m-link danger-link" onClick={() => onDisconnect(c)}>Disconnect</button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+// The full guide, in a dialog.
+export function ConnectClaudeGuide({ onClose }: { onClose: () => void }) {
+  const { info, error, disconnect } = useConnections()
+  const [where, setWhere] = useState<Where>('web')
+  const url = info?.mcpUrl ?? `${location.origin}/api/mcp`
+  return (
+    <Modal eyebrow="Wayfarer in Claude" title="Use Wayfarer from Claude" onClose={onClose} wide>
+      <div className="m-claude-guide">
+        <p className="m-lede">Talk to Claude to research places, change your plan, find flights and hotels for your dates, and sort out who owes whom. It works on the trip you choose, as you, and everything it changes shows up here live.</p>
+
+        <h4>Your Wayfarer address</h4>
+        <Address url={url} />
+
+        <div className="m-claude-tabs" role="tablist" aria-label="Where you use Claude">
+          {([['web', 'Claude on the web or desktop'], ['phone', 'Claude on your phone'], ['code', 'Claude Code']] as const).map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={where === id} className={where === id ? 'on' : ''} onClick={() => setWhere(id)}>{label}</button>
+          ))}
+        </div>
+
+        {where === 'web' && (
+          <ol className="m-steps">
+            <li>Open Claude’s connectors: <a href="https://claude.ai/settings/connectors" target="_blank" rel="noreferrer">claude.ai → Settings → Connectors ↗</a> (in the desktop app: Settings → Connectors).</li>
+            <li>Choose <b>Add custom connector</b>. Name it <b>Wayfarer</b> and paste the address above.</li>
+            <li>Click <b>Connect</b>. A Wayfarer page opens: sign in with your email and the code we send, then choose <b>Allow</b>.</li>
+            <li>In a new chat, make sure Wayfarer is switched on in the tools menu, and say something like “Let’s work on my trip”. Claude will list your trips and ask which one.</li>
+          </ol>
+        )}
+        {where === 'phone' && (
+          <ol className="m-steps">
+            <li>Add Wayfarer once from Claude on the web or desktop (the first tab). Custom connectors are added there, not in the phone app.</li>
+            <li>Open the Claude app on your phone, signed in to the same Claude account. Wayfarer is already there.</li>
+            <li>In a chat, switch Wayfarer on in the tools menu and ask away. If it asks you to sign in again, use your email and the code we send.</li>
+          </ol>
+        )}
+        {where === 'code' && (
+          <ol className="m-steps">
+            <li>In a terminal, run:<pre className="m-cmd">{`claude mcp add --transport http wayfarer ${url}`}</pre></li>
+            <li>Start Claude Code, type <b>/mcp</b>, choose <b>wayfarer</b> and <b>Authenticate</b>. Sign in with your email and code, then <b>Allow</b>.</li>
+          </ol>
+        )}
+
+        <h4>Things to ask</h4>
+        <ul className="m-asks">{ASK.map(a => <li key={a}>“{a}”</li>)}</ul>
+
+        <h4>Connected apps</h4>
+        {error ? <p className="m-note bad">{error}</p> : info ? <Connected list={info.connections} onDisconnect={c => void disconnect(c)} /> : <div className="m-skeleton" />}
+        <p className="m-note">Claude can only do what you could in the app: only a trip’s admin changes its plan. It asks before spending, inviting or posting for you. Disconnect any time, here.</p>
+      </div>
+    </Modal>
+  )
+}
+
+// The short version, inside the account card, with a way into the full guide.
+export function ConnectClaudeCard() {
+  const { info, error, disconnect } = useConnections()
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="m-claude">
+      <h3>Use Wayfarer from Claude</h3>
+      <p className="m-note">Plan, research places, look for flights and hotels and sort out money by talking to Claude. Add this address in Claude as a custom connector, then sign in with your email.</p>
+      {info && <Address url={info.mcpUrl} />}
+      <button className="m-link" onClick={() => setOpen(true)}>How to connect, step by step</button>
+      {info && info.connections.length > 0 && <Connected list={info.connections} onDisconnect={c => void disconnect(c)} />}
+      {error && <p className="m-note bad">{error}</p>}
+      {open && <ConnectClaudeGuide onClose={() => setOpen(false)} />}
+    </div>
+  )
+}

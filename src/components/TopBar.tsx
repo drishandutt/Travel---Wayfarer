@@ -3,10 +3,10 @@ import type { Phase, SavedTrip, TripState } from '../state/tripStore'
 import { cityById } from '../data/cities'
 import type { BrainStatus } from '../planner/brain'
 import type { Theme } from '../state/theme'
-import { fmtMoney } from '../money/currency'
 import type { GroupSummary } from '../money/types'
 import { groupCopyOf } from '../state/persistence'
 import { MoonIcon, PhotoIcon, RestartIcon, SunIcon } from './Icons'
+import { ConnectClaudeGuide } from './ConnectClaude'
 
 const STEPS: { id: Phase; label: string }[] = [
   { id: 'intake', label: 'Brief' },
@@ -28,7 +28,6 @@ interface Props {
   onToggleTheme: () => void
   onMoney: () => void
   onPhotos: () => void
-  moneyBadge: { net: number; currency: string } | null
   groups: GroupSummary[]
   activeGroup: string | null
   onOpenGroup: (id: string) => void
@@ -44,6 +43,7 @@ interface Props {
 
 function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut, onDevTools, devReviews = 0 }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'onDeleteGroup' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut' | 'onDevTools' | 'devReviews'>) {
   const [open, setOpen] = useState(false)
+  const [claude, setClaude] = useState(false) // the Use-with-Claude guide
   const ref = useRef<HTMLDivElement>(null)
   // A trip you run for a group is listed as the group. Anything else stays reachable on its
   // own: a group that's gone, one someone else runs, or an older copy.
@@ -87,17 +87,19 @@ function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, ac
           {email && (
             <div className="trips-account">
               <small>{email}</small>
+              <button onClick={() => { setOpen(false); setClaude(true) }}>Use with Claude</button>
               {onDevTools && <button onClick={() => { setOpen(false); onDevTools() }}>Dev tools{devReviews > 0 && <span className="dev-badge" aria-label={`${devReviews} to review`}>{devReviews}</span>}</button>}
               <button onClick={() => { setOpen(false); onSignOut() }}>Sign out</button>
             </div>
           )}
         </div>
       )}
+      {claude && <ConnectClaudeGuide onClose={() => setClaude(false)} />}
     </div>
   )
 }
 
-export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, moneyBadge, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut }: Props) {
+export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut }: Props) {
   const b = state.brief
   const city = cityById(b.destination)
   const at = STEPS.findIndex(s => s.id === state.phase)
@@ -119,9 +121,8 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, t
             title={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'No ANTHROPIC_API_KEY on the server: using the offline planner'} />
         )}
         <TripsMenu trips={trips} current={state.tripId} onOpen={onOpen} onDelete={onDelete} onDeleteGroup={onDeleteGroup} groups={groups} activeGroup={activeGroup} onOpenGroup={onOpenGroup} onNewTrip={onNewTrip} email={email} onSignOut={onSignOut} onDevTools={onDevTools} devReviews={devReviews} />
-        <button className="money-btn" onClick={onMoney} aria-label={moneyBadge ? `Money: ${moneyBadge.net > 0 ? 'you are owed' : 'you owe'} ${fmtMoney(Math.abs(moneyBadge.net), moneyBadge.currency)}` : 'Money'}>
+        <button className="money-btn" onClick={onMoney} aria-label="Money">
           Money
-          {moneyBadge && <span className={`money-amt ${moneyBadge.net > 0 ? 'pos' : 'neg'}`}>{moneyBadge.net > 0 ? '+' : '−'}{fmtMoney(Math.abs(moneyBadge.net), moneyBadge.currency, { compact: true })}</span>}
         </button>
         <button className="money-btn photos-btn" onClick={onPhotos} aria-label="Photos"><span>Photos</span><PhotoIcon /></button>
         {onStartOver && <button className="money-btn restart-btn" onClick={onStartOver} aria-label="Start over" title="Start over: your plan so far stays in My trips"><RestartIcon /><span>Start over</span></button>}
