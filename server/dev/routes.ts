@@ -11,6 +11,15 @@ import { chromiumPath } from '../share/browser'
 import { ShareError, readShare } from '../share/read'
 import { listCookieSites, parseCookies, saveCookies } from './cookies'
 import { clip, flush, record, type Level } from './log'
+import { checkOpenAIKey, openaiKeyInfo, setOpenAIKey } from '../openai'
+import { OPENAI_KEY, setSetting, settingMeta } from './settings'
+import { cleanDetail, from, parseDetail, queryActivity, track } from './activity'
+import { analyse, analystEnabled, digest, listReports, pseudonym, userProfile } from './analyst'
+import { ReviewError, buildFromDevTools, decideReview, hideCatalogPlace, listReviews, recentAdditions } from '../cities/store'
+import { cancelImport, importJob, importJobs, startImport } from '../cities/importer'
+import { MAX_ROWS, SheetError, readUpload, type ImportRow } from './sheets'
+import { buildStatus } from '../cities/store'
+import { CITIES } from '../../src/data/cities'
 
 // The dev tools' API, under /api/money/dev (where the sign-in cookie goes), and the share
 // reader's. Only the people in WAYFARER_DEV_EMAILS get the dev tools; the extension signs
@@ -177,6 +186,246 @@ export function registerDevRoutes(
   route('DELETE', '/dev/tokens/:id', async c => {
     needAdmin(c)
     await db.run('DELETE FROM dev_tokens WHERE id = ?', c.params[0])
+    return { ok: true }
+  })
+
+  // ── settings: the OpenAI key ──
+  route('GET', '/dev/settings', async c => {
+    needAdmin(c)
+    return { openai: { ...openaiKeyInfo(), saved: await settingMeta(OPENAI_KEY) }, claude: brainEnabled, analystEvery: process.env.WAYFARER_ANALYST_HOURS ?? '6' }
+  })
+
+  // The key is checked with OpenAI before it's kept, and never sent back: only its last four.
+  route('PUT', '/dev/settings/openai', async c => {
+    const user = needAdmin(c)
+    const body = await readBody(c.req, z.object({ key: z.string().trim().min(20).max(400).regex(/^sk-[A-Za-z0-9_-]+$/, 'That doesn’t look like an OpenAI key (they start with sk-).') }))
+    const check = await checkOpenAIKey(body.key)
+    if (!check.ok) throw new HttpError(422, check.error)
+    await setSetting(OPENAI_KEY, body.key, user.email)
+    setOpenAIKey(body.key)
+    track('dev.settings.openai', { ...from(c.req, user.id), detail: { action: 'set', tail: body.key.slice(-4) } })
+    return { openai: { ...openaiKeyInfo(), saved: await settingMeta(OPENAI_KEY) } }
+  })
+
+  route('DELETE', '/dev/settings/openai', async c => {
+    const user = needAdmin(c)
+    await setSetting(OPENAI_KEY, null, user.email)
+    setOpenAIKey(null)
+    track('dev.settings.openai', { ...from(c.req, user.id), detail: { action: 'removed' } })
+    return { openai: { ...openaiKeyInfo(), saved: null } }
+  })
+
+  // ── activity ──
+  // What people do in the app, from every browser and the iPhone app (src/dev/activity.ts).
+  // Only app.* kinds: the server's own events can't be forged from outside.
+  const appEvent = z.object({ kind: z.string().regex(/^app\.[a-z][a-z0-9_.-]{0,40}$/), at: z.number().int().optional(), subject: z.string().max(200).nullish(), detail: z.unknown().optional() })
+  route('POST', '/dev/activity', async c => {
+    if (overLimit(`activity:${clientIp(c.req)}`, 1200, 3_600_000)) return { ok: false }
+    const body = await readBody(c.req, z.object({ device: z.string().max(64).optional(), events: z.array(appEvent).min(1).max(60) }), 256 * 1024)
+    const who = from(c.req, c.user?.id)
+    const now = Date.now()
+    for (const e of body.events) {
+      track(e.kind, { ...who, device: body.device ?? who.device, source: 'app', at: e.at && Math.abs(now - e.at) < 86_400_000 ? e.at : now, subject: e.subject ?? null, detail: cleanDetail(e.detail) })
+    }
+    return { ok: true }
+  })
+
+  route('GET', '/dev/activity', async c => {
+    needAdmin(c)
+    const q = c.url.searchParams
+    const userText = q.get('user')?.trim()
+    let userId: string | undefined
+    if (userText) {
+      const u = await db.one<{ id: string }>("SELECT id FROM users WHERE email = ? OR id = ? OR replace(id, '-', '') LIKE ?", userText.toLowerCase(), userText, `${userText.replace(/^u:/, '')}%`)
+      if (!u) return { events: [], more: false, users: {} }
+      userId = u.id
+    }
+    const limit = Math.min(500, Math.max(1, Number(q.get('limit')) || 200))
+    const rows = await queryActivity(db, {
+      kind: q.get('kind') || undefined,
+      userId,
+      ip: q.get('ip') || undefined,
+      device: q.get('device') || undefined,
+      text: q.get('q')?.trim() || undefined,
+      source: q.get('source') === 'app' || q.get('source') === 'server' ? q.get('source') as 'app' | 'server' : undefined,
+      since: Number(q.get('since')) || undefined,
+      before: Number(q.get('before')) || undefined,
+      limit: limit + 1,
+    })
+    const ids = [...new Set(rows.map(r => r.user_id).filter((u): u is string => Boolean(u)))]
+    const users = ids.length ? await db.all<{ id: string; email: string; name: string }>(`SELECT id, email, name FROM users WHERE id IN (${ids.map(() => '?').join(', ')})`, ...ids) : []
+    const counts = await db.all<{ family: string; n: number }>("SELECT split_part(kind, '.', 1) AS family, COUNT(*)::int AS n FROM activity_events WHERE at > ? GROUP BY 1", Date.now() - 86_400_000)
+    return {
+      events: rows.slice(0, limit).map(r => ({ id: r.id, at: r.at, kind: r.kind, source: r.source, user: r.user_id, device: r.device, ip: r.ip, agent: r.agent, subject: r.subject, detail: parseDetail(r) })),
+      more: rows.length > limit,
+      users: Object.fromEntries(users.map(u => [u.id, { email: u.email, name: u.name, alias: pseudonym(u.id) }])),
+      last24h: Object.fromEntries(counts.map(x => [x.family, Number(x.n)])),
+    }
+  })
+
+  // ── the analyst ──
+  route('GET', '/dev/analyst/digest', async c => {
+    needAdmin(c)
+    const hours = Math.max(1, Math.min(720, Number(c.url.searchParams.get('hours')) || 24))
+    return { digest: await digest(db, hours), ai: analystEnabled() }
+  })
+
+  route('GET', '/dev/analyst/reports', async c => {
+    needAdmin(c)
+    return { reports: await listReports(db, 20), users: await aliases() }
+  })
+
+  let analysing = false
+  route('POST', '/dev/analyst/run', async c => {
+    const user = needAdmin(c)
+    const body = await readBody(c.req, z.object({ hours: z.number().int().min(1).max(720).default(24), question: z.string().trim().max(1000).optional() }))
+    if (!analystEnabled()) throw new HttpError(503, 'No AI is connected: add an OpenAI key in Settings first.')
+    if (analysing) throw new HttpError(409, 'The analyst is already working on one. Try again when it’s done.')
+    if (overLimit(`analyst:${user.id}`, 30, 3_600_000)) throw new HttpError(429, 'That’s a lot of reports this hour.')
+    analysing = true
+    try {
+      const report = await analyse(db, { hours: body.hours, question: body.question || undefined, kind: body.question ? 'ask' : 'manual' })
+      return { report, users: await aliases() }
+    } catch (err) {
+      if (err instanceof HttpError) throw err
+      throw new HttpError(502, `The analyst couldn’t finish: ${(err as Error).message}`)
+    } finally {
+      analysing = false
+    }
+  })
+
+  route('GET', '/dev/analyst/user/:id', async c => {
+    needAdmin(c)
+    const p = await userProfile(db, c.params[0], Math.max(1, Math.min(720, Number(c.url.searchParams.get('hours')) || 720)))
+    if (!p) throw new HttpError(404, 'Nothing recorded for them yet')
+    return { profile: p }
+  })
+
+  // pseudonym → who, so the dev tools can show emails where the analyst wrote u:xxxx
+  async function aliases(): Promise<Record<string, { email: string; name: string; id: string }>> {
+    const users = await db.all<{ id: string; email: string; name: string }>('SELECT id, email, name FROM users ORDER BY created_at DESC LIMIT 5000')
+    return Object.fromEntries(users.map(u => [pseudonym(u.id), { email: u.email, name: u.name, id: u.id }]))
+  }
+
+  // ── new places: the review queue, what's been added, bulk imports ──
+  route('GET', '/dev/places/reviews', async c => {
+    needAdmin(c)
+    const status = c.url.searchParams.get('status')
+    const reviews = await listReviews(status === 'accepted' || status === 'denied' || status === 'all' ? status : 'pending', 300)
+    const ids = [...new Set(reviews.map(r => r.addedBy).filter((u): u is string => Boolean(u)))]
+    const users = ids.length ? await db.all<{ id: string; email: string }>(`SELECT id, email FROM users WHERE id IN (${ids.map(() => '?').join(', ')})`, ...ids) : []
+    const email = new Map(users.map(u => [u.id, u.email]))
+    return { reviews: reviews.map(r => ({ ...r, addedBy: r.addedBy ? email.get(r.addedBy) ?? r.addedBy : null })), cities: Object.fromEntries(CITIES.map(x => [x.id, x.name])) }
+  })
+
+  route('POST', '/dev/places/reviews/:id', async c => {
+    const user = needAdmin(c)
+    const body = await readBody(c.req, z.object({ accept: z.boolean() }))
+    try {
+      return { review: await decideReview(c.params[0], body.accept, { id: user.id, email: user.email }) }
+    } catch (err) {
+      if (err instanceof ReviewError) throw new HttpError(409, err.message)
+      throw err
+    }
+  })
+
+  route('GET', '/dev/places/added', async c => {
+    needAdmin(c)
+    const added = await recentAdditions(Math.min(500, Number(c.url.searchParams.get('limit')) || 150))
+    const ids = [...new Set(added.map(a => a.addedBy).filter((u): u is string => Boolean(u)))]
+    const users = ids.length ? await db.all<{ id: string; email: string }>(`SELECT id, email FROM users WHERE id IN (${ids.map(() => '?').join(', ')})`, ...ids) : []
+    const email = new Map(users.map(u => [u.id, u.email]))
+    return { added: added.map(a => ({ ...a, addedBy: a.addedBy ? email.get(a.addedBy) ?? a.addedBy : null })), cities: Object.fromEntries(CITIES.map(x => [x.id, x.name])) }
+  })
+
+  route('DELETE', '/dev/places/added/:city/:id', async c => {
+    const user = needAdmin(c)
+    if (!await hideCatalogPlace(c.params[0], c.params[1], { id: user.id, email: user.email })) throw new HttpError(404, 'That place isn’t one that was added')
+    return { ok: true }
+  })
+
+  route('GET', '/dev/cities', async c => {
+    needAdmin(c)
+    return { cities: CITIES.map(x => ({ id: x.id, name: x.name, country: x.country, places: x.places.length, added: x.places.filter(p => p.found).length, built: x.built ?? null, building: buildStatus(x.id)?.status === 'building' })) }
+  })
+
+  // Typing a city's name: build it from its guide (or build a built one again).
+  route('POST', '/dev/places/city', async c => {
+    const user = needAdmin(c)
+    const body = await readBody(c.req, z.object({ city: z.string().trim().min(2).max(120), rebuild: z.boolean().default(false) }))
+    const out = await buildFromDevTools(body.city, body.rebuild, user.id)
+    track('dev.places.city', { ...from(c.req, user.id), subject: 'id' in out ? out.id : null, detail: { text: body.city, rebuild: body.rebuild, status: out.status } })
+    return out
+  })
+
+  route('GET', '/dev/places/city/:id', async c => {
+    needAdmin(c)
+    const job = buildStatus(c.params[0])
+    const city = CITIES.find(x => x.id === c.params[0])
+    if (!job && !city) throw new HttpError(404, 'No such city')
+    return job ?? { id: city!.id, name: city!.name, status: 'ready', progress: `${city!.places.length} places` }
+  })
+
+  // A file (an Excel sheet, a CSV, a Markdown list) or pasted text, read into rows for a
+  // preview. Nothing is added until the import starts.
+  const upload = z.object({
+    name: z.string().max(200).default('pasted.md'),
+    base64: z.string().max(12_000_000).optional(),
+    text: z.string().max(2_000_000).optional(),
+    city: z.string().trim().max(120).optional(),
+  }).refine(b => b.base64 || b.text, 'Choose a file or paste a list')
+  route('POST', '/dev/places/parse', async c => {
+    needAdmin(c)
+    const body = await readBody(c.req, upload, 16 * 1024 * 1024)
+    const bytes = body.base64 ? Buffer.from(body.base64, 'base64') : Buffer.from(body.text ?? '', 'utf8')
+    try {
+      return readUpload(body.name, bytes, body.city ? { city: body.city } : {})
+    } catch (err) {
+      if (err instanceof SheetError) throw new HttpError(422, err.message)
+      throw new HttpError(422, `Couldn’t read that file: ${(err as Error).message}`)
+    }
+  })
+
+  const row = z.object({
+    line: z.number().int(),
+    name: z.string().trim().min(1).max(100),
+    city: z.string().max(80).optional(),
+    country: z.string().max(80).optional(),
+    area: z.string().max(120).optional(),
+    kind: z.enum(['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint']).optional(),
+    vibes: z.array(z.enum(['food', 'culture', 'nightlife', 'nature', 'art', 'shopping', 'relaxed', 'adventure', 'romantic', 'history'])).max(3).optional(),
+    price: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
+    notes: z.string().max(300).optional(),
+    lat: z.number().min(-90).max(90).optional(),
+    lng: z.number().min(-180).max(180).optional(),
+    link: z.string().max(500).optional(),
+    minutes: z.number().int().min(1).max(1440).optional(),
+    bestAt: z.enum(['morning', 'midday', 'evening', 'night']).optional(),
+    keywords: z.array(z.string().max(40)).max(6).optional(),
+  })
+  route('POST', '/dev/places/import', async c => {
+    const user = needAdmin(c)
+    const body = await readBody(c.req, z.object({ rows: z.array(row).min(1).max(MAX_ROWS), city: z.string().trim().max(120).optional(), label: z.string().max(120).default('Import'), describe: z.boolean().default(true) }), 4 * 1024 * 1024)
+    if (importJobs().some(j => j.status === 'running')) throw new HttpError(409, 'An import is already running. Let it finish, or cancel it, first.')
+    const job = startImport(body.rows as ImportRow[], { by: user.id, label: body.label, defaultCity: body.city || undefined, describe: body.describe && analystEnabled() })
+    return { job }
+  })
+
+  route('GET', '/dev/places/imports', async c => {
+    needAdmin(c)
+    return { jobs: importJobs().map(({ rows, ...j }) => ({ ...j, rowCount: rows.length })) }
+  })
+
+  route('GET', '/dev/places/imports/:id', async c => {
+    needAdmin(c)
+    const job = importJob(c.params[0])
+    if (!job) throw new HttpError(404, 'That import isn’t on this server any more')
+    return { job }
+  })
+
+  route('DELETE', '/dev/places/imports/:id', async c => {
+    needAdmin(c)
+    cancelImport(c.params[0])
     return { ok: true }
   })
 

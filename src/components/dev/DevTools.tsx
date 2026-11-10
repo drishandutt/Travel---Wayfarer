@@ -1,39 +1,53 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, NetworkError } from '../../money/client'
+import { api } from '../../money/client'
 import type { ShareRead } from '../../share/types'
 import { useEscape } from '../money/parts'
 import { siteName } from '../share/ShareSheet'
+import { ago, errorText, when } from './util'
+import { Activity } from './Activity'
+import { Analyst } from './Analyst'
+import { Places } from './Places'
+import { Settings } from './Settings'
 
-// The owner's dev tools (server/dev): every log line and error, the signed-in sessions the
-// link reader uses, a way to try the reader, and tokens for the cookie-sync extension.
-// New tools are new tabs.
+// The owner's dev tools (server/dev): every log line and error, every activity and the
+// analyst agent over it, new places (the review queue, bulk imports), the signed-in sessions
+// the link reader uses, a way to try the reader, tokens for the cookie-sync extension, and
+// settings such as the OpenAI key. New tools are new tabs.
 
 interface LogRow { id: number; at: number; level: string; source: string; message: string; detail: string | null; user: string | null; url: string | null; agent: string | null }
 interface Site { domain: string; count: number; names: string[]; signedIn: boolean; expires: number | null; source: string; updatedAt: number }
 interface Token { id: string; label: string; createdAt: number; lastUsedAt: number | null }
 interface Status { browser: string | null; ai: string | null; admins: string; uptime: number; memory: number }
 
-type Tab = 'logs' | 'sessions' | 'reader' | 'extension'
+type Tab = 'activity' | 'analyst' | 'places' | 'logs' | 'sessions' | 'reader' | 'extension' | 'settings'
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'activity', label: 'Activity' },
+  { id: 'analyst', label: 'Analyst' },
+  { id: 'places', label: 'Places' },
   { id: 'logs', label: 'Logs' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'reader', label: 'Link reader' },
   { id: 'extension', label: 'Extension' },
+  { id: 'settings', label: 'Settings' },
 ]
 
-const errorText = (err: unknown) => (err instanceof NetworkError ? 'Can’t reach the server.' : (err as Error).message)
-const when = (ms: number) => new Date(ms).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })
-const ago = (ms: number) => {
-  const s = Math.round((Date.now() - ms) / 1000)
-  return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`
-}
-
 export function DevTools({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<Tab>('logs')
+  const [tab, setTab] = useState<Tab>(() => {
+    try { return (sessionStorage.getItem('wf_dev_tab') as Tab | null) ?? 'activity' } catch { return 'activity' }
+  })
+  const go = (t: Tab) => { setTab(t); try { sessionStorage.setItem('wf_dev_tab', t) } catch { /* fine */ } }
   const [status, setStatus] = useState<Status | null>(null)
   const [denied, setDenied] = useState('')
+  const [reviews, setReviews] = useState(0)
   useEscape(onClose)
-  useEffect(() => { api<Status>('GET', '/dev/status').then(setStatus).catch(err => setDenied(errorText(err))) }, [])
+  const refreshStatus = useCallback(() => api<Status>('GET', '/dev/status').then(setStatus).catch(err => setDenied(errorText(err))), [])
+  useEffect(() => { void refreshStatus() }, [refreshStatus])
+  useEffect(() => {
+    const load = () => api<{ reviews: unknown[] }>('GET', '/dev/places/reviews').then(r => setReviews(r.reviews.length)).catch(() => {})
+    void load()
+    const t = setInterval(load, 30_000)
+    return () => clearInterval(t)
+  }, [])
 
   return (
     <div className="dash m-app dev-app" role="dialog" aria-label="Dev tools">
@@ -53,9 +67,17 @@ export function DevTools({ onClose }: { onClose: () => void }) {
       ) : (
         <>
           <nav className="m-tabs" aria-label="Dev tools">
-            {TABS.map(t => <button key={t.id} aria-current={tab === t.id ? 'page' : undefined} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>{t.label}</button>)}
+            {TABS.map(t => (
+              <button key={t.id} aria-current={tab === t.id ? 'page' : undefined} className={tab === t.id ? 'on' : ''} onClick={() => go(t.id)}>
+                {t.label}{t.id === 'places' && reviews > 0 && <span className="dev-badge" aria-label={`${reviews} to review`}>{reviews}</span>}
+              </button>
+            ))}
           </nav>
           <div className="dev-page">
+            {tab === 'activity' && <Activity />}
+            {tab === 'analyst' && <Analyst onSettings={() => go('settings')} onPlaces={() => go('places')} />}
+            {tab === 'places' && <Places onReviewed={n => setReviews(n)} />}
+            {tab === 'settings' && <Settings onChanged={() => void refreshStatus()} />}
             {tab === 'logs' && <Logs />}
             {tab === 'sessions' && <Sessions />}
             {tab === 'reader' && <Reader />}

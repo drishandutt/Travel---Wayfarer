@@ -4,7 +4,7 @@ import { z, ZodError } from 'zod'
 import { CATEGORY_IDS } from '../../src/money/categories'
 import { CURRENCIES, isCurrencyCode } from '../../src/money/currency'
 import { MAX_AMOUNT, SplitError } from '../../src/money/engine'
-import { checkPassword, clearLimit, clientIp, currentUser, endSession, hashPassword, overLimit, startSession, toAccount, type UserRow } from './auth'
+import { checkPassword, clearLimit, clientIp, currentUser, endSession, hashPassword, overLimit, startSession, toAccount, widenSession, type UserRow } from './auth'
 import { openDatabase, type Db } from './db'
 import { getRates } from './fx'
 import { importSqliteOnce } from './importSqlite'
@@ -19,6 +19,9 @@ import { registerDevRoutes } from '../dev/routes'
 import { attachLogDb } from '../dev/log'
 import { attachVideoDb } from '../places'
 import { attachCityDb, loadCities } from '../cities/store'
+import { attachActivityDb, from, track } from '../dev/activity'
+import { attachSettingsDb } from '../dev/settings'
+import { startAnalystSchedule } from '../dev/analyst'
 
 // The money API: accounts, groups, expenses, settling up, and a live stream per group.
 // The server trusts nothing it can work out itself: splits, balances and who may see
@@ -246,16 +249,22 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
       // two taps of the button arriving together make one account
       await db.run('INSERT INTO users (id, name, email, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (email) DO NOTHING', randomUUID(), body.name, body.email, Date.now())
       found = (await db.one<UserRow>('SELECT * FROM users WHERE email = ?', body.email))!
+      track('auth.signup', { ...from(c.req, found.id), subject: found.id })
       await publishAll(db, await store.linkWaitingSeats(db, found))
     } else if (found.password_hash) {
       if (!body.password) return { next: 'password' }
       const key = `login:${body.email}`
       if (overLimit(key, 8, 900_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
-      if (!await checkPassword(body.password, found.password_hash)) throw new HttpError(401, 'That password isn’t right')
+      if (!await checkPassword(body.password, found.password_hash)) {
+        track('security.bad_password', { ...from(c.req, found.id), subject: found.id })
+        throw new HttpError(401, 'That password isn’t right')
+      }
       clearLimit(key)
     }
+    const switched = c.user && c.user.id !== found.id
     await endSession(db, c.req, c.res)
     await startSession(db, c.req, c.res, found.id)
+    track('auth.signin', { ...from(c.req, found.id), subject: found.id, detail: { password: Boolean(found.password_hash), ...(switched ? { switchedFrom: c.user!.id } : {}) } })
     return { user: toAccount(found) }
   })
 
@@ -264,7 +273,10 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
     const user = needUser(c)
     if (overLimit(`secure:${user.id}`, 8, 900_000)) throw new HttpError(429, 'Too many tries. Wait a few minutes and try again.')
     const body = await readBody(c.req, z.object({ email, password: password.optional(), current: z.string().max(200).optional() }))
-    if (user.password_hash && !(body.current && await checkPassword(body.current, user.password_hash))) throw new HttpError(403, 'Your current password isn’t right')
+    if (user.password_hash && !(body.current && await checkPassword(body.current, user.password_hash))) {
+      track('security.bad_password', { ...from(c.req, user.id), subject: user.id, detail: { while: 'changing account' } })
+      throw new HttpError(403, 'Your current password isn’t right')
+    }
     if (await db.one('SELECT 1 FROM users WHERE email = ? AND id != ?', body.email, user.id)) throw new HttpError(409, 'That email already has an account')
     const hash = body.password ? await hashPassword(body.password) : user.password_hash
     // checked again inside: the address could have been taken while the password was hashing
@@ -279,10 +291,12 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
       return (await db.one<UserRow>('SELECT * FROM users WHERE id = ?', user.id))!
     })
     await publishAll(db, await store.linkWaitingSeats(db, updated))
+    track('auth.account_changed', { ...from(c.req, user.id), subject: user.id, detail: { emailChanged: updated.email !== user.email, passwordSet: Boolean(body.password) } })
     return { user: toAccount(updated) }
   })
 
   route('POST', '/auth/logout', async c => {
+    if (c.user) track('auth.signout', { ...from(c.req, c.user.id), subject: c.user.id })
     await endSession(db, c.req, c.res)
     return { ok: true }
   })
@@ -511,13 +525,34 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
   registerVaultRoutes(db, vaultOpts, route, readBody, needUser)
   registerDevRoutes(db, route, readBody, needUser)
 
+  // Every request here, once answered, with who made it: the activity log (server/dev/activity.ts).
+  // The app's own log and activity uploads and the dev tools' own reads aren't recorded.
+  const quiet = (method: string, path: string) => path === '/api/money/dev/log' || path === '/api/money/dev/activity' || (method === 'GET' && path.startsWith('/api/money/dev/'))
+  const observe = (req: IncomingMessage, res: ServerResponse, url: URL, who: () => UserRow | null) => {
+    if (quiet(req.method ?? '', url.pathname)) return
+    const started = Date.now()
+    res.on('finish', () => {
+      const user = who()
+      const status = res.statusCode
+      const path = url.pathname.replace(/^\/api\/money/, '')
+      track('http.request', { ...from(req, user?.id), subject: `/api/money${path}`.slice(0, 200), detail: { method: req.method, status, ms: Date.now() - started } })
+      if (status === 403) track('security.forbidden', { ...from(req, user?.id), subject: path.slice(0, 200), detail: { method: req.method } })
+      if (status === 401 && path.startsWith('/dev/')) track('security.unauthorized', { ...from(req, user?.id), subject: path.slice(0, 200), detail: { method: req.method, bearer: Boolean(req.headers.authorization) } })
+      if (status >= 500) track('system.error', { ...from(req, user?.id), subject: path.slice(0, 200), detail: { method: req.method, status } })
+    })
+  }
+
   return async function handle(req: IncomingMessage, res: ServerResponse, url: URL) {
+    let user: UserRow | null = null
+    observe(req, res, url, () => user)
     try {
       for (const r of routes) {
         if (r.method !== req.method) continue
         const m = url.pathname.match(r.re)
         if (!m) continue
-        const out = await r.handler({ req, res, url, params: m.slice(1).map(decodeURIComponent), user: await currentUser(db, req) })
+        user = await currentUser(db, req)
+        if (user) widenSession(req, res)
+        const out = await r.handler({ req, res, url, params: m.slice(1).map(decodeURIComponent), user })
         if (!res.headersSent) send(res, 200, out ?? { ok: true })
         return
       }
@@ -560,8 +595,11 @@ export function moneyApi(): Promise<MoneyApi | null> {
       attachLogDb(db)
       attachVideoDb(db)
       attachCityDb(db)
+      attachActivityDb(db)
+      await attachSettingsDb(db).catch(err => console.warn('[dev] settings:', (err as Error).message))
       // the cities built so far, travellers' promoted finds and the places' profiles
       await loadCities().catch(err => console.warn('[cities] loading:', (err as Error).message))
+      startAnalystSchedule(db)
       const storage = vaultStorageFromEnv(MAX_ORIGINAL_BYTES)
       if (!storage) console.warn('[vault] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are unset: the photo vault is off.')
       return createMoneyApi(db, { storage, geocode: process.env.VAULT_GEOCODE === 'off' ? null : vault.nominatim(), limits: vaultLimitsFromEnv() })
@@ -587,6 +625,8 @@ export async function closeMoneyDb() {
   openDb = null
   attachLogDb(null)
   attachCityDb(null)
+  attachActivityDb(null)
+  await attachSettingsDb(null)
   api = undefined
   await db?.close()
 }

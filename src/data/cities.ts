@@ -211,6 +211,19 @@ export function addCatalogPlaces(cityId: string, places: Place[]): number {
   return added
 }
 
+// Takes places out of a city's catalog again (a find the owner hid). Returns how many went.
+export function removeCatalogPlaces(cityId: string, ids: string[]): number {
+  const at = CITIES.findIndex(c => c.id === cityId)
+  if (at < 0) return 0
+  const gone = new Set(ids)
+  const city = CITIES[at]
+  const places = city.places.filter(p => !gone.has(p.id))
+  if (places.length === city.places.length) return 0
+  CITIES[at] = { ...city, places }
+  cityVersion++
+  return city.places.length - places.length
+}
+
 export function findCity(text: string): City | undefined {
   const t = text.toLowerCase()
   // the longest alias that fits, so "new york" beats "york"

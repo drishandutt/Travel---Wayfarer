@@ -53,7 +53,7 @@ export interface Place {
   custom?: PlaceSource          // set on places the travellers added themselves
   rank?: number                 // 0..1, how well known it is: 1 is on every first-timer's list, 0 only locals know
   profile?: PlaceProfile        // its strengths, weaknesses and who it suits (src/planner/profile.ts)
-  found?: { at: number }        // a traveller's find, now in the city's shared catalog for everyone
+  found?: { at: number; via?: 'traveller' | 'review' | 'import' } // added to the city's shared catalog after it was built: a traveller's find (straight away, or once reviewed) or the owner's import
 }
 
 // Who a place suits. The planners read these against the trip (`audiencesOf` in

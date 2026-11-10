@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { initialState, isMember, reducer, type SavedTrip, type TripState } from './state/tripStore'
+import { initialState, isMember, reducer, type Action, type SavedTrip, type TripState } from './state/tripStore'
+import { trackAction, trackScreen } from './dev/activity'
 import { deleteTrip, groupCopyOf, loadCurrent, loadPanels, loadTrips, localCopyOf, saveCurrent, savePanels, saveTrip, setTripScope, snapshot, type PanelPrefs } from './state/persistence'
 import { converse, isReady, nextField } from './planner/intake'
 import { MockPlanner } from './planner/mockPlanner'
@@ -113,12 +114,14 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   }, [])
 
   // Reopen what was on screen after a refresh: the group's trip, or the one in progress here.
-  const [state, dispatch] = useReducer(reducer, initialState, init => {
+  const [state, rawDispatch] = useReducer(reducer, initialState, init => {
     const cached = activeGroup ? readLocal<SharedTrip | null>(`trip:${activeGroup}`, null) : null
     if (cached?.plan) return reducer(init, { type: 'shared-plan', plan: cached.plan, role: cached.role === 'owner' ? 'admin' : 'member', version: cached.planVersion, votes: myVotes(cached.votes, cached.me) })
     const local = activeGroup ? localCopyOf(activeGroup) : loadCurrent()
     return local ? reducer(init, { type: 'restore', trip: local }) : init
   })
+  // every action goes to the activity log too (src/dev/activity.ts), summarised against what was on screen
+  const dispatch = useCallback((a: Action) => { trackAction(a, latest.current); rawDispatch(a) }, [])
   const member = isMember(state)
   const [typing, setTyping] = useState(false)
   const [theme, toggleTheme] = useTheme()
@@ -602,6 +605,15 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   // place on its map): that trip's own, made on the spot if accepting the plan didn't get to.
   const [moneyOpen, setMoneyOpen] = useState<{ scope?: string; prefill?: ExpensePrefill } | null>(null)
   const [vaultOpen, setVaultOpen] = useState<{ scope?: string } | null>(null)
+  // which screens people open, for the activity log
+  const screens = { dashboard: dashOpen, money: Boolean(moneyOpen), photos: Boolean(vaultOpen), 'dev tools': devOpen, 'share sheet': Boolean(incoming) }
+  const lastScreens = useRef<Record<string, boolean>>({})
+  useEffect(() => {
+    for (const [name, open] of Object.entries(screens)) {
+      if (Boolean(lastScreens.current[name]) !== open) trackScreen(name, open)
+      lastScreens.current[name] = open
+    }
+  })
   const tripSpace = async (): Promise<string | undefined> => {
     if (activeGroup) return activeGroup
     if (!account || member) return undefined

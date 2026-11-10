@@ -21,6 +21,8 @@ import { cityById } from '../src/data/cities'
 import { currentUser } from './money/auth'
 import { buildStatus, knownCities, lookupCity, profileCityInBackground, recordSignals } from './cities/store'
 import { cityDb } from './money/routes'
+import { flushActivity, from, track } from './dev/activity'
+import type { UserRow } from './money/auth'
 
 // first, so nothing logged from here on is missed
 captureServerConsole()
@@ -111,10 +113,35 @@ async function stream(res: ServerResponse, events: (signal: AbortSignal) => Asyn
   res.end()
 }
 
+// Who's asking, from the sign-in cookie, when the database is open.
+async function whoIs(req: IncomingMessage): Promise<UserRow | null> {
+  if (!req.headers.cookie) return null
+  const db = await cityDb()
+  return db ? await currentUser(db, req).catch(() => null) : null
+}
+
+// Every request, once it's answered: the activity log the dev tools and their analyst read.
+// Built files and the app's own log and activity uploads are left out (they'd only log
+// themselves), as are the dev tools' own polling and a build's progress polls. The money API
+// records its requests itself, since it knows who's signed in.
+const QUIET = /^\/api\/money\/dev\/(?:log|activity)$|^\/api\/cities\/[^/]+\/status$/
+function trackRequest(req: IncomingMessage, res: ServerResponse, path: string) {
+  const started = Date.now()
+  if (path.startsWith('/api/money/') || QUIET.test(path) || /^\/assets\/|\.(?:js|css|png|jpg|svg|ico|woff2|map|webmanifest)$/.test(path)) return
+  res.on('finish', () => {
+    void whoIs(req).then(user => track('http.request', {
+      ...from(req, user?.id),
+      subject: path.slice(0, 200),
+      detail: { method: req.method, status: res.statusCode, ms: Date.now() - started, ...(req.headers.referer ? { referer: String(req.headers.referer).slice(0, 200) } : {}) },
+    }))
+  })
+}
+
 const server = createServer(async (req, res) => {
   try {
     // inside the try: a malformed path like "//" throws here, and must not stop the server
     const url = new URL(req.url ?? '/', 'http://localhost')
+    trackRequest(req, res, url.pathname)
     if (req.method === 'GET' && url.pathname === '/api/health') {
       return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(await moneyApi()), openai: openaiEnabled, agent: agentEnabled(), linkReader: chromiumPath() ? 'browser' : 'fetch' })
     }
@@ -128,9 +155,18 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/places/resolve') {
       if (overLimit(`place:${clientIp(req)}`, 40, 3_600_000)) return json(res, 429, { error: 'That’s a lot of places in a short while. Try again in a bit.' })
       try {
-        const db = await cityDb()
-        const user = db ? await currentUser(db, req).catch(() => null) : null
-        return json(res, 200, await resolvePlace(await readJson<ResolveRequest>(req), abortOnClose(res).signal, user?.id ?? null))
+        const user = await whoIs(req)
+        const body = await readJson<ResolveRequest>(req)
+        const { coord: _c, describe: _d, ...ask } = body
+        void _c; void _d
+        try {
+          const out = await resolvePlace(ask, abortOnClose(res).signal, user?.id ?? null)
+          track('place.resolve', { ...from(req, user?.id), subject: `${ask.city}/${out.place.id}`, detail: { asked: (ask.name ?? '').slice(0, 120), link: ask.link ? ask.link.slice(0, 300) : null, city: ask.city ?? null, found: out.place.name, kind: out.place.kind, map: out.map, category: out.category, model: out.model ?? null, shared: Boolean(out.shared), review: Boolean(out.review) } })
+          return json(res, 200, { place: out.place, note: out.note, shared: out.shared })
+        } catch (err) {
+          if (err instanceof PlaceError) track('place.resolve.failed', { ...from(req, user?.id), subject: ask.city ?? null, detail: { asked: (ask.name ?? '').slice(0, 120), link: ask.link ? ask.link.slice(0, 300) : null, error: err.message } })
+          throw err
+        }
       } catch (err) {
         if (err instanceof PlaceError) return json(res, 422, { error: err.message })
         throw err
@@ -164,7 +200,7 @@ const server = createServer(async (req, res) => {
       if (!text?.trim()) return json(res, 400, { error: 'Say which city.' })
       // a lookup that starts a build reads a guide and asks a model; the rest is cheap
       if (overLimit(`city:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'That’s a lot of cities in a short while. Try again in a bit.' })
-      return json(res, 200, await lookupCity(text.slice(0, 200), abortOnClose(res).signal))
+      return json(res, 200, await lookupCity(text.slice(0, 200), abortOnClose(res).signal, (await whoIs(req))?.id ?? null))
     }
     const cityPath = url.pathname.match(/^\/api\/cities\/([a-z0-9-]{1,40})(?:\/(status|signals))?$/)
     if (cityPath && req.method === 'GET' && cityPath[2] === 'status') {
@@ -187,7 +223,7 @@ const server = createServer(async (req, res) => {
       if (overLimit(`signals:${clientIp(req)}`, 60, 3_600_000)) return json(res, 429, { error: 'Too many in a short while.' })
       const body = await readJson<{ liked?: unknown; rejected?: unknown; brief?: TripBrief }>(req)
       const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length <= 80).slice(0, 200) : [])
-      const n = await recordSignals(cityPath[1], ids(body.liked), ids(body.rejected), body.brief && typeof body.brief === 'object' ? { ...body.brief, vibes: Array.isArray(body.brief.vibes) ? body.brief.vibes : [] } : { vibes: [] })
+      const n = await recordSignals(cityPath[1], ids(body.liked), ids(body.rejected), body.brief && typeof body.brief === 'object' ? { ...body.brief, vibes: Array.isArray(body.brief.vibes) ? body.brief.vibes : [] } : { vibes: [] }, (await whoIs(req))?.id ?? null)
       return json(res, 200, { recorded: n })
     }
     if (req.method === 'POST' && url.pathname === '/api/agent') {
@@ -243,7 +279,7 @@ function shutdown(signal: string) {
   server.close()
   server.closeAllConnections() // live-sync streams would otherwise hold the close open
   // a transaction still in flight is rolled back by the database, so nothing half-written stays
-  void Promise.race([flushLogs().then(() => Promise.all([closeMoneyDb(), closeBrowser()])), new Promise(r => setTimeout(r, 3000))]).finally(() => process.exit(0))
+  void Promise.race([Promise.all([flushLogs(), flushActivity()]).then(() => Promise.all([closeMoneyDb(), closeBrowser()])), new Promise(r => setTimeout(r, 3000))]).finally(() => process.exit(0))
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))

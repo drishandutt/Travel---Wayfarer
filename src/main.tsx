@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { installDevLogger } from './dev/logger'
+import { installActivity } from './dev/activity'
 import './styles.css'
 import './deck.css'
 import './panels.css'
@@ -18,6 +19,7 @@ import './memphis.css'
 
 // first, so errors while starting up are kept too
 installDevLogger()
+installActivity()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

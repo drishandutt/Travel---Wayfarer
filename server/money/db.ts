@@ -401,6 +401,72 @@ export const MIGRATIONS = [`
       REVOKE ALL ON SEQUENCE place_signals_id_seq FROM anon, authenticated;
     END IF;
   END $$;
+`, `
+  -- Settings the owner changes in the dev tools without a redeploy (the OpenAI key, for one).
+  CREATE TABLE dev_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    updated_by TEXT
+  );
+
+  -- Every activity, server and app: requests, sign-ins, refusals, city builds, what the system
+  -- decided about a new place, and what people do in the app. detail is JSON.
+  CREATE TABLE activity_events (
+    id BIGSERIAL PRIMARY KEY,
+    at BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    source TEXT NOT NULL,
+    user_id TEXT,
+    device TEXT,
+    ip TEXT,
+    agent TEXT,
+    subject TEXT,
+    detail TEXT
+  );
+  CREATE INDEX activity_events_at ON activity_events(at DESC);
+  CREATE INDEX activity_events_kind ON activity_events(kind, at DESC);
+  CREATE INDEX activity_events_user ON activity_events(user_id, at DESC) WHERE user_id IS NOT NULL;
+
+  -- What the analyst agent made of the activity: scheduled reviews and questions asked.
+  CREATE TABLE dev_reports (
+    id TEXT PRIMARY KEY,
+    at BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    question TEXT,
+    hours INTEGER NOT NULL,
+    model TEXT,
+    report TEXT NOT NULL
+  );
+  CREATE INDEX dev_reports_at ON dev_reports(at DESC);
+
+  -- Travellers' finds the system couldn't call either way (a hidden gem, or someone's home?),
+  -- waiting for the owner to accept or deny in the dev tools. place is the Place JSON.
+  CREATE TABLE place_reviews (
+    id TEXT PRIMARY KEY,
+    city_id TEXT NOT NULL,
+    place TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'denied')),
+    reason TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    added_by TEXT,
+    created_at BIGINT NOT NULL,
+    decided_at BIGINT,
+    decided_by TEXT
+  );
+  CREATE INDEX place_reviews_status ON place_reviews(status, created_at DESC);
+
+  ALTER TABLE dev_settings ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE activity_events ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE dev_reports ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE place_reviews ENABLE ROW LEVEL SECURITY;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON dev_settings, activity_events, dev_reports, place_reviews FROM anon, authenticated;
+      REVOKE ALL ON SEQUENCE activity_events_id_seq FROM anon, authenticated;
+    END IF;
+  END $$;
 `]
 
 // A transaction is one connection, and one connection runs one query at a time: reads that

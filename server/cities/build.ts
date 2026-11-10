@@ -223,6 +223,7 @@ export interface BuildOptions {
   // for a known huge city, the district pages to read instead of discovering them
   districts?: string[]
   essentials?: boolean            // ask a model for the essentials (default: when one is configured)
+  rebuild?: boolean               // building a built city again, from its guide as it is now
 }
 
 export async function buildCity(found: { title: string; page: Page }, o: BuildOptions = {}): Promise<City> {
@@ -230,7 +231,7 @@ export async function buildCity(found: { title: string; page: Page }, o: BuildOp
   const { title, page } = found
   const name = title.replace(/\s*\(.*\)$/, '')
   const id = slug(name)
-  if (CITIES.some(c => c.id === id)) throw new BuildError(`${name} is already mapped.`)
+  if (!o.rebuild && CITIES.some(c => c.id === id)) throw new BuildError(`${name} is already mapped.`)
 
   // the pages that carry the listings: the article itself, and its districts (a borough's own districts too)
   say(`Reading the ${name} guide`)
@@ -309,7 +310,7 @@ export async function buildCity(found: { title: string; page: Page }, o: BuildOp
   for (const a of ess?.aliases ?? []) {
     const f = fold(a)
     // short aliases match inside other words; a city's own name is never dropped
-    if (f.length >= 4 && !findCity(f)) aliases.add(f)
+    if (f.length >= 4 && (!findCity(f) || findCity(f)?.id === id)) aliases.add(f)
   }
 
   return {
