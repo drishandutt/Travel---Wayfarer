@@ -146,7 +146,7 @@ Tested at 375×812 and 320×568, with no sideways scrolling.
 
 ### The iPhone app (`ios/`, `capacitor.config.ts`)
 
-A native app built with Capacitor 8 (Swift Package Manager, so no CocoaPods). It's a shell around the **live site**, not a bundled copy: sign-in is an `HttpOnly` cookie on `/api/money`, and trips and money stay live over `EventSource`, which both need the page and the API on one origin. Loading production keeps them first-party, so nothing in the web app changed for it, and **every push to `main` updates the app too**. Only native changes (icon, permissions, plugins, the shell itself) need a new build.
+A native app built with Capacitor 8 (Swift Package Manager, so no CocoaPods). It's a shell around the **live site**, not a bundled copy: sign-in is an emailed code, then an `HttpOnly` cookie on `/api`, and trips and money stay live over `EventSource`, which both need the page and the API on one origin. Loading production keeps them first-party, so nothing in the web app changed for it, and **every push to `main` updates the app too**. Only native changes (icon, permissions, plugins, the shell itself) need a new build.
 
 - **Launch:** the splash (the icon on `#1d1d1f`) stays up until the page has painted. `src/main.tsx` hides it through the Capacitor bridge, which the shell injects into the remote page too; `launchShowDuration` caps it at 6s.
 - **Offline:** `public/offline.html` is bundled in the app (`server.errorPath`) and shown when the site can't be reached, with a *Try again* button.
