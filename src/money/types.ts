@@ -154,7 +154,7 @@ export interface GroupSummary {
   phase: string | null          // where the trip plan has got to, if the group has one
 }
 
-export interface Account { id: string; name: string; email: string; hasPassword: boolean; payHandle: string | null }
+export interface Account { id: string; name: string; email: string; hasPassword: boolean; payHandle: string | null; createdAt?: number }
 
 export interface InvitePreview {
   groupId: string

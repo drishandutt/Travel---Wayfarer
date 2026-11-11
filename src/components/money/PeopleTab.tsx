@@ -225,7 +225,7 @@ function SettingsCard({ onLeft }: { onLeft: () => void }) {
   )
 }
 
-export function AccountCard({ className = 'span-6' }: { className?: string }) {
+export function AccountCard({ className = 'span-6', claude = true }: { className?: string; claude?: boolean }) {
   const { account, signedIn, signOut } = useAccountCtx()
   const [name, setName] = useState(account.name)
   const [handle, setHandle] = useState(account.payHandle ?? '')
@@ -271,7 +271,7 @@ export function AccountCard({ className = 'span-6' }: { className?: string }) {
 
   return (
     <section className={`card ${className}`}>
-      <header className="card-head"><h2>Account</h2></header>
+      <header className="card-head"><h2>{claude ? 'Account' : 'Your details'}</h2></header>
       <p className="m-note">Signed in as <b>{account.email}</b>.</p>
       {!account.hasPassword && (
         <p className="m-note">
@@ -299,7 +299,7 @@ export function AccountCard({ className = 'span-6' }: { className?: string }) {
         </form>
       )}
       {msg && <p className={`m-note ${msg.good ? 'good' : 'bad'}`} role="status">{msg.text}</p>}
-      <ConnectClaudeCard />
+      {claude && <ConnectClaudeCard />}
       <button className="m-link" onClick={() => {
         const unsent = unsentCount()
         if (unsent && !confirm(`You have ${unsent} change${unsent > 1 ? 's' : ''} that ${unsent > 1 ? 'haven’t' : 'hasn’t'} synced yet. Signing out discards ${unsent > 1 ? 'them' : 'it'}. Sign out anyway?`)) return

@@ -6,7 +6,6 @@ import type { Theme } from '../state/theme'
 import type { GroupSummary } from '../money/types'
 import { groupCopyOf } from '../state/persistence'
 import { MoonIcon, PhotoIcon, RestartIcon, SunIcon } from './Icons'
-import { ConnectClaudeGuide } from './ConnectClaude'
 
 const STEPS: { id: Phase; label: string }[] = [
   { id: 'intake', label: 'Brief' },
@@ -39,11 +38,11 @@ interface Props {
   devReviews?: number           // the owner's finds waiting for review
   email: string | null
   onSignOut: () => void
+  onProfile?: () => void
 }
 
-function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut, onDevTools, devReviews = 0 }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'onDeleteGroup' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut' | 'onDevTools' | 'devReviews'>) {
+function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut, onProfile, onDevTools, devReviews = 0 }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'onDeleteGroup' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut' | 'onProfile' | 'onDevTools' | 'devReviews'>) {
   const [open, setOpen] = useState(false)
-  const [claude, setClaude] = useState(false) // the Use-with-Claude guide
   const ref = useRef<HTMLDivElement>(null)
   // A trip you run for a group is listed as the group. Anything else stays reachable on its
   // own: a group that's gone, one someone else runs, or an older copy.
@@ -87,19 +86,18 @@ function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, ac
           {email && (
             <div className="trips-account">
               <small>{email}</small>
-              <button onClick={() => { setOpen(false); setClaude(true) }}>Use with Claude</button>
+              {onProfile && <button onClick={() => { setOpen(false); onProfile() }}>Profile</button>}
               {onDevTools && <button onClick={() => { setOpen(false); onDevTools() }}>Dev tools{devReviews > 0 && <span className="dev-badge" aria-label={`${devReviews} to review`}>{devReviews}</span>}</button>}
               <button onClick={() => { setOpen(false); onSignOut() }}>Sign out</button>
             </div>
           )}
         </div>
       )}
-      {claude && <ConnectClaudeGuide onClose={() => setClaude(false)} />}
     </div>
   )
 }
 
-export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut }: Props) {
+export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut, onProfile }: Props) {
   const b = state.brief
   const city = cityById(b.destination)
   const at = STEPS.findIndex(s => s.id === state.phase)
@@ -120,7 +118,7 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, t
             aria-label={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'Offline planner'}
             title={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'No ANTHROPIC_API_KEY on the server: using the offline planner'} />
         )}
-        <TripsMenu trips={trips} current={state.tripId} onOpen={onOpen} onDelete={onDelete} onDeleteGroup={onDeleteGroup} groups={groups} activeGroup={activeGroup} onOpenGroup={onOpenGroup} onNewTrip={onNewTrip} email={email} onSignOut={onSignOut} onDevTools={onDevTools} devReviews={devReviews} />
+        <TripsMenu trips={trips} current={state.tripId} onOpen={onOpen} onDelete={onDelete} onDeleteGroup={onDeleteGroup} groups={groups} activeGroup={activeGroup} onOpenGroup={onOpenGroup} onNewTrip={onNewTrip} email={email} onSignOut={onSignOut} onProfile={onProfile} onDevTools={onDevTools} devReviews={devReviews} />
         <button className="money-btn" onClick={onMoney} aria-label="Money">
           Money
         </button>

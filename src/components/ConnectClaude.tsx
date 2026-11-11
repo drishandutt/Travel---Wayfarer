@@ -127,3 +127,40 @@ export function ConnectClaudeCard() {
     </div>
   )
 }
+
+// What Claude can do once connected, grouped the way the tools are (server/mcp/tools.ts).
+const CAN = [
+  ['Your trips', 'List and switch between them, read the plan day by day, or start a new trip.'],
+  ['Places', 'Search the web for places, suggest ones that fit, show details and videos, and add them.'],
+  ['The plan', 'Add, move and remove stops, tidy a day, fill gaps, choose the hotel, and undo.'],
+  ['Getting there', 'Find flights and hotels for your dates and the area you’re staying in, and record what you book.'],
+  ['Money', 'Who owes whom, where the money went, add expenses and record payments.'],
+  ['People', 'See who’s on the trip, invite someone, read and post in the trip chat.'],
+] as const
+
+// The Claude section of the profile: whether it's connected, the address, what it can do, and
+// the connected apps, with the full guide a tap away.
+export function ClaudeProfileCard({ className = '' }: { className?: string }) {
+  const { info, error, disconnect } = useConnections()
+  const [open, setOpen] = useState(false)
+  const list = info?.connections ?? []
+  const last = list.reduce<number | null>((m, c) => c.lastUsedAt && (!m || c.lastUsedAt > m) ? c.lastUsedAt : m, null)
+  return (
+    <section className={`card ${className}`}>
+      <header className="card-head">
+        <h2>Claude</h2>
+        {info && <span className={`p-status ${list.length ? 'on' : ''}`}><i />{list.length ? `Connected${list.length > 1 ? ` · ${list.length} apps` : ''}` : 'Not connected'}</span>}
+      </header>
+      <p className="m-note">Wayfarer works as a connector (an MCP server) in Claude. Claude acts on the trip you choose, as you, and what it changes shows up here live.{last ? ` Last used ${when(last)}.` : ''}</p>
+      <h4 className="p-sub">Your Wayfarer address</h4>
+      {info ? <Address url={info.mcpUrl} /> : !error && <div className="m-skeleton p-line" />}
+      <button className="cta m-small p-guide" onClick={() => setOpen(true)}>{list.length ? 'Connect another app' : 'Connect Claude, step by step'}</button>
+      <h4 className="p-sub">Connected apps</h4>
+      {error ? <p className="m-note bad">{error}</p> : info ? <Connected list={list} onDisconnect={c => void disconnect(c)} /> : <div className="m-skeleton p-line" />}
+      <h4 className="p-sub">What Claude can do</h4>
+      <dl className="p-can">{CAN.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+      <p className="m-note">It can only do what you could in the app: only a trip’s admin changes its plan, and it asks before spending, inviting or posting for you.</p>
+      {open && <ConnectClaudeGuide onClose={() => setOpen(false)} />}
+    </section>
+  )
+}

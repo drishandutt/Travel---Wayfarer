@@ -18,6 +18,7 @@ import { TopBar } from './components/TopBar'
 import { PlaceCard } from './components/PlaceCard'
 import { PicksPanel, SwipeDeck, type DeckGroup } from './components/SwipeDeck'
 import { Dashboard } from './components/Dashboard'
+import { Profile } from './components/Profile'
 import { AuthScreen, JoinScreen, MoneyApp, useInvite, useMoneyBadge, type MoneyTrip } from './components/money/MoneyApp'
 import type { ExpensePrefill } from './components/money/ExpenseForm'
 import { Empty } from './components/money/parts'
@@ -615,6 +616,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   // place on its map): that trip's own, made on the spot if accepting the plan didn't get to.
   const [moneyOpen, setMoneyOpen] = useState<{ scope?: string; prefill?: ExpensePrefill } | null>(null)
   const [vaultOpen, setVaultOpen] = useState<{ scope?: string } | null>(null)
+  const [profileOpen, setProfileOpen] = useState(false)
   // which screens people open, for the activity log
   const screens = { dashboard: dashOpen, money: Boolean(moneyOpen), photos: Boolean(vaultOpen), 'dev tools': devOpen, 'share sheet': Boolean(incoming) }
   const lastScreens = useRef<Record<string, boolean>>({})
@@ -798,6 +800,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     })()
   }, [shareQueue, state.tripId, state.brief.destination, state.phase, state.shared?.role, activeGroup])
 
+  const closeProfile = useCallback(() => setProfileOpen(false), [])
   const signOut = async () => {
     const unsent = unsentCount()
     if (unsent && !confirm(`You have ${unsent} change${unsent > 1 ? 's' : ''} that ${unsent > 1 ? 'haven’t' : 'hasn’t'} synced yet. Signing out discards ${unsent > 1 ? 'them' : 'it'}. Sign out anyway?`)) return
@@ -920,7 +923,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       <div className="vignette" />
 
       <TopBar state={state} brain={brain} trips={trips}  onOpen={openTrip} onDelete={removeTrip} onDeleteGroup={account ? deleteShared : undefined} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} onPhotos={() => setVaultOpen({})}
-        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} devReviews={devReviews} email={account?.email ?? null} onSignOut={signOut} />
+        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} devReviews={devReviews} email={account?.email ?? null} onSignOut={signOut} onProfile={account ? () => setProfileOpen(true) : undefined} />
 
       {newGroup && (
         <div className="trip-nudge" role="status">
@@ -991,6 +994,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         onMoney={() => openTripMoney()} onPhotos={openTripPhotos} balance={tripBalance} />}
 
       {moneyOpen && <MoneyApp acct={acct} trip={moneyTrip} scope={moneyOpen.scope} prefill={moneyOpen.prefill} onClose={() => { setMoneyOpen(null); refreshGroups().catch(() => {}) }} />}
+      {profileOpen && account && <Profile acct={acct} trips={trips} groups={groups ?? []} onClose={closeProfile} />}
       {vaultOpen && <VaultApp acct={acct} scope={vaultOpen.scope} onClose={() => setVaultOpen(null)} />}
 
       {incoming && <ShareSheet shared={incoming} targets={shareTargets} signedIn={Boolean(account)} onAdd={addShared} onClose={() => setIncoming(null)} onDevTools={devAdmin ? () => { setIncoming(null); setDevOpen(true) } : undefined} />}
