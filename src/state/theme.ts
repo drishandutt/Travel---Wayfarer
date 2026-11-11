@@ -1,45 +1,52 @@
 import { useCallback, useEffect, useState } from 'react'
 
-// Light or dark. Follows the device until the viewer picks one; the pick is remembered.
+// Light or dark. By default it follows the time of day: light from 7 in the morning, dark from
+// 7 in the evening, switching on its own. Picking Light or Dark in the Profile fixes it; the
+// pick is remembered on this device.
 export type Theme = 'light' | 'dark'
+export type ThemeMode = 'auto' | Theme
 
-const KEY = 'wayfarer:theme'
+const KEY = 'wayfarer:theme-mode'
 const META = { light: '#f5f5f7', dark: '#000000' }
+export const DAY_STARTS = 7
+export const NIGHT_STARTS = 19
 
-function saved(): Theme | null {
+function saved(): ThemeMode {
   try {
     const t = localStorage.getItem(KEY)
-    return t === 'light' || t === 'dark' ? t : null
+    return t === 'light' || t === 'dark' ? t : 'auto'
   } catch {
-    return null
+    return 'auto'
   }
 }
 
-const device = (): Theme => (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+export const byClock = (d = new Date()): Theme => (d.getHours() >= DAY_STARTS && d.getHours() < NIGHT_STARTS ? 'light' : 'dark')
+const resolve = (mode: ThemeMode): Theme => (mode === 'auto' ? byClock() : mode)
 
-export function useTheme(): [Theme, () => void] {
-  const [theme, setTheme] = useState<Theme>(() => saved() ?? device())
+export function useTheme() {
+  const [mode, setModeState] = useState<ThemeMode>(saved)
+  const [theme, setTheme] = useState<Theme>(() => resolve(saved()))
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', META[theme])
   }, [theme])
 
-  // no explicit choice yet: keep following the device
+  // on Auto, look at the clock every minute, and whenever the app comes back to the front
   useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: light)')
-    const on = () => { if (!saved()) setTheme(device()) }
-    mq.addEventListener('change', on)
-    return () => mq.removeEventListener('change', on)
+    setTheme(resolve(mode))
+    if (mode !== 'auto') return
+    const check = () => setTheme(byClock())
+    const t = setInterval(check, 60_000)
+    const back = () => { if (document.visibilityState === 'visible') check() }
+    document.addEventListener('visibilitychange', back)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', back) }
+  }, [mode])
+
+  const setMode = useCallback((m: ThemeMode) => {
+    setModeState(m)
+    try { if (m === 'auto') localStorage.removeItem(KEY); else localStorage.setItem(KEY, m) } catch { /* storage blocked: applies for this visit */ }
   }, [])
 
-  const toggle = useCallback(() => {
-    setTheme(t => {
-      const next: Theme = t === 'dark' ? 'light' : 'dark'
-      try { localStorage.setItem(KEY, next) } catch { /* storage blocked: applies for this visit */ }
-      return next
-    })
-  }, [])
-
-  return [theme, toggle]
+  return { theme, mode, setMode }
 }

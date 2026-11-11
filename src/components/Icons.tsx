@@ -40,3 +40,6 @@ export const MoonIcon = () => (
 export const RestartIcon = () => (
   <svg {...base} width={16} height={16}><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" /></svg>
 )
+export const ToolsIcon = () => (
+  <svg {...base}><rect x="4" y="4" width="6.5" height="6.5" rx="1.6" /><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6" /><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6" /><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6" /></svg>
+)

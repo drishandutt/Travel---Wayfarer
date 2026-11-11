@@ -2,10 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { Phase, SavedTrip, TripState } from '../state/tripStore'
 import { cityById } from '../data/cities'
 import type { BrainStatus } from '../planner/brain'
-import type { Theme } from '../state/theme'
 import type { GroupSummary } from '../money/types'
 import { groupCopyOf } from '../state/persistence'
-import { MoonIcon, PhotoIcon, RestartIcon, SunIcon } from './Icons'
+import { RestartIcon, ToolsIcon } from './Icons'
 import { Avatar } from './money/parts'
 
 const STEPS: { id: Phase; label: string }[] = [
@@ -24,10 +23,9 @@ interface Props {
   onOpen: (trip: SavedTrip) => void
   onDelete: (id: string) => void
   onDeleteGroup?: (group: GroupSummary) => void   // an admin deleting a shared trip, for everyone
-  theme: Theme
-  onToggleTheme: () => void
   onMoney: () => void
   onPhotos: () => void
+  onDocs: () => void
   groups: GroupSummary[]
   activeGroup: string | null
   onOpenGroup: (id: string) => void
@@ -42,6 +40,42 @@ interface Props {
   onProfile?: () => void
   me?: { id: string; name: string } | null
   alertsUnread?: number
+}
+
+// Photos, documents and money, behind one button so the bar stays clear.
+const TOOLS = [
+  { id: 'photos', icon: '🖼', label: 'Photos', hint: 'Trip photos, shared with who you choose' },
+  { id: 'docs', icon: '🧳', label: 'Documents', hint: 'Tickets, bookings, passports, with alerts' },
+  { id: 'money', icon: '💸', label: 'Money', hint: 'Expenses and who owes whom' },
+] as const
+
+function ToolsMenu({ onMoney, onPhotos, onDocs, alertsUnread = 0 }: Pick<Props, 'onMoney' | 'onPhotos' | 'onDocs' | 'alertsUnread'>) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc) }
+  }, [open])
+  const go = { photos: onPhotos, docs: onDocs, money: onMoney }
+  return (
+    <div className="trips tools" ref={ref}>
+      <button className="trips-btn tools-btn" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(o => !o)}><ToolsIcon /><span>Tools</span></button>
+      {open && (
+        <div className="trips-menu tools-menu" role="menu">
+          {TOOLS.map(t => (
+            <button key={t.id} role="menuitem" className="tool-row" onClick={() => { setOpen(false); go[t.id]() }}>
+              <span className="tool-icon" aria-hidden>{t.icon}</span>
+              <span><b>{t.label}{t.id === 'docs' && alertsUnread > 0 && <i className="tool-badge">{alertsUnread}</i>}</b><small>{t.hint}</small></span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut, onProfile, onDevTools, devReviews = 0 }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'onDeleteGroup' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut' | 'onProfile' | 'onDevTools' | 'devReviews'>) {
@@ -100,7 +134,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, ac
   )
 }
 
-export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut, onProfile, me, alertsUnread = 0 }: Props) {
+export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, onMoney, onPhotos, onDocs, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut, onProfile, me, alertsUnread = 0 }: Props) {
   const b = state.brief
   const city = cityById(b.destination)
   const at = STEPS.findIndex(s => s.id === state.phase)
@@ -122,14 +156,8 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, t
             title={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'No ANTHROPIC_API_KEY on the server: using the offline planner'} />
         )}
         <TripsMenu trips={trips} current={state.tripId} onOpen={onOpen} onDelete={onDelete} onDeleteGroup={onDeleteGroup} groups={groups} activeGroup={activeGroup} onOpenGroup={onOpenGroup} onNewTrip={onNewTrip} email={email} onSignOut={onSignOut} onProfile={onProfile} onDevTools={onDevTools} devReviews={devReviews} />
-        <button className="money-btn" onClick={onMoney} aria-label="Money">
-          Money
-        </button>
-        <button className="money-btn photos-btn" onClick={onPhotos} aria-label="Vault: photos and documents" title="Photos and documents"><span>Vault</span><PhotoIcon /></button>
+        <ToolsMenu onMoney={onMoney} onPhotos={onPhotos} onDocs={onDocs} alertsUnread={alertsUnread} />
         {onStartOver && <button className="money-btn restart-btn" onClick={onStartOver} aria-label="Start over" title="Start over: your plan so far stays in My trips"><RestartIcon /><span>Start over</span></button>}
-        <button className="theme-btn" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
-          {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-        </button>
         {onProfile && me && <button className="profile-btn" onClick={onProfile} aria-label={alertsUnread ? `Profile: ${alertsUnread} new alert${alertsUnread > 1 ? 's' : ''}` : 'Profile'} title="Profile"><Avatar id={me.id} name={me.name} size={30} />{alertsUnread > 0 && <span className="alert-dot">{alertsUnread > 9 ? '9+' : alertsUnread}</span>}</button>}
       </div>
       {/* phones: the full stepper doesn't fit, so show where you are in one line */}

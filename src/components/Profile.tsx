@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { AccountHandle } from '../money/hooks'
 import type { GroupSummary } from '../money/types'
 import type { SavedTrip } from '../state/tripStore'
-import type { Theme } from '../state/theme'
+import { DAY_STARTS, NIGHT_STARTS, type ThemeMode } from '../state/theme'
 import { AccountCtx, Avatar } from './money/parts'
 import { AccountCard } from './money/PeopleTab'
 import { ClaudeProfileCard } from './ConnectClaude'
@@ -15,7 +15,7 @@ import type { Alerts } from '../docs/client'
 
 const since = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 
-export function Profile({ acct, trips, groups, theme, onToggleTheme, alerts, onReadAlerts, onDocs, onClose }: { acct: AccountHandle; trips: SavedTrip[]; groups: GroupSummary[]; theme: Theme; onToggleTheme: () => void; alerts: Alerts | null; onReadAlerts: () => void; onDocs: () => void; onClose: () => void }) {
+export function Profile({ acct, trips, groups, themeMode, onThemeMode, alerts, onReadAlerts, onDocs, onClose }: { acct: AccountHandle; trips: SavedTrip[]; groups: GroupSummary[]; themeMode: ThemeMode; onThemeMode: (m: ThemeMode) => void; alerts: Alerts | null; onReadAlerts: () => void; onDocs: () => void; onClose: () => void }) {
   const { account, signedIn, signOut } = acct
   const ctx = useMemo(() => (account ? { account, signedIn, signOut: async () => { await signOut(); onClose() } } : null), [account, signedIn, signOut, onClose])
   if (!account || !ctx) return null
@@ -42,9 +42,12 @@ export function Profile({ acct, trips, groups, theme, onToggleTheme, alerts, onR
               {account.payHandle && <p className="p-pay">Pay me: <b>{account.payHandle}</b></p>}
             </div>
             <dl className="p-facts">{facts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
-            {/* on narrow phones the top bar has no room for the theme button, so it's here too */}
-            <div className="p-theme" role="group" aria-label="Appearance">
-              {(['light', 'dark'] as const).map(t => <button key={t} className={theme === t ? 'on' : ''} aria-pressed={theme === t} onClick={() => theme !== t && onToggleTheme()}>{t === 'light' ? 'Light' : 'Dark'}</button>)}
+            {/* light and dark: Auto follows the time of day */}
+            <div className="p-appearance">
+              <div className="p-theme" role="group" aria-label="Appearance">
+                {(['auto', 'light', 'dark'] as const).map(t => <button key={t} className={themeMode === t ? 'on' : ''} aria-pressed={themeMode === t} onClick={() => onThemeMode(t)}>{t === 'auto' ? 'Auto' : t === 'light' ? 'Light' : 'Dark'}</button>)}
+              </div>
+              <small>{themeMode === 'auto' ? `Light from ${DAY_STARTS}:00, dark from ${NIGHT_STARTS}:00` : `Always ${themeMode}`}</small>
             </div>
           </section>
           <AlertsCard className="span-12" alerts={alerts} onRead={onReadAlerts} onDocs={onDocs} />

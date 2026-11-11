@@ -128,7 +128,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   const dispatch = useCallback((a: Action) => { trackAction(a, latest.current); rawDispatch(a) }, [])
   const member = isMember(state)
   const [typing, setTyping] = useState(false)
-  const [theme, toggleTheme] = useTheme()
+  const { theme, mode: themeMode, setMode: setThemeMode } = useTheme()
   const [trips, setTrips] = useState<SavedTrip[]>(loadTrips)
   const [justSaved, setJustSaved] = useState(false)
 
@@ -962,7 +962,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         : { left: tucked.chat && state.phase !== 'swipe' ? 60 : 440, right: tucked.journal || state.phase === 'intake' ? 60 : 460 }} />
       <div className="vignette" />
 
-      <TopBar state={state} brain={brain} trips={trips}  onOpen={openTrip} onDelete={removeTrip} onDeleteGroup={account ? deleteShared : undefined} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} onPhotos={() => setVaultOpen({})}
+      <TopBar state={state} brain={brain} trips={trips}  onOpen={openTrip} onDelete={removeTrip} onDeleteGroup={account ? deleteShared : undefined} onMoney={() => setMoneyOpen({})} onPhotos={() => setVaultOpen({ section: 'photos' })} onDocs={openDocs}
         groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} devReviews={devReviews} email={account?.email ?? null} onSignOut={signOut} onProfile={account ? () => setProfileOpen(true) : undefined} me={account} alertsUnread={alerts?.unread ?? 0} />
 
       {newGroup && (
@@ -1034,7 +1034,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         onMoney={() => openTripMoney()} onPhotos={openTripPhotos} balance={tripBalance} />}
 
       {moneyOpen && <MoneyApp acct={acct} trip={moneyTrip} scope={moneyOpen.scope} prefill={moneyOpen.prefill} onClose={() => { setMoneyOpen(null); refreshGroups().catch(() => {}) }} />}
-      {profileOpen && account && <Profile acct={acct} trips={trips} groups={groups ?? []} theme={theme} onToggleTheme={toggleTheme} alerts={alerts} onReadAlerts={markAllRead} onDocs={openDocs} onClose={closeProfile} />}
+      {profileOpen && account && <Profile acct={acct} trips={trips} groups={groups ?? []} themeMode={themeMode} onThemeMode={setThemeMode} alerts={alerts} onReadAlerts={markAllRead} onDocs={openDocs} onClose={closeProfile} />}
       {vaultOpen && <VaultApp acct={acct} scope={vaultOpen.scope} section={vaultOpen.section} onClose={() => { setVaultOpen(null); if (new URLSearchParams(location.search).has('docs')) history.replaceState(null, '', location.pathname) }} />}
 
       {incoming && <ShareSheet shared={incoming} targets={shareTargets} signedIn={Boolean(account)} onAdd={addShared} onClose={() => setIncoming(null)} onDevTools={devAdmin ? () => { setIncoming(null); setDevOpen(true) } : undefined} />}

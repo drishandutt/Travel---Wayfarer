@@ -56,6 +56,7 @@
 .dcard.top { --pop: var(--m-violet); }
 .dcard:not(.top) { box-shadow: none; }
 .trips-menu { --pop: var(--m-yellow); }
+.tools-menu { --pop: var(--m-teal); }
 .m-modal { --pop: var(--m-pink); }
 .sheet { --pop: var(--m-pink); box-shadow: 0 -5px 0 var(--pop); border-width: 2px 0 0; }
 .leg-pop .maplibregl-popup-content { --pop: var(--m-teal); }

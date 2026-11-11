@@ -220,7 +220,12 @@
   .place-card .close { width: 44px; height: 44px; }
 }
 
-/* narrow phones, signed in: the avatar takes the theme button's place (it's in the Profile) */
-@media (max-width: 420px) {
-  .brand:has(.profile-btn) .theme-btn { display: none; }
+/* phones: the Tools menu drops down full width under the bar, like My trips */
+@media (max-width: 760px) {
+  .tools-menu { position: fixed; top: calc(env(safe-area-inset-top) + 56px); left: 12px; right: 12px; width: auto; }
+  .tools-btn { min-height: 36px; padding: 6px 10px; }
+}
+@media (max-width: 330px) {
+  .tools-btn span { display: none; }
+  .tools-btn { min-width: 44px; justify-content: center; }
 }
