@@ -64,13 +64,23 @@ export function PlaceCard({ state, dispatch, onLogExpense, voteOn }: { state: Tr
       <PhotoGallery id={p.id} name={p.name} coord={p.coord} allowArea={['sight', 'viewpoint', 'park'].includes(p.kind)} context={cityById(state.brief.destination)?.name} nearbyLabel="Nearby" lead={PLACE_COVERS[p.id]} />
       <div className="pc-meta">
         {p.custom && <span className="kind mine">Your find</span>}
-        {!p.custom && p.found && <span className="kind found">Traveller’s find</span>}
+        {!p.custom && p.found && <span className="kind found">{p.found.via === 'vibe' ? 'Local pick' : 'Traveller’s find'}</span>}
         <span className="kind">{p.kind}</span>
         <span>{p.minutes} min</span>
         <span>{p.price ? '$'.repeat(p.price) : 'Free'}</span>
       </div>
       <h3>{p.name}</h3>
       <p>{p.blurb}</p>
+      {(p.tips && Object.keys(p.tips).length > 0) || p.hours ? (
+        <dl className="pc-tips">
+          {p.tips?.order && <><dt>Order</dt><dd>{p.tips.order}</dd></>}
+          {p.tips?.arrive && <><dt>Arrive</dt><dd>{p.tips.arrive}</dd></>}
+          {p.tips?.move && <><dt>The move</dt><dd>{p.tips.move}</dd></>}
+          {p.tips?.heads && <><dt>Know</dt><dd>{p.tips.heads}</dd></>}
+          {p.hours && <><dt>Hours</dt><dd>{p.hours}</dd></>}
+        </dl>
+      ) : null}
+      {p.source && <a className="pc-source" href={p.source} target="_blank" rel="noreferrer">Where we found it ↗</a>}
       {p.custom?.url && <a className="pc-source" href={p.custom.url} target="_blank" rel="noreferrer">Open in {SOURCE_NAME[p.custom.from] ?? 'maps'} ↗</a>}
       {(bestFor.length > 0 || (informed && (prof.strengths.length > 0 || prof.weaknesses.length > 0))) && (
         <dl className="pc-profile">

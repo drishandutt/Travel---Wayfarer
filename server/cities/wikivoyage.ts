@@ -225,15 +225,15 @@ export function priceOf(l: Pick<Listing, 'price' | 'band' | 'type'>, kind: Place
   return kind === 'park' || kind === 'viewpoint' ? 0 : kind === 'cafe' || kind === 'market' ? 1 : kind === 'sight' ? 1 : 2
 }
 
-export const MINUTES: Record<PlaceKind, number> = { food: 75, cafe: 45, bar: 90, museum: 100, park: 60, viewpoint: 45, market: 60, sight: 60 }
-export const BEST: Record<PlaceKind, Place['bestAt']> = { food: 'evening', cafe: 'morning', bar: 'night', museum: 'midday', park: 'morning', viewpoint: 'evening', market: 'midday', sight: 'midday' }
+export const MINUTES: Record<PlaceKind, number> = { food: 75, cafe: 45, bar: 90, museum: 100, park: 60, viewpoint: 45, market: 60, sight: 60, experience: 120 }
+export const BEST: Record<PlaceKind, Place['bestAt']> = { food: 'evening', cafe: 'morning', bar: 'night', museum: 'midday', park: 'morning', viewpoint: 'evening', market: 'midday', sight: 'midday', experience: 'midday' }
 
 // The first sentence, short enough for a card.
 export function blurbOf(content: string, kind: PlaceKind, district: string): string {
   const first = content.split(/(?<=[.!?])\s+(?=[A-Z])/)[0]?.trim() ?? ''
   if (first.length >= 12 && first.length <= 110) return first.replace(/[.!]?$/, '.')
   if (first.length > 110) return `${first.slice(0, 105).replace(/\s+\S*$/, '')}…`
-  const what = { food: 'Restaurant', cafe: 'Café', bar: 'Bar', museum: 'Museum', park: 'Green space', viewpoint: 'Viewpoint', market: 'Market', sight: 'Sight' }[kind]
+  const what = { food: 'Restaurant', cafe: 'Café', bar: 'Bar', museum: 'Museum', park: 'Green space', viewpoint: 'Viewpoint', market: 'Market', sight: 'Sight', experience: 'Experience' }[kind]
   return `${what} in ${district.replace(/-/g, ' and ')}.`
 }
 

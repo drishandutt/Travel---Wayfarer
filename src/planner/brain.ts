@@ -46,3 +46,10 @@ export async function findStay(name: string, city: string): Promise<{ name: stri
   if (!res.ok) throw new Error(await errorText(res))
   return res.json()
 }
+
+// Places that fit the trip's mood, found on the web and added to the city on the server.
+export async function findVibe(cityId: string, brief: TripBrief): Promise<{ places: import('../types').Place[]; cached: boolean }> {
+  const res = await fetch(`/api/cities/${encodeURIComponent(cityId)}/vibe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brief }) })
+  if (!res.ok) throw new Error(await errorText(res))
+  return res.json()
+}

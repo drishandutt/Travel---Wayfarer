@@ -22,6 +22,7 @@ import { chromiumPath, closeBrowser } from './share/browser'
 import { cityById } from '../src/data/cities'
 import { currentUser } from './money/auth'
 import { buildStatus, knownCities, lookupCity, profileCityInBackground, recordSignals } from './cities/store'
+import { findByVibe, hasMood } from './cities/vibeSearch'
 import { cityDb } from './money/routes'
 import { flushActivity, from, track } from './dev/activity'
 import { oauthAndMcp } from './mcp/http'
@@ -45,6 +46,7 @@ captureServerConsole()
 //   POST /api/cities/lookup  -> { status: known | building | failed | unknown, … }  the city a message names, built if need be
 //   GET  /api/cities/:id/status -> how a build is going
 //   POST /api/cities/:id/signals -> what a traveller kept and skipped on the deck, so places learn who they suit
+//   POST /api/cities/:id/vibe    -> { places, cached, mood }  places that fit the trip's mood, found on the web and added to the city
 //   /api/money/*       -> shared expenses (server/money/routes.ts), the photo vault, reading
 //                         shared links (/share/read) and the dev tools (/dev/*, server/dev)
 
@@ -216,7 +218,7 @@ const server = createServer(async (req, res) => {
       if (overLimit(`city:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'That’s a lot of cities in a short while. Try again in a bit.' })
       return json(res, 200, await lookupCity(text.slice(0, 200), abortOnClose(res).signal, (await whoIs(req))?.id ?? null))
     }
-    const cityPath = url.pathname.match(/^\/api\/cities\/([a-z0-9-]{1,40})(?:\/(status|signals))?$/)
+    const cityPath = url.pathname.match(/^\/api\/cities\/([a-z0-9-]{1,40})(?:\/(status|signals|vibe))?$/)
     if (cityPath && req.method === 'GET' && cityPath[2] === 'status') {
       const job = buildStatus(cityPath[1])
       const city = cityById(cityPath[1])
@@ -239,6 +241,20 @@ const server = createServer(async (req, res) => {
       const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length <= 80).slice(0, 200) : [])
       const n = await recordSignals(cityPath[1], ids(body.liked), ids(body.rejected), body.brief && typeof body.brief === 'object' ? { ...body.brief, vibes: Array.isArray(body.brief.vibes) ? body.brief.vibes : [] } : { vibes: [] }, (await whoIs(req))?.id ?? null)
       return json(res, 200, { recorded: n })
+    }
+    // places that fit the trip's mood, found on the web and added to the city (a minute or so)
+    if (cityPath && req.method === 'POST' && cityPath[2] === 'vibe') {
+      if (!provider()) return json(res, 503, { error: 'Finding places by mood needs a model connected on the server.' })
+      const body = await readJson<{ brief?: TripBrief }>(req)
+      const brief: TripBrief | undefined = body.brief && typeof body.brief === 'object' ? { ...body.brief, vibes: Array.isArray(body.brief.vibes) ? body.brief.vibes : [] } : undefined
+      if (!brief || !hasMood(brief)) return json(res, 400, { error: 'Tell me a bit about the trip first.' })
+      if (!cityById(cityPath[1])) return json(res, 404, { error: 'Unknown city' })
+      // a search per new mood: a web search and a map lookup per place
+      if (overLimit(`vibe:${clientIp(req)}`, 10, 3_600_000)) return json(res, 429, { error: 'That’s a lot of searches in a short while. Try again in a bit.' })
+      if (overLimit('model:day', DAILY_MODEL_CALLS, 86_400_000)) return json(res, 503, { error: 'The planner has had a very busy day. It’ll be back tomorrow.' })
+      // not stopped if they close the tab: what it finds joins the city for everyone
+      const out = await findByVibe(cityPath[1], brief, (await whoIs(req))?.id ?? null)
+      return json(res, 200, out)
     }
     if (req.method === 'POST' && url.pathname === '/api/agent') {
       if (!agentEnabled()) return json(res, 503, { error: 'The assistant isn’t switched on here.' })

@@ -136,8 +136,11 @@ function applyEvent(s: TripState, e: PlannerEvent): TripState {
       return { ...s, candidates: { ...s.candidates, [e.place.id]: { place: e.place, verdict: e.verdict } } }
     case 'leg':
       return { ...s, legs: [...s.legs, { leg: e.leg, color: e.color }] }
-    case 'day':
-      return { ...s, days: [...s.days, e.plan] }
+    case 'day': {
+      // why each place is in their plan, kept on the trip so it survives edits and re-timing
+      const why = Object.fromEntries(e.plan.stops.filter(st => st.why).map(st => [st.place.id, st.why!]))
+      return { ...s, days: [...s.days, e.plan], ...(Object.keys(why).length ? { brief: { ...s.brief, why: { ...s.brief.why, ...why } } } : {}) }
+    }
     case 'plan-ready':
       return { ...s, phase: 'review' }
     case 'hotel-candidate':

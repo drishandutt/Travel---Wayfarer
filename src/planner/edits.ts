@@ -67,6 +67,7 @@ const CATEGORIES: { re: RegExp; label: string; test: (p: Place) => boolean }[] =
   { re: /\b(views?|viewpoints?|lookouts?|skyline|sunsets?)\b/, label: 'viewpoints', test: p => p.kind === 'viewpoint' },
   { re: /\b(romantic|romance|date)\b/, label: 'romantic spots', test: p => p.tags.includes('romantic') },
   { re: /\b(adventure|adventurous|thrills?)\b/, label: 'adventure', test: p => p.tags.includes('adventure') },
+  { re: /\b(experiences?|activit(y|ies)|things to do|class(es)?|workshops?|boat (trip|ride)s?|spa|shows?)\b/, label: 'experiences', test: p => p.kind === 'experience' },
 ]
 
 // ── helpers on the draft ──────────────────────────────────────────────────────

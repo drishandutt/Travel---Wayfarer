@@ -393,7 +393,7 @@ export function registerDevRoutes(
     city: z.string().max(80).optional(),
     country: z.string().max(80).optional(),
     area: z.string().max(120).optional(),
-    kind: z.enum(['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint']).optional(),
+    kind: z.enum(['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint', 'experience']).optional(),
     vibes: z.array(z.enum(['food', 'culture', 'nightlife', 'nature', 'art', 'shopping', 'relaxed', 'adventure', 'romantic', 'history'])).max(3).optional(),
     price: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
     notes: z.string().max(300).optional(),

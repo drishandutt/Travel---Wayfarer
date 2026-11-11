@@ -31,7 +31,7 @@ import { ToolError, change, cityOf, hasItinerary, loadTrip, placeOf, said, state
 // the app uses, so the same rules hold: only a trip's admin changes its plan, everyone in it can
 // post and split costs, and the server decides who sees what. A session is about one trip.
 
-const KINDS = ['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint'] as const
+const KINDS = ['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint', 'experience'] as const
 const VIBES = ['food', 'culture', 'nightlife', 'nature', 'art', 'shopping', 'relaxed', 'adventure', 'romantic', 'history'] as const
 
 type Text = { content: { type: 'text'; text: string }[]; isError?: boolean }

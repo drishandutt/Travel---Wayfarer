@@ -26,7 +26,7 @@ export function ruleProfile(p: Place): PlaceProfile {
   const eats = p.kind === 'food' || p.kind === 'cafe' || (p.kind === 'market' && has('food'))
   const rank = p.rank
 
-  let kids = { park: 0.9, museum: 0.7, market: 0.6, sight: 0.6, viewpoint: 0.6, cafe: 0.5, food: p.price >= 3 ? 0.2 : 0.4, bar: 0.05 }[p.kind]
+  let kids = { park: 0.9, museum: 0.7, market: 0.6, sight: 0.6, viewpoint: 0.6, cafe: 0.5, food: p.price >= 3 ? 0.2 : 0.4, bar: 0.05, experience: 0.5 }[p.kind]
   if (p.bestAt === 'night' || has('nightlife')) kids = Math.min(kids, 0.15)
   if (has('adventure') && p.kind !== 'bar') kids += 0.1
 
@@ -34,7 +34,7 @@ export function ruleProfile(p: Place): PlaceProfile {
   if (p.kind === 'market') busy += 0.1
   if (p.kind === 'park' && (rank ?? 0) < 0.8) busy -= 0.1
 
-  let lively = { bar: 0.85, market: 0.65, sight: 0.5, food: 0.5, viewpoint: 0.45, museum: 0.35, cafe: 0.3, park: 0.25 }[p.kind]
+  let lively = { bar: 0.85, market: 0.65, sight: 0.5, food: 0.5, viewpoint: 0.45, museum: 0.35, cafe: 0.3, park: 0.25, experience: 0.6 }[p.kind]
   if (has('nightlife', 'adventure')) lively = Math.max(lively, 0.8)
   if (has('relaxed')) lively -= 0.15
   if (has('romantic')) lively -= 0.1

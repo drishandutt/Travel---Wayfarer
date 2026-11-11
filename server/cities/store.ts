@@ -89,6 +89,17 @@ export async function promoteFind(cityId: string, found: Place, userId: string |
   return place
 }
 
+// What a mood search found in a city before, if it was recent enough to trust.
+export async function recallVibe(key: string, maxAgeMs: number): Promise<string[] | undefined> {
+  const row = await db?.one<{ place_ids: string; searched_at: number | string }>('SELECT place_ids, searched_at FROM vibe_searches WHERE key = ?', key)
+  if (!row || Date.now() - Number(row.searched_at) > maxAgeMs) return undefined
+  return JSON.parse(row.place_ids) as string[]
+}
+
+export async function rememberVibe(key: string, cityId: string, mood: string, placeIds: string[]): Promise<void> {
+  await db?.run('INSERT INTO vibe_searches (key, city_id, mood, place_ids, searched_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET place_ids = excluded.place_ids, searched_at = excluded.searched_at', key, cityId, mood, JSON.stringify(placeIds), Date.now())
+}
+
 // Takes a promoted place back out of the catalog. Only places that joined after the city was
 // built (finds and imports): the guide's own places come back with the next build anyway.
 // `by`: who did it, an id for the activity log and an email to show.

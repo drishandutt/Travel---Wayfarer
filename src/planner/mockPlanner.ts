@@ -3,6 +3,7 @@ import { tripCity } from '../data/cities'
 import { centroid, fmtClock } from './geo'
 import { resolveBudgetTier } from './intake'
 import { sleep, type PlannerEngine, type Picks } from './engine'
+import { moodFit } from './story'
 import { applyGapFill, dayShape, buildDay, findGapFill, groupDays, hotelLegs, scoreHotel, scorePlace, shortlist, stayHotel } from './core'
 
 export class MockPlanner implements PlannerEngine {
@@ -107,6 +108,8 @@ export class MockPlanner implements PlannerEngine {
         await this.wait(380, signal)
       }
       const travel = plan.legs.reduce((s, l) => s + l.minutes, 0)
+      // where what they told us is why a place is here, say so on its stop
+      plan = { ...plan, stops: plan.stops.map(st => { const m = moodFit(st.place, brief).match; return m ? { ...st, why: `Fits your ${m}` } : st }) }
       yield { type: 'day', plan }
       yield { type: 'thought', text: `Day ${plan.day} locked: ${plan.stops.length} stops, ~${travel} min moving, back by ${fmtClock(plan.stops[plan.stops.length - 1].depart)}.`, tone: 'decide' }
       await this.wait(500, signal)

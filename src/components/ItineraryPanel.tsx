@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type Dispatch } from 'react'
-import type { DayPlan, Leg, Place } from '../types'
+import type { City, DayPlan, Leg, Place, TripBrief } from '../types'
 import { isMember, type Action, type TripState } from '../state/tripStore'
 import { fmtClock, fmtCost, travelOptions } from '../planner/geo'
 import { cityById } from '../data/cities'
+import { dayDate } from '../planner/story'
+import { WEEKDAY_NAME, closedStops, movingMinutes, sunsetOnDay, weekdayOf } from '../planner/when'
 import { BedIcon, PauseIcon, SparkIcon, TransitIcon, WalkIcon } from './Icons'
 import { usePhotos } from './SwipeDeck'
 
@@ -66,21 +68,34 @@ function StopPhoto({ place }: { place: Place }) {
   )
 }
 
-function Day({ day, hotelName, dispatch, hover, editable, fare, flash }: { day: DayPlan; hotelName?: string; dispatch: Dispatch<Action>; hover: string | null; editable: boolean; fare: Fare; flash: boolean }) {
+function Day({ day, hotelName, dispatch, hover, editable, fare, flash, brief, city }: { day: DayPlan; hotelName?: string; dispatch: Dispatch<Action>; hover: string | null; editable: boolean; fare: Fare; flash: boolean; brief: TripBrief; city?: City }) {
   const out = day.legs.find(l => l.id.endsWith('-out'))
   const back = day.legs.find(l => l.id.endsWith('-back'))
+  // the day as a day in the calendar: its date, sunset, time getting around, and anything shut
+  const date = dayDate(brief, day.day)
+  const sunset = sunsetOnDay(city, brief, day.day)
+  const moving = movingMinutes(day)
+  const shut = closedStops(day, brief)
+  const weekday = weekdayOf(brief, day.day)
   return (
     <article className={`day ${flash ? 'flash' : ''}`} style={{ ['--c' as string]: day.color }}>
       <header>
         <span className="day-n">Day {day.day}</span>
         <h3>{day.title}</h3>
-        <span className="day-span">{fmtClock(out ? day.stops[0].arrive - out.minutes : day.stops[0].arrive)} – {fmtClock(day.stops[day.stops.length - 1].depart + (back?.minutes ?? 0))}</span>
+        <span className="day-span">{date ? `${date} · ` : ''}{fmtClock(out ? day.stops[0].arrive - out.minutes : day.stops[0].arrive)} – {fmtClock(day.stops[day.stops.length - 1].depart + (back?.minutes ?? 0))}</span>
         {editable && (
           <button className="tidy" title="Re-order stops by time of day and distance" onClick={() => dispatch({ type: 'optimize-day', day: day.day })}>
             <SparkIcon /> Tidy
           </button>
         )}
       </header>
+      <p className="day-facts">
+        <span>{moving} min getting around</span>
+        {sunset !== undefined && <span>Sunset {fmtClock(sunset)}</span>}
+      </p>
+      {shut.length > 0 && weekday !== undefined && (
+        <p className="day-warn" role="note">{shut.map(p => p.name).join(' and ')} {shut.length > 1 ? 'are' : 'is'} usually closed on {WEEKDAY_NAME[weekday]}s.</p>
+      )}
       <ol className="timeline">
         {out && hotelName && (
           <li className="hotel-row"><BedIcon /> Leave {hotelName} <LegChip leg={out} fare={fare} /></li>
@@ -102,6 +117,8 @@ function Day({ day, hotelName, dispatch, hover, editable, fare, flash }: { day: 
                   <time>{fmtClock(s.arrive)}–{fmtClock(s.depart)}</time>
                 </div>
                 <p>{s.place.blurb}</p>
+                {(s.why ?? brief.why?.[s.place.id]) && <p className="stop-why">{s.why ?? brief.why?.[s.place.id]}</p>}
+                {s.place.tips?.move && <p className="stop-tip">{s.place.tips.move}</p>}
                 <div className="tags">
                   <span className="kind">{s.place.kind}</span>
                   <span className="price">{s.place.price ? '$'.repeat(s.place.price) : 'free'}</span>
@@ -149,7 +166,7 @@ export function ItineraryPanel({ state, dispatch }: { state: TripState; dispatch
         {days.map(d => {
           const flash = Boolean(state.flash?.days.includes(d.day))
           // re-keying a just-changed day replays its highlight animation
-          return <Day key={flash ? `${d.day}-${state.flash!.key}` : d.day} day={d} hotelName={state.hotel?.hotel.name} dispatch={dispatch} hover={state.hoverPlace} editable={!isMember(state) && (state.phase === 'review' || state.phase === 'final')} fare={fare} flash={flash} />
+          return <Day key={flash ? `${d.day}-${state.flash!.key}` : d.day} day={d} hotelName={state.hotel?.hotel.name} dispatch={dispatch} hover={state.hoverPlace} editable={!isMember(state) && (state.phase === 'review' || state.phase === 'final')} fare={fare} flash={flash} brief={state.brief} city={city} />
         })}
       </div>
     </div>

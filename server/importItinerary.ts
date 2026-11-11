@@ -17,7 +17,7 @@ import { resolvePlace } from './places'
 // (POST /api/import-itinerary) and by Claude through the MCP server (import_itinerary).
 
 export const MAX_DAYS = 14
-const KINDS: PlaceKind[] = ['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint']
+const KINDS: PlaceKind[] = ['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint', 'experience']
 
 export class ImportError extends Error {}
 

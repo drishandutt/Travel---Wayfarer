@@ -1,4 +1,4 @@
-import type { TripBrief, TripStory, Vibe } from '../types'
+import type { Place, TripBrief, TripStory, Vibe } from '../types'
 
 // The trip as they told it (`TripBrief.story`). With a model connected, the intake fills the
 // story; offline, the rules here read the same things from what they typed: dates, where they're
@@ -196,10 +196,11 @@ export function dayDate(brief: TripBrief, n: number): string | undefined {
 }
 
 // The story in words, for a model planner.
-export function storyLines(brief: TripBrief): string[] {
+export function storyLines(brief: TripBrief, sunsets?: (number | undefined)[]): string[] {
   const s = brief.story
   const out: string[] = []
-  if (brief.startDate && brief.days) out.push(`Dates: ${dayDate(brief, 1)} to ${dayDate(brief, brief.days)} (respect each weekday's opening days)`)
+  if (brief.startDate && brief.days) out.push(`Dates: ${Array.from({ length: brief.days }, (_, i) => `day ${i + 1} is ${dayDate(brief, i + 1)}`).join(', ')}. Respect each place's opening days`)
+  if (sunsets?.some(x => x !== undefined)) out.push(`Sunset: ${sunsets.map((m, i) => (m === undefined ? '' : `day ${i + 1} ${fmt(m)}`)).filter(Boolean).join(', ')}. Put views, rooftops and waterfronts there then`)
   if (!s) return out
   if (s.occasion) out.push(`Occasion: ${s.occasion}`)
   if (s.people?.length) out.push(`Going with: ${s.people.map(p => (p.notes ? `${p.who} (${p.notes})` : p.who)).join('; ')}`)
@@ -243,3 +244,45 @@ export function readBack(brief: TripBrief, cityName?: string): ReadChip[] {
   else if (brief.budgetTier) chips.push({ key: 'budget', icon: '💰', label: brief.budgetTier })
   return chips
 }
+
+// ── matching places to the story ─────────────────────────────────────────────
+
+const STOP = new Set(['a', 'an', 'the', 'and', 'or', 'of', 'for', 'with', 'to', 'in', 'on', 'at', 'her', 'his', 'their', 'my', 'our', 'your', 'she', 'he', 'they', 'loves', 'love', 'likes', 'like', 'into', 'really', 'very', 'some', 'any', 'not', 'no', 'trip', 'day', 'night', 'vibe', 'vibes', 'stuff', 'things', 'thing', 'place', 'places', 'experience', 'experiences', 'as', 'surprise', 'is', 'it', 'be', 'we', 'i'])
+const stem = (w: string) => w.replace(/(ies)$/, 'y').replace(/(?<=[a-z]{3})(es|s)$/, '')
+export const moodWords = (text: string): string[] => [...new Set(text.toLowerCase().split(/[^a-z]+/).filter(w => w.length > 2 && !STOP.has(w)).map(stem))]
+
+// What they want, in words: the feel, the occasion, the moments and what they said about the people.
+export function wantedWords(brief: TripBrief): string[] {
+  const s = brief.story ?? {}
+  const text = [...(s.feel ?? []).filter(f => !/^(not|no|never)\b/i.test(f)), s.occasion ?? '', ...(s.moments ?? []).map(m => m.what), ...(s.people ?? []).map(p => p.notes ?? ''), ...(brief.tastes ?? [])].join(' ')
+  return moodWords(text)
+}
+export function avoidWords(brief: TripBrief): string[] {
+  const s = brief.story ?? {}
+  return moodWords([...(s.avoid ?? []), ...(s.feel ?? []).filter(f => /^(not|no|never)\b/i.test(f))].join(' ')).filter(w => !/^touristy?$/.test(w))
+}
+
+// How well a place answers the story: its mood words and cuisine against what they want, and
+// against what they said to avoid.
+export function moodFit(p: Pick<Place, 'moods' | 'keywords' | 'name'>, brief: TripBrief): { score: number; match?: string } {
+  if (!brief.story && !brief.tastes?.length) return { score: 0 }
+  const has = new Set(moodWords([...(p.moods ?? []), ...(p.keywords ?? [])].join(' ')))
+  if (!has.size) return { score: 0 }
+  const hits = wantedWords(brief).filter(w => has.has(w))
+  const bad = avoidWords(brief).filter(w => has.has(w))
+  const score = Math.min(3, hits.length) * 1.5 - bad.length * 4
+  return { score, ...(hits.length ? { match: hits.slice(0, 2).join(' + ') } : {}) }
+}
+
+// The mood, as a stable key: the same words in any order are the same search for places.
+export function moodOf(brief: TripBrief): string {
+  const s = brief.story ?? {}
+  const words = moodWords([
+    ...(s.feel ?? []), s.occasion ?? '', ...(s.moments ?? []).map(m => m.what), ...(s.people ?? []).map(p => p.notes ?? ''),
+    ...(s.avoid ?? []).map(a => `no-${a}`), ...brief.vibes, ...(brief.tastes ?? []), brief.budgetTier ?? '',
+  ].join(' '))
+  return words.sort().slice(0, 24).join(' ')
+}
+
+// Worth searching for places by mood: there's something to search for beyond "a city".
+export const hasMood = (brief: TripBrief) => Boolean(brief.story?.feel?.length || brief.story?.occasion || brief.story?.moments?.length || brief.story?.avoid?.length || brief.story?.people?.some(p => p.notes) || brief.tastes?.length)

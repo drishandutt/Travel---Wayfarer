@@ -64,7 +64,7 @@ describe('reading the trip from what they wrote, offline', () => {
 
   it('says the story to a model planner in words', () => {
     const lines = storyLines({ vibes: [], startDate: '2026-11-24', days: 3, story: { stay: { name: 'Sun-n-Sand' }, arrive: 780, avoid: ['touristy'] } }).join('\n')
-    assert.match(lines, /Tue 24 Nov to Thu 26 Nov/)
+    assert.match(lines, /day 1 is Tue 24 Nov, day 2 is Wed 25 Nov, day 3 is Thu 26 Nov/)
     assert.match(lines, /Staying at: Sun-n-Sand/)
     assert.match(lines, /free from 13:00 on day 1/)
     assert.match(lines, /Avoid: touristy/)

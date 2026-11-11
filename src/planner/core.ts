@@ -2,7 +2,7 @@ import type { DayPlan, Hotel, HotelScore, Leg, LngLat, Place, Stop, TripBrief, V
 import { estimateTravel, haversineKm, kmeans, trafficOf } from './geo'
 import { resolveBudgetTier } from './intake'
 import { audiencesOf, profileFit, profileOf } from './profile'
-import { arrivalFloor } from './story'
+import { arrivalFloor, moodFit } from './story'
 
 // Deterministic planning primitives shared by the offline MockPlanner (browser)
 // and the Claude planning agent (server). Claude decides *what* and *in which
@@ -82,9 +82,13 @@ export function scorePlace(p: Place, brief: TripBrief): { score: number; why: st
   // who it suits, from its profile: what the guides and travellers who kept it say
   const fit = profileFit(p, brief, audiencesOf(brief))
   score += fit.score
+  // what they told us: the feel, the occasion, the people, against the place's own mood words
+  const mood = moodFit(p, brief)
+  score += mood.score
   const gem = local >= 0.6 && p.rank !== undefined && p.rank <= 0.4
   const icon = local <= 0.4 && p.rank !== undefined && p.rank >= 0.8
-  const why = loved.length ? `your kind of thing: ${loved.join(' + ')}`
+  const why = mood.match ? `fits your ${mood.match}`
+    : loved.length ? `your kind of thing: ${loved.join(' + ')}`
     : tuned.why ? tuned.why
     : fit.why ? fit.why
     : gem ? 'off the tourist trail'

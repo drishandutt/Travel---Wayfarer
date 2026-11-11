@@ -590,6 +590,24 @@ export const MIGRATIONS = [`
       REVOKE ALL ON documents, alerts FROM anon, authenticated;
     END IF;
   END $$;
+`, `
+  -- Searches for places that fit a trip's mood (server/cities/vibeSearch.ts): which places each
+  -- mood found in a city, so the same mood isn't searched for again for a while. The places
+  -- themselves join the city's catalog (city_places, via 'vibe').
+  CREATE TABLE vibe_searches (
+    key TEXT PRIMARY KEY,
+    city_id TEXT NOT NULL,
+    mood TEXT NOT NULL,
+    place_ids TEXT NOT NULL,
+    searched_at BIGINT NOT NULL
+  );
+  ALTER TABLE vibe_searches ENABLE ROW LEVEL SECURITY;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON vibe_searches FROM anon, authenticated;
+    END IF;
+  END $$;
 `]
 
 // A transaction is one connection, and one connection runs one query at a time: reads that

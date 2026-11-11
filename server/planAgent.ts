@@ -7,6 +7,7 @@ import { resolveBudgetTier } from '../src/planner/intake'
 import { tuningLines } from '../src/planner/sliders'
 import { profileLine } from '../src/planner/profile'
 import { storyLines } from '../src/planner/story'
+import { WEEKDAY_NAME, closedOnDay, sunsetOnDay, weekdayOf } from '../src/planner/when'
 import { sleep, type Picks } from '../src/planner/engine'
 import { providerName, toolLoop, type ToolDef, type ToolOutcome } from './llm'
 
@@ -65,7 +66,7 @@ function system(city: City): string {
 
 How to plan:
 1. shortlist_places: keep roughly (days x stops-per-day) places, biased to their vibe, budget and group. Include food: each day should have somewhere to eat around midday and in the evening when the catalog allows.
-2. commit_day for day 1, 2, ... in order. Each day should be one tight neighbourhood (use the travel times you get back), ordered by time of day: morning sights first, lunch spots mid-day, viewpoints at sunset, bars at night. Respect each place's best time. Use each place at most once.
+2. commit_day for day 1, 2, ... in order. Each day should be one tight neighbourhood (use the travel times you get back; evening hops at rush hour take longer), ordered by time of day: morning sights first, lunch spots mid-day, viewpoints at sunset, bars at night. Respect each place's best time and its opening hours on that day's weekday. Use each place at most once. Keep time spent getting around low, above all on an evening built around a moment.
 3. If a committed timeline shows something badly off (huge idle gap, long hop), mention it honestly in the next narration and compensate in later days.
 4. finish_plan.
 
@@ -80,12 +81,12 @@ function catalogLines(city: City): string {
   return city.places
     .map(p => {
       const who = profileLine(p)
-      return `${p.id} | ${p.name} | ${p.kind} | ${p.tags.join(',')} | price ${p.price}/3 | ${p.minutes} min | best ${p.bestAt ?? 'any'} | fame ${p.rank?.toFixed(1) ?? '?'} | ${p.blurb}${who ? ` | who: ${who}` : ''}`
+      return `${p.id} | ${p.name} | ${p.kind} | ${p.tags.join(',')} | price ${p.price}/3 | ${p.minutes} min | best ${p.bestAt ?? 'any'} | fame ${p.rank?.toFixed(1) ?? '?'} | ${p.blurb}${who ? ` | who: ${who}` : ''}${p.moods?.length ? ` | feel: ${p.moods.join(', ')}` : ''}${p.hours ? ` | hours: ${p.hours}` : ''}`
     })
     .join('\n')
 }
 
-function briefText(brief: TripBrief): string {
+function briefText(brief: TripBrief, city?: City): string {
   const pace = dayShape(brief)
   return [
     `Days: ${brief.days ?? 3}`,
@@ -95,7 +96,7 @@ function briefText(brief: TripBrief): string {
     // the chat's sliders they moved; "fame" in the catalog is how well known each place is
     ...tuningLines(brief),
     `Pace: ${brief.pace ?? 'balanced'} (~${pace.perDay} stops/day, ${pace.buffer} min buffers, default start ${fmtClock(pace.start)})`,
-    ...storyLines(brief),
+    ...storyLines(brief, city && brief.days ? Array.from({ length: brief.days }, (_, i) => sunsetOnDay(city, brief, i + 1)) : undefined),
   ].join('\n')
 }
 
@@ -154,9 +155,10 @@ export async function* planWithModel(brief: TripBrief, signal: AbortSignal, pick
     await sleep(70 * Math.min(1, 40 / city.places.length), signal)
   }
 
-  const opening = `Trip brief:\n${briefText(brief)}\n\n${exact ? 'The traveller hand-picked every place below by swiping: keep all of them in shortlist_places unless one truly cannot fit.\n\n' : keepIds.size ? `This is a re-plan after the traveller changed their settings. Keep the places they chose (${[...keepIds].join(', ')}) unless one truly cannot fit, and choose the rest afresh for the brief as it is now.\n\n` : ''}Catalog (id | name | kind | tags | price | visit length | best time | fame 0-1 | note | who it suits, when known):\n${catalogLines(city)}\n\nPlan all ${totalDays} days.`
+  const opening = `Trip brief:\n${briefText(brief, city)}\n\n${exact ? 'The traveller hand-picked every place below by swiping: keep all of them in shortlist_places unless one truly cannot fit.\n\n' : keepIds.size ? `This is a re-plan after the traveller changed their settings. Keep the places they chose (${[...keepIds].join(', ')}) unless one truly cannot fit, and choose the rest afresh for the brief as it is now.\n\n` : ''}Catalog (id | name | kind | tags | price | visit length | best time | fame 0-1 | note | who it suits, when known):\n${catalogLines(city)}\n\nPlan all ${totalDays} days.`
   const committed = new Map<number, DayPlan>()
   const used = new Set<string>()
+  const reasons = new Map<string, string>() // why each kept place fits them, shown on its stop
 
   // One tool call: map events while it runs, and what goes back to the model.
   async function* handle(name: string, raw: unknown): AsyncGenerator<PlannerEvent, ToolOutcome> {
@@ -171,6 +173,7 @@ export async function* planWithModel(brief: TripBrief, signal: AbortSignal, pick
         const p = byId.get(k.id)
         if (!p) continue
         kept.push(p)
+        reasons.set(p.id, k.reason)
         yield { type: 'candidate', place: p, verdict: 'keep' }
         yield { type: 'thought', text: `✓ ${p.name} — ${k.reason}`, tone: 'decide' }
         await sleep(160, signal)
@@ -192,7 +195,10 @@ export async function* planWithModel(brief: TripBrief, signal: AbortSignal, pick
       if (bad.length) return fail(`Unknown or already-used ids: ${bad.join(', ')}.`)
       if (!stop_ids.length) return fail('A day needs at least one stop.')
 
-      const plan = buildDay(day, stop_ids.map(id => byId.get(id)!), brief, { keepOrder: true, start: parseClock(start_time), title })
+      const built = buildDay(day, stop_ids.map(id => byId.get(id)!), brief, { keepOrder: true, start: parseClock(start_time), title })
+      const plan: DayPlan = { ...built, stops: built.stops.map(st => (reasons.has(st.place.id) ? { ...st, why: reasons.get(st.place.id) } : st)) }
+      const wd = weekdayOf(brief, day)
+      const shut = stop_ids.map(id => byId.get(id)!).filter(p => closedOnDay(p, brief, day))
       stop_ids.forEach(id => used.add(id))
       committed.set(day, plan)
 
@@ -207,7 +213,8 @@ export async function* planWithModel(brief: TripBrief, signal: AbortSignal, pick
       const moving = plan.legs.reduce((s, l) => s + l.minutes, 0)
       yield { type: 'thought', text: `Day ${day} locked: ${plan.stops.length} stops, ~${moving} min moving, done by ${fmtClock(plan.stops[plan.stops.length - 1].depart)}.`, tone: 'decide' }
       const left = totalDays - committed.size
-      return { output: `Day ${day} timeline:\n${timeline(plan)}\n${left ? `${left} day(s) left.` : 'All days committed.'}` }
+      const warn = shut.length && wd !== undefined ? `\nHeads up: ${shut.map(p => p.name).join(', ')} ${shut.length > 1 ? 'are' : 'is'} usually closed on ${WEEKDAY_NAME[wd]}s. Mention it in a later narration, and avoid it on later days.` : ''
+      return { output: `Day ${day} timeline:\n${timeline(plan)}${warn}\n${left ? `${left} day(s) left.` : 'All days committed.'}` }
     }
     if (name === 'finish_plan') {
       const input = Finish.safeParse(raw)

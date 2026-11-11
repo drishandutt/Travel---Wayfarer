@@ -24,7 +24,7 @@ export const AGENT_TOOLS = {
     description: 'Search every place the app knows in the trip’s city, including ones not listed in the trip data. By words (name, cuisine, style: "jazz", "pie and mash", "Tate"), by kind, near a place, or any mix. Returns up to 15 places with ids, best first; add one with add_stop.',
     args: z.strictObject({
       query: nullable(z.string().max(80)),
-      kind: nullable(z.enum(['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint'])),
+      kind: nullable(z.enum(['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint', 'experience'])),
       near_place_id: nullable(id),
     }),
   },

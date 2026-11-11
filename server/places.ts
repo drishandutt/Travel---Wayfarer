@@ -21,7 +21,7 @@ import { track } from './dev/activity'
 
 const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
 const VIBES: Vibe[] = ['food', 'culture', 'nightlife', 'nature', 'art', 'shopping', 'relaxed', 'adventure', 'romantic', 'history']
-const KINDS: PlaceKind[] = ['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint']
+const KINDS: PlaceKind[] = ['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'market', 'viewpoint', 'experience']
 
 export class PlaceError extends Error {}
 
@@ -209,6 +209,7 @@ const DEFAULTS: Record<PlaceKind, Pick<Place, 'minutes' | 'price' | 'bestAt'>> =
   viewpoint: { minutes: 45, price: 0, bestAt: 'evening' },
   market: { minutes: 60, price: 1, bestAt: 'midday' },
   sight: { minutes: 60, price: 1, bestAt: 'midday' },
+  experience: { minutes: 120, price: 2, bestAt: 'midday' },
 }
 
 function shortAddress(a: Record<string, string> = {}): string | undefined {
@@ -411,6 +412,7 @@ export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal, us
     ...DEFAULTS[shape.kind],
     blurb: `Your find: ${article(shape.label)} ${shape.label}${address ? ` in ${address}` : ''}.`,
     keywords: hit?.extratags?.cuisine?.split(';').map(c => c.replace(/_/g, ' ')).slice(0, 4),
+    ...(hit?.extratags?.opening_hours ? { hours: hit.extratags.opening_hours.slice(0, 160) } : {}),
     custom: { ...source, ...(address ? { address } : {}) },
   }
 
@@ -716,7 +718,7 @@ export function openAIResults(output: unknown, text: string | null): Map<string,
 }
 
 // web_search_call sources and the answer's url_citation annotations: the pages the search returned.
-function collectOpenAISources(output: unknown, into: Map<string, string>) {
+export function collectOpenAISources(output: unknown, into: Map<string, string>) {
   const walk = (o: unknown): void => {
     if (!o || typeof o !== 'object') return
     if (Array.isArray(o)) { o.forEach(walk); return }
@@ -751,7 +753,7 @@ async function clipsFrom(results: Map<string, string>, q: VideoQuery): Promise<V
   return [...reels.slice(0, 5), ...checked.filter((v): v is NonNullable<typeof v> => Boolean(v)).slice(0, 5)]
 }
 
-function collectResults(content: unknown, into: Map<string, string>) {
+export function collectResults(content: unknown, into: Map<string, string>) {
   const walk = (o: unknown): void => {
     if (!o || typeof o !== 'object') return
     if (Array.isArray(o)) { o.forEach(walk); return }

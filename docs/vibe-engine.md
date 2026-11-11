@@ -1,6 +1,6 @@
 # The Vibe Engine: updates that make Wayfarer understand people
 
-_Status: Release 1 live · 2026-11-11_
+_Status: Releases 1 and 2 live · 2026-11-11_
 
 These are general updates to the tool. They aren't for one city or one kind of trip. Each one
 makes every trip feel understood, surprising and easy. They're grouped into what the planner
@@ -188,7 +188,7 @@ Score Gemini's or ChatGPT's answers to the same messages alongside. Nothing ship
 | Release | Updates | What people notice |
 |---|---|---|
 | **1 · Heard** ✅ | A1–A6, C3 | It catches everything they said and asks one good question. |
-| **2 · Knows** | B1–B6, C1–C2, C4–C6 | Local places, real times, short hops, plans that read like a story. |
+| **2 · Knows** ✅ | B1–B6, C1–C2, C4–C6 | Local places, real times, short hops, plans that read like a story. |
 | **3 · Delights** | D1–D5 | Things they'd never have found, and surprises that stay secret. |
 | **4 · Home** | E1–E4 | It remembers them, helps on the day, and makes the recap. |
 
@@ -206,6 +206,20 @@ Score Gemini's or ChatGPT's answers to the same messages alongside. Nothing ship
 - **Not yet:**
   - the read-back's "map truth" line (how far things are from the hotel at rush hour)
   - honouring the leaving time on the last day, except where the model planner is told it
+
+### Release 2: what shipped
+
+- **B1 · Search by vibe** (`server/cities/vibeSearch.ts`). It runs in the background once a trip has a mood. What it finds joins the city as *Local picks* and leads the deck. The same mood isn't searched again for 30 days.
+- **B2 · Experiences** are now a kind of place (`experience`), and the chat understands "experiences", "a class" and "a boat trip".
+- **B3 · Events on their dates:** not yet. The search finds experiences, but nothing tied to a date.
+- **B4 · Tips on every local pick:** order, arrive, the move, and know-before. Opening hours come from OpenStreetMap for every place found on the map.
+- **B5 · Mood words** (`moods`) on places, matched against the story (`moodFit`). These are words rather than numbers: simpler, and they match how people talk.
+- **B6 · Never invent.** A place is kept only if its source page came back from the search and the map finds it.
+- **C1 · Weekdays and closures.** The planner is told both and warned of a clash, and the itinerary flags it.
+- **C2 · Sunset** for each day, for the planner and on each day in the itinerary.
+- **C4 · Time getting around** is shown on every day, and the planner is told to keep it low on evenings.
+- **C5 · Moments.** The model planner builds days around them (Release 1). The offline planner doesn't yet.
+- **C6 · Why each stop is there**, shown in amber on the stop and kept through edits. Day titles were already there.
 
 ## Decisions needed
 

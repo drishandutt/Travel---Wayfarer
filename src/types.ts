@@ -35,6 +35,7 @@ export interface TripBrief {
   moneyGroupId?: string         // the shared-expenses group this trip is connected to
   customPlaces?: Place[]        // places the travellers found themselves and added from chat
   story?: TripStory             // what they told us beyond the basics (src/planner/story.ts)
+  why?: Record<string, string>  // place id → why it's in their plan, from the planner
 }
 
 // The trip as they told it: why they're going, who with, where they're staying, what they want
@@ -51,7 +52,8 @@ export interface TripStory {
   avoid?: string[]              // what not to plan: "touristy", "clubs", "long drives"
 }
 
-export type PlaceKind = 'sight' | 'food' | 'cafe' | 'bar' | 'park' | 'museum' | 'market' | 'viewpoint'
+// `experience`: something you do rather than see (a class, a boat trip, a spa, a show, a workshop)
+export type PlaceKind = 'sight' | 'food' | 'cafe' | 'bar' | 'park' | 'museum' | 'market' | 'viewpoint' | 'experience'
 
 export interface Place {
   id: string
@@ -68,7 +70,19 @@ export interface Place {
   custom?: PlaceSource          // set on places the travellers added themselves
   rank?: number                 // 0..1, how well known it is: 1 is on every first-timer's list, 0 only locals know
   profile?: PlaceProfile        // its strengths, weaknesses and who it suits (src/planner/profile.ts)
-  found?: { at: number; via?: 'traveller' | 'review' | 'import' } // added to the city's shared catalog after it was built: a traveller's find (straight away, or once reviewed) or the owner's import
+  found?: { at: number; via?: 'traveller' | 'review' | 'import' | 'vibe' } // added to the city's shared catalog after it was built: a traveller's find (straight away, or once reviewed), the owner's import, or a search for a trip's mood
+  tips?: PlaceTips              // the know-how a local would give: what to order, when to arrive, the insider move
+  hours?: string                // opening hours as OpenStreetMap writes them ("Tu-Su 12:00-23:00")
+  moods?: string[]              // the feel, in plain words: "romantic", "sunset", "live music", "local"
+  source?: string               // the page it was found on, for places found by searching the web
+}
+
+// What a local would tell you before you go. Each is a short sentence, when known.
+export interface PlaceTips {
+  order?: string                // what to get
+  arrive?: string               // when to get there, and why
+  move?: string                 // the insider tip: where to sit, what to ask for
+  heads?: string                // what to know first: cash only, dress code, closed Mondays
 }
 
 // Who a place suits. The planners read these against the trip (`audiencesOf` in
@@ -176,6 +190,7 @@ export interface Stop {
   depart: number
   bufferAfter: number
   legIn?: Leg
+  why?: string                  // why it's in their plan, in terms of what they told us
 }
 
 export interface DayPlan {

@@ -5,7 +5,8 @@ import { deleteTrip, groupCopyOf, loadCurrent, loadPanels, loadTrips, localCopyO
 import { converse, isReady, nextField } from './planner/intake'
 import { MockPlanner } from './planner/mockPlanner'
 import { RemotePlanner } from './planner/remotePlanner'
-import { claudeIntake, detectBrain, findStay, plansRemotely, type BrainStatus } from './planner/brain'
+import { claudeIntake, detectBrain, findStay, findVibe, plansRemotely, type BrainStatus } from './planner/brain'
+import { hasMood, moodOf } from './planner/story'
 import { customPlaceRequest, isFind, mapsHost, resolveCustomPlace, type CustomPlaceRequest } from './planner/customPlaces'
 import { runAgent } from './agent/run'
 import type { Place, PlannerEvent, TripBrief } from './types'
@@ -37,7 +38,7 @@ import type { GroupState, GroupSummary } from './money/types'
 import { useSharedTrip } from './trip/useSharedTrip'
 import { myVotes } from './trip/votes'
 import type { SharedTrip } from './trip/types'
-import { cityById, findCity } from './data/cities'
+import { addCatalogPlaces, cityById, findCity } from './data/cities'
 import { ensureCity, lookupCity, sendSignals, waitForCity } from './data/cityClient'
 import { ShareSheet, type Shared, type ShareTarget } from './components/share/ShareSheet'
 import { DevTools } from './components/dev/DevTools'
@@ -582,7 +583,31 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   // Where they said they're staying goes on the map as soon as there's a city to look in, and
   // becomes the trip's base when it's time to choose one.
   const stayAsked = useRef('')
+  // Places that fit what they told us, searched for in the background while they talk, and at the
+  // top of the deck once found. One search per city and mood; the deck waits for one under way.
+  const vibeKey = useRef('')
+  const vibeJob = useRef<Promise<void> | null>(null)
+  const findLocal = (b: TripBrief) => {
+    if (!plansRemotely(brain) || !b.destination || !hasMood(b)) return
+    const key = `${b.destination}|${moodOf(b)}`
+    if (vibeKey.current === key) return
+    vibeKey.current = key
+    const city = b.destination
+    const job = findVibe(city, b).then(out => {
+      if (!out.places.length) return
+      addCatalogPlaces(city, out.places)
+      dispatch({ type: 'city-ready', id: city })
+      if (latest.current.brief.destination !== city || latest.current.phase !== 'intake' || out.cached) return
+      const names = out.places.slice(0, 3).map(p => p.name)
+      dispatch({ type: 'chat', role: 'ai', text: `I found ${out.places.length} places locals love that fit what you told me, like ${names.slice(0, -1).join(', ')}${names.length > 1 ? ' and ' : ''}${names[names.length - 1]}. They’ll be at the top of your deck.` })
+    }).catch(() => {
+      // no matter: the deck has the city's own places
+    }).finally(() => { if (vibeJob.current === job) vibeJob.current = null })
+    vibeJob.current = job
+  }
+
   const placeStay = async (just?: TripBrief) => {
+    findLocal(just ?? latest.current.brief)
     const b = just ?? latest.current.brief
     const stay = b.story?.stay
     if (!stay || stay.coord || !b.destination) return
@@ -616,9 +641,17 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   }, [state.phase])
 
   // Brief done → deal the swipe deck of places, best matches first.
-  const startDeck = () => {
+  const startDeck = async () => {
     if (shouldOffer) { offerFriends(); return } // going with friends: ask before the voting starts
     setInvitePrompt(false)
+    // places that fit their mood are still being found: worth the wait, up to a point
+    if (vibeJob.current) {
+      dispatch({ type: 'chat', role: 'ai', text: 'Finding the places that fit what you told me, one moment…' })
+      setTyping(true)
+      await Promise.race([vibeJob.current, new Promise(r => setTimeout(r, 90_000))])
+      setTyping(false)
+      if (latest.current.phase !== 'intake') return
+    }
     dispatch({ type: 'start-deck' })
     dispatch({ type: 'chat', role: 'ai', text: activeGroup ? 'Here’s the group’s deck. Swipe right on what you’d love, left to skip.' : 'Here’s your deck, best matches first. Swipe right on what you’d love, left to skip.' })
   }

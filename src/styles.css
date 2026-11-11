@@ -237,6 +237,8 @@ input { font: inherit; }
 .day-n { font-size: 13px; font-weight: 600; color: var(--c); }
 .day h3 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 17px; letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .day-span { grid-column: 1 / -1; font-size: 12px; color: var(--paper-faint); }
+.day-facts { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: -4px 0 8px; font-size: 12px; color: var(--paper-dim); }
+.day-warn { margin: -2px 0 8px; padding: 6px 10px; border-radius: 10px; background: rgba(var(--coral-rgb), .12); color: var(--paper); font-size: 12.5px; line-height: 1.4; }
 
 .timeline { list-style: none; margin: 0; padding: 0 0 0 14px; position: relative; }
 .timeline::before { content: ''; position: absolute; left: 13px; top: 10px; bottom: 10px; width: 1px; background: var(--line-2); }
@@ -255,6 +257,9 @@ input { font: inherit; }
 .stop-top b { font-weight: 600; font-size: 14.5px; }
 .stop-top time { font-size: 12px; color: var(--paper-faint); white-space: nowrap; }
 .stop p { margin: 2px 0 6px; color: var(--paper-dim); font-size: 13px; line-height: 1.4; }
+.stop p.stop-why { margin-top: -2px; color: var(--amber); font-size: 12.5px; }
+.stop p.stop-tip { margin-top: -2px; font-size: 12.5px; font-style: italic; }
+.stop p.stop-tip::before { content: 'Tip: '; font-style: normal; font-weight: 600; }
 .tags { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
 .tags span { color: var(--paper-faint); text-transform: capitalize; }
 .tags .kind { color: var(--paper-dim); }
@@ -404,6 +409,9 @@ input { font: inherit; }
 .pc-profile { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 2px 0 6px; font-size: 12.5px; line-height: 1.4; }
 .pc-profile dt { color: var(--paper-faint); }
 .pc-profile dd { margin: 0; color: var(--paper-dim); }
+.pc-tips { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 2px 0 8px; padding: 10px 12px; border-radius: 12px; background: rgba(var(--amber-rgb), .1); font-size: 12.5px; line-height: 1.4; }
+.pc-tips dt { color: var(--amber); font-weight: 600; }
+.pc-tips dd { margin: 0; color: var(--paper); overflow-wrap: anywhere; }
 .pc-profile dd::first-letter { text-transform: uppercase; }
 .pc-actions { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .pc-status { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--paper); }
