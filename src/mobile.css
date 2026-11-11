@@ -75,7 +75,7 @@
   .sheet .messages { padding: 2px 14px 12px; }
   .sheet .chat > .cta { margin: 0 12px 10px; }
   .sheet .composer { padding: 10px 12px; }
-  .composer input { font-size: 16px; padding: 12px 14px; } /* 16px stops iOS zooming in on focus */
+  .composer textarea { font-size: 16px; padding: 12px 14px; } /* 16px stops iOS zooming in on focus */
   .composer button { width: 44px; height: 44px; }
   .msg { max-width: 92%; }
   .suggestions button { padding: 12px; }
@@ -218,4 +218,9 @@
   .stop-tools button { width: 40px; height: 40px; }
   .v-nav { width: 44px; height: 44px; }
   .place-card .close { width: 44px; height: 44px; }
+}
+
+/* narrow phones, signed in: the avatar takes the theme button's place (it's in the Profile) */
+@media (max-width: 420px) {
+  .brand:has(.profile-btn) .theme-btn { display: none; }
 }

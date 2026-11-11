@@ -80,6 +80,14 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
   }, [state.messages.length, noteCount, typing, Boolean(invitePrompt), Boolean(confirm)])
 
   const asNote = member || (toGroup && others)
+  // the box grows with what's in it, up to a few lines, then scrolls
+  const box = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [text])
   const submit = (t: string) => {
     if (!t.trim()) return
     if (asNote) onNote(t.trim())
@@ -133,7 +141,7 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
             // the admin's messages to the planner read as theirs to everyone else
             const theirs = member && m.role === 'user'
             return (
-              <div key={m.id} className={`msg ${theirs ? 'friend' : m.role}`} style={{ animationDelay: `${Math.min(i, 2) * 60}ms` }}>
+              <div key={m.id} className={`msg ${theirs ? 'friend' : m.role} ${m.text.length > 400 && m.role === 'user' ? 'long' : ''}`} style={{ animationDelay: `${Math.min(i, 2) * 60}ms` }}>
                 {theirs && <small className="msg-from">{adminName}</small>}
                 {m.role === 'ai' ? withBold(m.text) : m.text}
               </div>
@@ -197,9 +205,13 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
       )}
 
       <form className="composer" onSubmit={e => { e.preventDefault(); submit(text) }}>
-        <input
+        {/* a text area, so a pasted itinerary keeps its lines: Enter sends, Shift+Enter is a new line */}
+        <textarea
+          ref={box}
+          rows={1}
           value={text}
           onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(text) } }}
           onFocus={onFocusInput}
           enterKeyHint="send"
           maxLength={asNote ? 1000 : undefined}

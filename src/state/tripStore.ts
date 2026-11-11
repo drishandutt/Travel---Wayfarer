@@ -65,7 +65,7 @@ export type Action =
   | { type: 'add-stop'; id: string; day: number }
   | { type: 'optimize-day'; day: number }
   | { type: 'fill-gap'; day: number }
-  | { type: 'restore'; trip: SavedTrip }
+  | { type: 'restore'; trip: SavedTrip; note?: string } // note: said (and kept) instead of “Welcome back”
   | { type: 'saved'; id: string }
   | { type: 'start-deck' }
   | { type: 'swipe'; like: boolean }
@@ -103,7 +103,7 @@ export const initialState: TripState = {
   messages: [{
     id: 'hello',
     role: 'ai',
-    text: 'Tell me about the trip: where, how long, who’s coming, and the budget.',
+    text: 'Tell me about the trip: where, how long, who’s coming, and the budget. Already have an itinerary? Paste it here and I’ll make it into a trip.',
   }],
   brief: { vibes: [] },
   thoughts: [],
@@ -591,7 +591,7 @@ function baseReducer(s: TripState, a: Action): TripState {
         hotelScores: t.hotelScores,
         candidates,
         legs: legsOf(days),
-        messages: [...t.messages.filter(m => !isWelcome(m)), { id: `welcome-${uid()}`, role: 'ai', text: `Welcome back — I’ve reopened “${t.name}”. Edit anything on the map or in the itinerary.` }],
+        messages: [...t.messages.filter(m => !isWelcome(m)), a.note ? { id: uid(), role: 'ai', text: a.note } : { id: `welcome-${uid()}`, role: 'ai', text: `Welcome back — I’ve reopened “${t.name}”. Edit anything on the map or in the itinerary.` }],
         camera: city ? { center: city.center, zoom: city.zoom + 0.4, key: seq++ } : undefined,
         tripId: t.id,
       }

@@ -10,6 +10,7 @@ import { track } from '../dev/activity'
 import { overLimit } from '../money/auth'
 import { PlaceError, resolvePlace, placeVideos } from '../places'
 import { buildStatus, lookupCity } from '../cities/store'
+import { ImportError, importItinerary, importSummary, type Imported } from '../importItinerary'
 import { cityById, findCity } from '../../src/data/cities'
 import { MockPlanner } from '../../src/planner/mockPlanner'
 import { scorePlace } from '../../src/planner/core'
@@ -22,7 +23,7 @@ import { CATEGORIES, CATEGORY_IDS, categoryForKind, categoryOf, guessCategory } 
 import { CURRENCIES, currencyDigits, fmtMoney } from '../../src/money/currency'
 import { budgetPace, netBalances, plannedVsActual, simplifyDebts, spendByCategory, spendByDate, spendByMember, totalsFor } from '../../src/money/engine'
 import type { ExpenseInput, GroupState } from '../../src/money/types'
-import type { BudgetTier, Place, PlaceKind, Vibe } from '../../src/types'
+import type { BudgetTier, City, Place, PlaceKind, Vibe } from '../../src/types'
 import { ToolError, change, cityOf, hasItinerary, loadTrip, placeOf, said, stateOf, type Session } from './trip'
 
 // Everything a person can do in Wayfarer, as MCP tools, for Claude or any other MCP client.
@@ -647,17 +648,49 @@ export function registerTools(server: McpServer, db: Db, s: Session) {
     for await (const e of planner.planItinerary(brief, signal)) st = reducer(st, { type: 'planner', event: e })
     st = reducer(st, { type: 'phase', phase: 'hotels' })
     for await (const e of planner.findHotels(st.brief, st.days, signal)) st = reducer(st, { type: 'planner', event: e })
-    const currency = (a.currency ?? (CURRENCIES.includes(city.essentials.currency.code) ? city.essentials.currency.code : 'USD')).toUpperCase()
-    const { group, me } = await store.createGroup(db, s.user, { name: `${city.name} trip`, currency, trip: tripSummaryOf(st) })
-    st = reducer(st, { type: 'brief', brief: { ...st.brief, moneyGroupId: group.id } })
-    const version = await store.publishPlan(db, group, me, { plan: snapshotOf(st), summary: tripSummaryOf(st), baseVersion: 0 })
-    s.tripId = group.id
-    s.state = undefined
-    s.stateVersion = undefined
-    void version
+    const group = await saveNew(st, city, a.currency)
     track('mcp.trip_created', { userId: s.user.id, subject: group.id, detail: { city: city.id, days: a.days, client: s.clientName } })
     const t = await loadTrip(db, s)
     return `Made “${group.name}” [${group.id}] and planned it. It’s now this session’s trip, and in their Wayfarer app.\n\n${itineraryText(stateOf(s, t))}`
+  })
+
+  // A plan made as a new trip of the person's: a group they run, with the plan published as its
+  // first version, and the session's trip from now on.
+  async function saveNew(st: TripState, city: City, want?: string) {
+    const currency = (want ?? (CURRENCIES.includes(city.essentials.currency.code) ? city.essentials.currency.code : 'USD')).toUpperCase()
+    const { group, me } = await store.createGroup(db, s.user, { name: `${city.name} trip`, currency, trip: tripSummaryOf(st) })
+    st = reducer(st, { type: 'brief', brief: { ...st.brief, moneyGroupId: group.id } })
+    await store.publishPlan(db, group, me, { plan: snapshotOf(st), summary: tripSummaryOf(st), baseVersion: 0 })
+    s.tripId = group.id
+    s.state = undefined
+    s.stateVersion = undefined
+    return group
+  }
+
+  // An itinerary the person already has, as a trip: their days, their order, their places.
+  tool('import_itinerary', {
+    title: 'Import an itinerary',
+    description: 'Turn an itinerary the person already has into a Wayfarer trip: one they pasted into this chat, one from a doc or another app, or one you just wrote together. Pass the text as it is (the city, each day’s places in order, times, the hotel); Wayfarer reads it, matches the places it knows, finds the rest on the map, keeps their order and times, and picks a base if no hotel is named. Up to 14 days. Places it can’t find are listed: add them with add_places and a maps link. Use this rather than create_trip when the person already knows what they want to do. It becomes the session’s trip and appears in their app.',
+    input: { text: z.string().min(20).max(30_000), currency: z.string().length(3).optional() }, needsTrip: false,
+  }, async a => {
+    let r: Imported
+    try {
+      r = await importItinerary(a.text, { userId: s.user.id })
+    } catch (err) {
+      if (err instanceof ImportError) throw new ToolError(err.message)
+      throw err
+    }
+    let st: TripState = reducer(initialState, { type: 'brief', brief: r.brief })
+    st = reducer(st, { type: 'phase', phase: 'planning' })
+    for (const place of r.places) st = reducer(st, { type: 'planner', event: { type: 'candidate', place, verdict: 'keep' } })
+    for (const plan of r.days) st = reducer(st, { type: 'planner', event: { type: 'day', plan } })
+    st = reducer(st, { type: 'planner', event: { type: 'plan-ready' } })
+    for (const score of r.hotelScores) st = reducer(st, { type: 'planner', event: { type: 'hotel-candidate', score } })
+    if (r.hotel) st = reducer(st, { type: 'planner', event: { type: 'hotel-pick', score: r.hotel, days: r.days } })
+    const group = await saveNew(st, r.city, a.currency)
+    track('trip.imported', { userId: s.user.id, subject: group.id, detail: { city: r.city.id, days: r.days.length, places: r.places.length, custom: r.custom.length, missed: r.missed.length, from: 'mcp', client: s.clientName } })
+    const t = await loadTrip(db, s)
+    return `${importSummary(r)} It’s “${group.name}” [${group.id}], now this session’s trip and in their Wayfarer app.\n\n${itineraryText(stateOf(s, t))}`
   })
 
   // ── an export ──────────────────────────────────────────────────────────────

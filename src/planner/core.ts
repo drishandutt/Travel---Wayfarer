@@ -263,7 +263,9 @@ export function groupDays(places: Place[], days: number, perDay: number, maxPerG
   return best
 }
 
-export function buildDay(day: number, places: Place[], brief: TripBrief, opts: { keepOrder?: boolean; start?: number; title?: string } = {}): DayPlan {
+// `times`: the traveller's own day (an imported itinerary): a stop with a time starts then (if it
+// can be reached by then), and nothing is held back to the time of day a place is best at.
+export function buildDay(day: number, places: Place[], brief: TripBrief, opts: { keepOrder?: boolean; start?: number; title?: string; times?: (number | undefined)[] } = {}): DayPlan {
   const pace = dayShape(brief)
   const color = DAY_COLORS[(day - 1) % DAY_COLORS.length]
   const stops: Stop[] = []
@@ -277,7 +279,7 @@ export function buildDay(day: number, places: Place[], brief: TripBrief, opts: {
       legIn = { id: `d${day}-${i}`, day, from: prev.place.coord, to: place.coord, kind: 'stop', ...t }
       legs.push(legIn)
       clock = prev.depart + prev.bufferAfter + t.minutes
-      const earliest = EARLIEST[place.bestAt ?? 'midday']
+      const earliest = opts.times ? opts.times[i] ?? clock : EARLIEST[place.bestAt ?? 'midday']
       if (clock < earliest) {
         prev.bufferAfter += earliest - clock // turn the gap into free time, not dead air
         clock = earliest

@@ -297,7 +297,7 @@ Wayfarer is also a remote **MCP server**, so people can use it from Claude (or a
 **Sessions** (`server/mcp/index.ts`, Streamable HTTP via the official SDK, pinned): each MCP session belongs to the person whose token started it and is about one trip. The server's instructions tell the model to call `list_trips` first, show them, ask which one, and call `choose_trip`; every other tool refuses until then. Sessions are kept in memory and dropped after 3 hours idle.
 
 **Tools** (`server/mcp/tools.ts`), each acting as the person, through the same store functions and reducer actions as the app, so the same rules hold (only the admin changes the plan; the server checks seats and roles):
-- *Trips:* `list_trips`, `choose_trip`, `trip_overview`, `get_itinerary`, `itinerary_text`, `update_trip` (dates, travellers, budget), `create_trip` (a city, built first if Wayfarer hasn't mapped it, planned by the offline planner, given a group and published, so it's in their app).
+- *Trips:* `list_trips`, `choose_trip`, `trip_overview`, `get_itinerary`, `itinerary_text`, `update_trip` (dates, travellers, budget), `create_trip` (a city, built first if Wayfarer hasn't mapped it, planned by the offline planner, given a group and published, so it's in their app), `import_itinerary` (an itinerary the person already has, as text: see *Pasted itineraries* below).
 - *Places and research:* `search_places`, `suggest_places` (scored for the trip), `place_details` (with its profile), `place_videos`, and `add_places`: up to 15 real places Claude found on the web, by local name or maps link, resolved on OpenStreetMap and decided exactly like a find in the app (shared with the city, kept private, or sent to the owner's review queue).
 - *The plan:* `add_stop`, `remove_stop`, `move_stop`, `reorder_stop`, `tidy_day`, `fill_gap`, `list_hotels`, `choose_hotel`, `change_trip` (the chat's edit engine: "add a day", "more relaxed"), `undo`.
 - *Flights and hotels:* `travel_needs` gives the city, dates, nights, travellers, budget and the best area to stay (the middle of the planned days); Claude searches the web itself; `save_booking` records what was booked in the trip chat, and as a shared expense with a cost.
@@ -309,6 +309,16 @@ Plan changes (`server/mcp/trip.ts`) build the app's state from the shared plan, 
 Three prompts come with it: *Research places for my trip*, *Find flights and hotels*, *Analyse our spending*. Every tool call is in the activity log (`mcp.tool`, with the client's name), as are sessions, trips chosen and made, and every OAuth step (`oauth.*`, and `security.oauth_*` for reused codes and refresh tokens); 900 tool calls an hour per person.
 
 Not yet: the documents vault (when it exists, it gets tools here), and photos.
+
+## Pasted itineraries
+
+An itinerary someone already made (in Claude, ChatGPT, a doc, a friend's notes) becomes a trip in one step, from the trip chat or from Claude (`server/importItinerary.ts`):
+- **Reading it:** one model call (Claude, else OpenAI) with a strict JSON schema pulls out the city, start date, travellers, hotel, and each day's stops in order: real places only (no "breakfast" or "check in"), each with a kind, a start time if given, a length if given, and a short note.
+- **Places:** a stop Wayfarer already has for that city is matched by name (a close match only, `findPlaces` at 0.99); the rest are looked up on OpenStreetMap through `resolvePlace` without the model describing them (the note becomes the blurb) and without joining the city's shared catalog: they stay on this trip (`brief.customPlaces`). Three at a time; Nominatim keeps its own one-a-second queue. Stops it can't find are listed back so they can be added with a maps link.
+- **Days:** `buildDay` with `keepOrder` and `times`: their order, the first stop's time as the day's start, any later time held, and nothing pushed back to the time of day a place is usually best at. A day with no places (a rest day) stays a day. Up to 14 days.
+- **Base:** their hotel if Wayfarer knows it, one placed from the map if not, else the best fit for those days (`scoreHotel`), and every day routed from it.
+- **The chat** (`src/planner/itineraryPaste.ts`): a message of 160+ characters over 4+ lines with days or a timetable in it (`looksLikeItinerary`; a one-line edit never counts) goes to `POST /api/import-itinerary` (20 an hour per visitor) instead of the intake or the assistant, checked before links since itineraries often carry them. The open trip stays in My trips, as with New trip, and the new one opens on its finished plan with a summary in the chat. The chat box is a growing text area so a paste keeps its lines (Enter sends, Shift+Enter is a new line).
+- **Claude:** `import_itinerary` takes the text as it is and saves the trip as a new group with its plan published, like `create_trip`. Both log `trip.imported`.
 
 ## Dev tools
 

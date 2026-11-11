@@ -19,6 +19,7 @@ const ASK = [
   'Find flights from London and a hotel in the best area for my dates.',
   'Who owes whom, and where did most of our money go?',
   'Plan me a 3-day food trip to Kyoto.',
+  'Put the itinerary we just made into Wayfarer.',
 ]
 
 function useConnections() {
@@ -130,7 +131,7 @@ export function ConnectClaudeCard() {
 
 // What Claude can do once connected, grouped the way the tools are (server/mcp/tools.ts).
 const CAN = [
-  ['Your trips', 'List and switch between them, read the plan day by day, or start a new trip.'],
+  ['Your trips', 'List and switch between them, read the plan day by day, start a new trip, or turn an itinerary you already have into one.'],
   ['Places', 'Search the web for places, suggest ones that fit, show details and videos, and add them.'],
   ['The plan', 'Add, move and remove stops, tidy a day, fill gaps, choose the hotel, and undo.'],
   ['Getting there', 'Find flights and hotels for your dates and the area you’re staying in, and record what you book.'],

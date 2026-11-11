@@ -160,9 +160,12 @@ input { font: inherit; }
 .trip-slider-now { margin: 8px 0 0; font-size: 13px; color: var(--paper-dim); line-height: 1.4; }
 .trip-slider-now b { color: var(--paper); font-weight: 600; }
 .composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
-.composer input { flex: 1; padding: 11px 16px; border-radius: 999px; border: 1px solid var(--line); background: rgba(var(--paper-rgb), .06); color: var(--paper); outline: none; transition: border-color .2s; }
-.composer input:focus { border-color: var(--line-2); }
-.composer input::placeholder { color: var(--paper-faint); }
+.composer { align-items: flex-end; }
+.composer textarea { flex: 1; min-width: 0; resize: none; overflow-y: auto; max-height: 160px; padding: 11px 16px; border-radius: 22px; border: 1px solid var(--line); background: rgba(var(--paper-rgb), .06); color: var(--paper); font: inherit; line-height: 1.35; outline: none; transition: border-color .2s; }
+.composer textarea:focus { border-color: var(--line-2); }
+.composer textarea::placeholder { color: var(--paper-faint); }
+.msg.user { white-space: pre-wrap; }
+.msg.long { max-height: 220px; overflow-y: auto; }
 .composer button { flex: none; width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--paper); color: var(--ink); display: grid; place-items: center; transition: opacity .2s; }
 .composer button:disabled { opacity: .25; cursor: default; }
 

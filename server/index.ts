@@ -15,6 +15,7 @@ import { clientIp, overLimit } from './money/auth'
 import { PlaceError, cachedVideos, placeVideos, resolvePlace, traceSocial, type ResolveRequest } from './places'
 import { openaiEnabled } from './openai'
 import { AgentError, agentEnabled, agentTurn } from './agent'
+import { ImportError, importItinerary, importSummary } from './importItinerary'
 import { captureServerConsole, flush as flushLogs } from './dev/log'
 import { chromiumPath, closeBrowser } from './share/browser'
 import { cityById } from '../src/data/cities'
@@ -32,6 +33,7 @@ captureServerConsole()
 //   GET  /api/health   -> { claude, model, money, openai, agent }
 //   POST /api/agent    -> { state, text, calls }   one round of the trip chatbot (server/agent.ts)
 //   POST /api/intake   -> { reply, brief }
+//   POST /api/import-itinerary { text } -> a trip from a pasted itinerary (server/importItinerary.ts)
 //   POST /api/plan     -> text/event-stream of PlannerEvent
 //   POST /api/hotels   -> text/event-stream of PlannerEvent
 //   POST /api/places/resolve -> { place, note?, shared? }  a traveller's own place, from a maps link or a name
@@ -243,6 +245,22 @@ const server = createServer(async (req, res) => {
       } catch (err) {
         if (err instanceof AgentError) return json(res, 422, { error: err.message })
         if (err instanceof Error && err.name === 'ZodError') return json(res, 400, { error: 'Bad request' })
+        throw err
+      }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/import-itinerary') {
+      if (!agentEnabled()) return json(res, 503, { error: 'Reading a pasted itinerary needs Claude or OpenAI connected on the server.' })
+      // a model call and a map lookup per new place, so imports are limited per visitor
+      if (overLimit(`import:${clientIp(req)}`, 20, 3_600_000)) return json(res, 429, { error: 'That’s a lot of itineraries in a short while. Try again in a bit.' })
+      const body = await readJson<{ text?: unknown; brief?: TripBrief }>(req)
+      if (typeof body.text !== 'string' || body.text.trim().length < 20 || body.text.length > 30_000) return json(res, 400, { error: 'Paste the itinerary as text (up to 30,000 characters).' })
+      const who = await whoIs(req)
+      try {
+        const r = await importItinerary(body.text, { userId: who?.id ?? null, signal: abortOnClose(res).signal, base: body.brief && typeof body.brief === 'object' ? { ...body.brief, vibes: Array.isArray(body.brief.vibes) ? body.brief.vibes : [] } : undefined })
+        track('trip.imported', { userId: who?.id, subject: r.city.id, detail: { days: r.days.length, places: r.places.length, custom: r.custom.length, missed: r.missed.length, from: 'chat' } })
+        return json(res, 200, { brief: r.brief, days: r.days, hotel: r.hotel, hotelScores: r.hotelScores, places: r.places, cityName: r.city.name, summary: importSummary(r) })
+      } catch (err) {
+        if (err instanceof ImportError) return json(res, 422, { error: err.message })
         throw err
       }
     }

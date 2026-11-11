@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { initialState, isMember, reducer, type Action, type SavedTrip, type TripState } from './state/tripStore'
 import { trackAction, trackScreen } from './dev/activity'
-import { deleteTrip, groupCopyOf, loadCurrent, loadPanels, loadTrips, localCopyOf, saveCurrent, savePanels, saveTrip, setTripScope, snapshot, type PanelPrefs } from './state/persistence'
+import { deleteTrip, groupCopyOf, loadCurrent, loadPanels, loadTrips, localCopyOf, saveCurrent, savePanels, saveTrip, setTripScope, snapshot, newId, type PanelPrefs } from './state/persistence'
 import { converse, isReady, nextField } from './planner/intake'
 import { MockPlanner } from './planner/mockPlanner'
 import { RemotePlanner } from './planner/remotePlanner'
@@ -19,6 +19,7 @@ import { PlaceCard } from './components/PlaceCard'
 import { PicksPanel, SwipeDeck, type DeckGroup } from './components/SwipeDeck'
 import { Dashboard } from './components/Dashboard'
 import { Profile } from './components/Profile'
+import { importPastedItinerary, looksLikeItinerary } from './planner/itineraryPaste'
 import { AuthScreen, JoinScreen, MoneyApp, useInvite, useMoneyBadge, type MoneyTrip } from './components/money/MoneyApp'
 import type { ExpensePrefill } from './components/money/ExpenseForm'
 import { Empty } from './components/money/parts'
@@ -454,9 +455,41 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     }
   }
 
+  // An itinerary pasted into the chat becomes a new trip: their days, order and places. The
+  // trip that was open stays in My trips, as with New trip.
+  const importPasted = async (text: string) => {
+    const s = latest.current
+    dispatch({ type: 'chat', role: 'ai', text: 'That looks like an itinerary. I’m making it into a trip: places Wayfarer doesn’t know yet are looked up on the map, so this can take a minute.' })
+    setTyping(true)
+    try {
+      const { vibes, budgetTier, budgetAmount, pace } = s.brief
+      const out = await importPastedItinerary(text, { vibes, budgetTier, budgetAmount, pace })
+      if (out.brief.destination) await ensureCity(out.brief.destination)
+      abort.current?.abort()
+      const now = latest.current
+      if (!isMember(now) && now.days.length && !(now.tripId && trips.some(t => t.id === now.tripId))) setTrips(saveTrip(snapshot(now)))
+      setActiveGroup(null)
+      setDashOpen(false)
+      const trip: SavedTrip = {
+        id: newId(), name: `${out.cityName} trip`, savedAt: Date.now(),
+        brief: out.brief, days: out.days, hotel: out.hotel, hotelScores: out.hotelScores,
+        candidates: Object.fromEntries(out.places.map(place => [place.id, { place, verdict: 'keep' as const }])),
+        messages: [{ id: newId(), role: 'user', text }],
+      }
+      dispatch({ type: 'restore', trip, note: `${out.summary} Change anything by asking here, on the map or in the itinerary.` })
+    } catch (e) {
+      dispatch({ type: 'chat', role: 'ai', text: e instanceof TypeError ? 'I couldn’t reach the server to read that itinerary. Try again when you’re connected.' : `I couldn’t make that into a trip: ${(e as Error).message}` })
+    } finally {
+      setTyping(false)
+    }
+  }
+
   const send = async (text: string) => {
     const s = latest.current
     dispatch({ type: 'chat', role: 'user', text })
+
+    // a whole itinerary, pasted: before the link check, as itineraries often carry links
+    if (brain?.agent && !member && looksLikeItinerary(text)) { await importPasted(text); return }
 
     // a reel, video, post or page: read it for places, then ask which trip they go in
     const link = text.match(/\bhttps?:\/\/[^\s<>"']+/i)?.[0]
@@ -994,7 +1027,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         onMoney={() => openTripMoney()} onPhotos={openTripPhotos} balance={tripBalance} />}
 
       {moneyOpen && <MoneyApp acct={acct} trip={moneyTrip} scope={moneyOpen.scope} prefill={moneyOpen.prefill} onClose={() => { setMoneyOpen(null); refreshGroups().catch(() => {}) }} />}
-      {profileOpen && account && <Profile acct={acct} trips={trips} groups={groups ?? []} onClose={closeProfile} />}
+      {profileOpen && account && <Profile acct={acct} trips={trips} groups={groups ?? []} theme={theme} onToggleTheme={toggleTheme} onClose={closeProfile} />}
       {vaultOpen && <VaultApp acct={acct} scope={vaultOpen.scope} onClose={() => setVaultOpen(null)} />}
 
       {incoming && <ShareSheet shared={incoming} targets={shareTargets} signedIn={Boolean(account)} onAdd={addShared} onClose={() => setIncoming(null)} onDevTools={devAdmin ? () => { setIncoming(null); setDevOpen(true) } : undefined} />}
