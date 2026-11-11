@@ -3,6 +3,8 @@ import type { City, DayPlan, Hotel, HotelScore, Place, PlaceKind, TripBrief } fr
 import { cityById, findCity } from '../src/data/cities'
 import { buildDay, scoreHotel, withHotel } from '../src/planner/core'
 import { findPlaces } from '../src/planner/edits'
+import { existingSpot } from '../src/planner/customPlaces'
+import { haversineKm } from '../src/planner/geo'
 import { FALLBACK, MODEL, brainEnabled, client, textOf } from './claude'
 import { OPENAI_MODEL, openai } from './openai'
 import { buildStatus, lookupCity } from './cities/store'
@@ -19,7 +21,7 @@ const KINDS: PlaceKind[] = ['sight', 'food', 'cafe', 'bar', 'park', 'museum', 'm
 
 export class ImportError extends Error {}
 
-const brief = `You read a travel itinerary someone pasted and pull out its structure for a trip planner. One city: the main one the itinerary is in (in plain English, e.g. "Lisbon"). Each day in order, with its stops in the order they're visited: real, visitable places only (sights, restaurants, cafés, bars, parks, museums, markets, viewpoints, neighbourhoods to walk), by the name they're known by locally; never generic activities like "breakfast", "rest", "check in", "free time", "travel to the airport" or a flight. Time: the stop's start time as 24-hour HH:MM if the text gives one, else "". Minutes: how long it's given if the text says, else 0. Kind: the closest of ${KINDS.join(', ')}. Note: anything the text says about the stop worth keeping (what to order, a booking), short, else "". Hotel: where they're staying if named, else "". Start date as YYYY-MM-DD only if a real date is given, else "". Travellers: the number if stated, else 0. If it isn't an itinerary at all, return no days.`
+const brief = `You read a travel itinerary someone pasted and pull out its structure for a trip planner. One city: the main one the itinerary is in (in plain English, e.g. "Lisbon"). Each day in order, with its stops in the order they're visited: real, visitable places only (sights, restaurants, cafés, bars, parks, museums, markets, viewpoints, neighbourhoods to walk), named as the itinerary names them (don't translate them); never generic activities like "breakfast", "rest", "check in", "free time", "travel to the airport" or a flight. Time: the stop's start time as 24-hour HH:MM if the text gives one, else "". Minutes: how long it's given if the text says, else 0. Kind: the closest of ${KINDS.join(', ')}. Note: anything the text says about the stop worth keeping (what to order, a booking), short, else "". Hotel: where they're staying if named, else "". Start date as YYYY-MM-DD only if a real date is given, else "". Travellers: the number if stated, else 0. If it isn't an itinerary at all, return no days.`
 
 const SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -108,6 +110,18 @@ const clock = (t: string): number | undefined => {
 // taken for any market.
 const known = <T extends { name: string }>(name: string, pool: T[]): T | undefined => findPlaces(name, pool as unknown as Place[], 0.99)[0] as unknown as T | undefined
 
+// A place found on the map that Wayfarer already has under another name ("Mosteiro dos
+// Jerónimos" for "Jerónimos Monastery"): the same spot, or close by and sharing a distinctive word.
+const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+const COMMON = new Set(['museum', 'museu', 'museo', 'musee', 'church', 'igreja', 'market', 'mercado', 'garden', 'jardim', 'palace', 'palacio', 'tower', 'torre', 'square', 'praca', 'plaza', 'street', 'cafe', 'restaurant', 'miradouro', 'viewpoint', 'castle', 'castelo', 'national', 'nacional'])
+const words = (s: string) => fold(s).split(/[^a-z0-9]+/).filter(w => w.length >= 5 && !COMMON.has(w))
+export function catalogTwin(p: Place, city: City): Place | undefined {
+  const same = existingSpot(p, city)
+  if (same) return same
+  const mine = new Set(words(p.name))
+  return mine.size ? city.places.find(x => haversineKm(x.coord, p.coord) < 0.35 && words(x.name).some(w => mine.has(w))) : undefined
+}
+
 async function mapAll<T, R>(items: T[], n: number, fn: (t: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length)
   let next = 0
@@ -152,6 +166,8 @@ export async function fromParsed(parsed: ParsedItinerary, opts: ImportOptions = 
     if (have) return have
     try {
       const r = await resolvePlace({ name: st.name, kind: st.kind, city: city.id, describe: false }, opts.signal)
+      const twin = catalogTwin(r.place, city)
+      if (twin) return twin
       const place: Place = {
         ...r.place,
         kind: st.kind,

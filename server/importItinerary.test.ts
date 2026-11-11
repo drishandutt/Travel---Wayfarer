@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MAX_DAYS, fromParsed, importSummary, type ParsedItinerary } from './importItinerary'
+import { MAX_DAYS, catalogTwin, fromParsed, importSummary, type ParsedItinerary } from './importItinerary'
+import { cityById } from '../src/data/cities'
 import { looksLikeItinerary } from '../src/planner/itineraryPaste'
 
 const stop = (name: string, time = '', kind: ParsedItinerary['days'][number]['stops'][number]['kind'] = 'sight') => ({ name, kind, time, minutes: 0, note: '' })
@@ -76,4 +77,12 @@ test('the chat tells a pasted itinerary from an ordinary message', () => {
   assert.ok(!looksLikeItinerary('move the castle to day 2'))
   assert.ok(!looksLikeItinerary('4 days in Tokyo for two, food and nightlife, $4000'))
   assert.ok(!looksLikeItinerary('We loved day 1!\nCan you add more food on day 2?\nAnd something relaxed in the evening, maybe a viewpoint or a bar with a view of the river?\nThanks'))
+})
+
+test('a map find that Wayfarer already has under another name is the catalog place', () => {
+  const city = cityById('lisbon')!
+  const jeronimos = city.places.find(p => p.name === 'Jerónimos Monastery')!
+  const fromMap = { ...jeronimos, id: 'my-mosteiro', name: 'Mosteiro dos Jerónimos', coord: [jeronimos.coord[0] + 0.0012, jeronimos.coord[1] + 0.0008] as [number, number] }
+  assert.equal(catalogTwin(fromMap, city)?.id, jeronimos.id)
+  assert.equal(catalogTwin({ ...fromMap, name: 'Tasca do Chico' }, city), undefined)
 })
