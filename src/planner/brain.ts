@@ -47,9 +47,17 @@ export async function findStay(name: string, city: string): Promise<{ name: stri
   return res.json()
 }
 
-// Places that fit the trip's mood, found on the web and added to the city on the server.
-export async function findVibe(cityId: string, brief: TripBrief): Promise<{ places: import('../types').Place[]; cached: boolean }> {
-  const res = await fetch(`/api/cities/${encodeURIComponent(cityId)}/vibe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brief }) })
-  if (!res.ok) throw new Error(await errorText(res))
-  return res.json()
+// Places that fit the trip's mood, found on the web and added to the city on the server. A search
+// takes a few minutes, so the server runs it as a job: ask, then ask again until it's done.
+export async function findVibe(cityId: string, brief: TripBrief, signal?: AbortSignal): Promise<{ places: import('../types').Place[]; cached: boolean }> {
+  const until = Date.now() + 8 * 60_000
+  for (;;) {
+    const res = await fetch(`/api/cities/${encodeURIComponent(cityId)}/vibe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brief }), signal })
+    if (!res.ok) throw new Error(await errorText(res))
+    const out = await res.json() as { status: 'running' | 'done' | 'failed'; places?: import('../types').Place[]; cached?: boolean; error?: string }
+    if (out.status === 'done') return { places: out.places ?? [], cached: Boolean(out.cached) }
+    if (out.status === 'failed') throw new Error(out.error ?? 'The search failed.')
+    if (Date.now() > until) throw new Error('The search is taking too long.')
+    await new Promise(r => setTimeout(r, 6000))
+  }
 }

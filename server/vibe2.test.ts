@@ -7,7 +7,7 @@ import { buildDay, scorePlace } from '../src/planner/core'
 import { addCatalogPlaces, cityById, tripCity } from '../src/data/cities'
 import { reducer, initialState } from '../src/state/tripStore'
 import { setOpenAIKey } from './openai'
-import { findByVibe, focusesOf, fromSearch } from './cities/vibeSearch'
+import { findByVibe, focusesOf, fromSearch, vibeStatus } from './cities/vibeSearch'
 import { kindFit, laneDeck, laneOf } from '../src/planner/core'
 import { applyStory } from '../src/planner/story'
 import { planWithModel } from './planAgent'
@@ -214,5 +214,37 @@ describe('a trip about nights out', () => {
     const b: TripBrief = { destination: 'tokyo', days: 3, vibes: ['history', 'culture'] }
     const city = tripCity(b)!
     assert.equal(laneOf(city.places.find(p => p.id === laneDeck(city.places, b)[0].id)!), 'places')
+  })
+})
+
+describe('the mood search as a job', { skip: Boolean(process.env.ANTHROPIC_API_KEY) && 'Claude is set here' }, () => {
+  after(() => { globalThis.fetch = realFetch; setOpenAIKey(null) })
+
+  it('starts on the first ask, says it’s running, then done; and remembers a provider that’s out of credits', async () => {
+    let calls = 0
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes('nominatim')) return new Response('[]', { status: 200 })
+      calls++
+      return new Response(JSON.stringify({ error: { message: 'You have no credits remaining.', type: 'insufficient_quota', code: 'insufficient_quota' } }), { status: 429, headers: { 'content-type': 'application/json' } })
+    }) as typeof fetch
+    setOpenAIKey('sk-test')
+    const brief: TripBrief = { destination: 'lisbon', vibes: [], story: { feel: ['fado', 'quiet'] } }
+    let allowed = 0
+    const first = await vibeStatus('lisbon', brief, null, () => { allowed++; return true })
+    assert.equal(first.status, 'running')
+    assert.equal((await vibeStatus('lisbon', brief, null, () => true)).status, 'running', 'the same mood joins the search under way')
+    let now: Awaited<ReturnType<typeof vibeStatus>> = first
+    for (let i = 0; i < 100 && now.status === 'running'; i++) { await new Promise(r => setTimeout(r, 50)); now = await vibeStatus('lisbon', brief, null, () => { allowed++; return true }) }
+    assert.equal(now.status, 'failed')
+    assert.match(now.status === 'failed' ? now.error : '', /credits/)
+    const before = calls
+    assert.equal((await vibeStatus('lisbon', brief, null, () => { allowed++; return true })).status, 'failed', 'remembered, not asked again')
+    assert.equal(calls, before)
+    assert.equal(allowed, 1, 'only starting a search counts against the limits')
+  })
+
+  it('says when the limits stop a new search', async () => {
+    const out = await vibeStatus('lisbon', { destination: 'lisbon', vibes: [], story: { feel: ['brand new mood'] } }, null, () => false)
+    assert.equal(out.status, 'limited')
   })
 })

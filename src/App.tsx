@@ -4,7 +4,7 @@ import { trackAction, trackScreen } from './dev/activity'
 import { deleteTrip, groupCopyOf, loadCurrent, loadPanels, loadTrips, localCopyOf, saveCurrent, savePanels, saveTrip, setTripScope, snapshot, newId, type PanelPrefs } from './state/persistence'
 import { converse, isReady, nextField } from './planner/intake'
 import { MockPlanner } from './planner/mockPlanner'
-import { RemotePlanner } from './planner/remotePlanner'
+import { FallbackPlanner, RemotePlanner } from './planner/remotePlanner'
 import { claudeIntake, detectBrain, findStay, findVibe, plansRemotely, type BrainStatus } from './planner/brain'
 import { hasMood, moodOf } from './planner/story'
 import { customPlaceRequest, isFind, mapsHost, resolveCustomPlace, type CustomPlaceRequest } from './planner/customPlaces'
@@ -225,7 +225,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   const [brain, setBrain] = useState<BrainStatus | null>(null)
   useEffect(() => { detectBrain().then(setBrain) }, [])
   // A model on the server (Claude, or OpenAI) when configured; otherwise the offline heuristic planner.
-  const engine = useMemo(() => (plansRemotely(brain) ? new RemotePlanner() : new MockPlanner(1)), [brain])
+  const engine = useMemo(() => (plansRemotely(brain) ? new FallbackPlanner(new RemotePlanner(), new MockPlanner(1)) : new MockPlanner(1)), [brain])
   const abort = useRef<AbortController | null>(null)
   const latest = useRef<TripState>(state)
   latest.current = state
@@ -452,6 +452,11 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     } catch (e) {
       // no assistant to reach: the rule-based editor still understands most changes
       if (e instanceof TypeError) return false
+      // the model itself can't answer (no credits, too busy): the rule-based editor takes it
+      if (/credit|quota|rate.?limit|429|busy|overloaded|unavailable|50[23]/i.test((e as Error).message)) {
+        console.warn('[assistant] the model failed, using the rule-based editor:', (e as Error).message)
+        return false
+      }
       dispatch({ type: 'chat', role: 'ai', text: `The assistant hit a problem: ${(e as Error).message}` })
       return true
     } finally {
@@ -538,16 +543,14 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         dispatch({ type: 'chat', role: 'ai', text: out.reply, chips: out.chips })
         void placeStay(out.brief)
         // a city being mapped: the destination is set once it's ready
-        if (out.building) { void awaitCity(out.building); return }
+        if (out.building) void awaitCity(out.building)
+        else setTyping(false)
+        return
       } catch (e) {
-        const { brief, reply } = converse(text, latest.current.brief)
-        dispatch({ type: 'brief', brief })
-        dispatch({ type: 'chat', role: 'ai', text: `(The planner is unreachable: ${(e as Error).message} Using offline mode.) ${reply}` })
-        void placeStay(brief)
-      } finally {
-        setTyping(false)
+        // the model can't answer (no credits, too busy, offline): carry on without it, quietly,
+        // through the offline reading below
+        console.warn('[intake] the model intake failed, answering offline:', (e as Error).message)
       }
-      return
     }
     const heard = converse(text, s.brief)
     let { brief, reply } = heard

@@ -199,16 +199,48 @@ export async function findByVibe(cityId: string, brief: TripBrief, userId: strin
   }
   const pending = running.get(key)
   if (pending) return pending
-  const job = search(city, brief, mood, key, userId, signal).finally(() => running.delete(key))
+  const job = search(city, brief, mood, key, userId, signal)
+    .catch(err => { failed.set(key, { error: (err as Error).message, at: Date.now() }); throw err })
+    .finally(() => running.delete(key))
   running.set(key, job)
   return job
+}
+
+// The same search as a job the browser checks on: a search takes a few minutes, longer than a
+// request may stay open on the host. The first ask starts it (if `canStart` allows: the rate
+// limits), later asks with the same mood see how it's going, and a failure is remembered for a
+// few minutes so a broken provider isn't asked again on every check.
+const failed = new Map<string, { error: string; at: number }>()
+const FAILED_FOR = 5 * 60_000
+export type VibeStatus = ({ status: 'done' } & VibeResult) | { status: 'running'; mood: string } | { status: 'failed'; error: string } | { status: 'limited' }
+
+export async function vibeStatus(cityId: string, brief: TripBrief, userId: string | null, canStart: () => boolean): Promise<VibeStatus> {
+  const city = cityById(cityId)
+  if (!city) return { status: 'failed', error: 'Which city is the trip in?' }
+  const mood = moodOf(brief)
+  const key = `${cityId}|${mood}`
+  const held = recent.get(key)
+  const known = held && Date.now() - held.at < MAX_AGE ? held.ids : await recallVibe(key, MAX_AGE).catch(() => undefined)
+  if (known) {
+    const places = known.map(id => city.places.find(p => p.id === id)).filter((p): p is Place => Boolean(p))
+    if (places.length) return { status: 'done', places, cached: true, mood, searched: 0 }
+  }
+  if (running.has(key)) return { status: 'running', mood }
+  const fail = failed.get(key)
+  if (fail && Date.now() - fail.at < FAILED_FOR) return { status: 'failed', error: fail.error }
+  if (!canStart()) return { status: 'limited' }
+  findByVibe(cityId, brief, userId).catch(err => console.warn('[vibe]', cityId, (err as Error).message))
+  return { status: 'running', mood }
 }
 
 async function search(city: City, brief: TripBrief, mood: string, key: string, userId: string | null, signal?: AbortSignal): Promise<VibeResult> {
   const started = Date.now()
   const focuses = focusesOf(brief)
   const runs = await Promise.all(focuses.map(f => (brainEnabled ? searchClaude(city, brief, f, signal) : openai ? searchOpenAI(city, brief, f, signal) : Promise.resolve({ found: [], sources: new Set<string>() }))
-    .catch(err => { console.warn('[vibe]', city.id, f.key, (err as Error).message); return { found: [] as Candidate[], sources: new Set<string>() } })))
+    .then(r => ({ ...r, error: undefined as string | undefined }))
+    .catch(err => { console.warn('[vibe]', city.id, f.key, (err as Error).message); return { found: [] as Candidate[], sources: new Set<string>(), error: (err as Error).message } })))
+  // every search failed (the provider is down, or out of credits): a failure, not "found nothing"
+  if (runs.every(r => r.error)) throw new Error(runs[0].error ?? 'The search failed.')
   const found: Candidate[] = []
   const seen = new Set<string>()
   // each search keeps its own sources: a place counts only if its own search returned its page

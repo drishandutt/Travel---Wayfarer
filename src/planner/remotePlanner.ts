@@ -48,3 +48,39 @@ export async function errorText(res: Response): Promise<string> {
     return `Server error ${res.status}`
   }
 }
+
+// The model planner, with the offline one behind it: if the server can't plan (no credits left,
+// too busy, unreachable) before it has drawn anything that counts, the offline planner takes over,
+// with a plain line in the thinking log rather than the provider's error.
+export class FallbackPlanner implements PlannerEngine {
+  constructor(private remote: PlannerEngine, private offline: PlannerEngine) {}
+
+  planItinerary(brief: TripBrief, signal: AbortSignal, picks?: Picks) {
+    return this.guard(s => this.remote.planItinerary(brief, s, picks), s => this.offline.planItinerary(brief, s, picks), 'day', signal)
+  }
+
+  findHotels(brief: TripBrief, days: DayPlan[], signal: AbortSignal) {
+    return this.guard(s => this.remote.findHotels(brief, days, s), s => this.offline.findHotels(brief, days, s), 'hotel-pick', signal)
+  }
+
+  private async *guard(first: (s: AbortSignal) => AsyncGenerator<PlannerEvent>, second: (s: AbortSignal) => AsyncGenerator<PlannerEvent>, counts: PlannerEvent['type'], signal: AbortSignal): AsyncGenerator<PlannerEvent> {
+    let started = false
+    try {
+      for await (const e of first(signal)) {
+        if (e.type === 'error' && !started) {
+          console.warn('[planner] the model planner failed, planning offline:', e.message)
+          yield { type: 'thought', text: 'The planner is busy right now, so I’m mapping this one myself.', tone: 'warn' }
+          yield* second(signal)
+          return
+        }
+        if (e.type === counts) started = true
+        yield e
+      }
+    } catch (err) {
+      if ((err as Error).name === 'AbortError' || started) throw err
+      console.warn('[planner] the model planner failed, planning offline:', (err as Error).message)
+      yield { type: 'thought', text: 'The planner is busy right now, so I’m mapping this one myself.', tone: 'warn' }
+      yield* second(signal)
+    }
+  }
+}

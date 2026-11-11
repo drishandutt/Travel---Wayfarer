@@ -406,7 +406,8 @@ How a search runs:
 - **Nothing invented.** A place is kept only if its page is one the search really returned (or on the same site), and OpenStreetMap finds it near the city.
 - **Joining the city.** Each kept place joins the city's catalog for everyone, marked as a *Local pick* (`found.via = 'vibe'`, rank 0.3: known to people who care, not to the coach tours). Its opening hours come from OpenStreetMap.
 - **No repeats.** The same mood in the same city (`moodOf`: its words in any order) isn't searched again for 30 days. The search is remembered in `vibe_searches` (migration 9) and in memory, and a search already under way is shared.
-- **Limits.** 10 searches an hour per visitor, counted in the daily model cap. The search finishes even if the visitor leaves, since what it finds helps everyone.
+- **A job, not a request.** Searches and map lookups take a few minutes, longer than Railway keeps a request open (5 minutes). So the first `POST` starts a job (`vibeStatus`) and answers `running`, and the browser asks again every 6 seconds until it's `done` or `failed`. A failure (every search failed, for example when the provider is out of credits) is remembered for 5 minutes, so checks don't keep retrying it.
+- **Limits.** 10 new searches an hour per visitor, counted in the daily model cap. Checking on a job doesn't count. The search finishes even if the visitor leaves, since what it finds helps everyone.
 
 **What a vibe is made of** (`kindFit` in `core.ts`). Tags say what a place touches on; `kindFit` says what kinds of place a vibe mostly is:
 - Nightlife is bars first, then night spots, with parks, museums, markets and plain sights below them.
@@ -494,6 +495,10 @@ Design choices:
 - **The model decides, code computes.** The model chooses places, groupings, order and start times. Timings, travel legs and hotel metrics come from the deterministic primitives in `src/planner/core.ts`, which the offline planner shares, so numbers are never hallucinated.
 - **Tool results feed back reality.** `shortlist_places` returns each kept place's nearest neighbours with travel minutes, and `commit_day` returns the computed timeline (including idle gaps), so the model can correct course on later days.
 - **Strict tools + server-side validation.** Tool schemas use `strict: true`, and every input is re-checked (unknown or reused ids are returned as tool errors for the model to fix).
+- **When the model can't answer** (no credits, too busy, unreachable), nobody sees the provider's error:
+  - **Planning:** `FallbackPlanner` (`src/planner/remotePlanner.ts`) hands over to the offline planner, if the model fails before it has drawn a day or picked a hotel.
+  - **The intake:** answers offline, city lookup included.
+  - **The assistant:** passes the message to the rule-based editor.
 - **Resilience.** Claude requests opt into server-side refusal fallback (`fallbacks: "default"`). Closing the tab or pressing *Start over* aborts the in-flight model call. Any failure becomes an `error` event, and the UI falls back to the last stable phase.
 - **Config** (`.env`): `WAYFARER_MODEL` (default `claude-opus-5-5`), `WAYFARER_OPENAI_MODEL` (default `gpt-6-astra`), `WAYFARER_EFFORT_PLAN|INTAKE|HOTEL`, `WAYFARER_BRAIN=mock` to force offline planning, `WAYFARER_DAILY_MODEL_CALLS`, `WAYFARER_API_PORT`.
 
