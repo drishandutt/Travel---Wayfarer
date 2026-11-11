@@ -541,6 +541,55 @@ export const MIGRATIONS = [`
       REVOKE ALL ON oauth_clients, oauth_codes, oauth_tokens FROM anon, authenticated;
     END IF;
   END $$;
+`, `
+  -- The documents vault (server/docs): tickets, bookings, passports, visas and insurance, kept
+  -- privately in the vault's bucket, read by the model, and the alerts they raise. An alert is
+  -- shown in the app once due, emailed then (if the person wants that), and scheduled on their
+  -- iPhone ahead of time. Keys are stable per document, so reading one again replaces its alerts.
+  CREATE TABLE documents (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    storage_key TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    bytes BIGINT NOT NULL,
+    file_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT,
+    kind TEXT,
+    data TEXT,
+    trip_id TEXT REFERENCES money_groups(id) ON DELETE SET NULL,
+    tz_offset INTEGER NOT NULL DEFAULT 0,
+    created_at BIGINT NOT NULL,
+    read_at BIGINT
+  );
+  CREATE INDEX documents_owner ON documents(owner_id, created_at);
+  CREATE TABLE alerts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    doc_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    due_at BIGINT NOT NULL,
+    delivered_at BIGINT,
+    emailed_at BIGINT,
+    read_at BIGINT,
+    created_at BIGINT NOT NULL,
+    UNIQUE (user_id, key)
+  );
+  CREATE INDEX alerts_due ON alerts(delivered_at, due_at);
+  CREATE INDEX alerts_user ON alerts(user_id, due_at);
+  ALTER TABLE users ADD COLUMN alert_email BOOLEAN NOT NULL DEFAULT TRUE;
+
+  ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON documents, alerts FROM anon, authenticated;
+    END IF;
+  END $$;
 `]
 
 // A transaction is one connection, and one connection runs one query at a time: reads that

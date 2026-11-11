@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, open, rename, rm, stat } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import type { UploadTarget } from '../../src/vault/types'
@@ -19,6 +19,8 @@ export interface VaultStorage {
   // signed URLs to read objects, valid for `seconds`
   readUrls(keys: string[], seconds: number): Promise<Map<string, string>>
   remove(keys: string[]): Promise<void>
+  // the whole object, for the server to read itself (a document being analysed)
+  read(key: string): Promise<Buffer>
 }
 
 const HEAD_BYTES = 16
@@ -80,6 +82,7 @@ export function diskStorage(root: string, maxBytes: number): DiskStorage {
     async remove(keys) {
       await Promise.all(keys.map(k => rm(pathOf(k), { force: true })))
     },
+    read: key => readFile(pathOf(key)),
     async serve(req, res, url) {
       if (req.method === 'PUT') {
         const ok = verify('put', url.searchParams)
@@ -115,7 +118,7 @@ export function diskStorage(root: string, maxBytes: number): DiskStorage {
         if (!info) return fail(res, 404, 'That photo is gone')
         const head = (await this.probe(ok.key))?.head ?? Buffer.alloc(0)
         res.writeHead(200, {
-          'Content-Type': sniffImage(head) ?? 'application/octet-stream',
+          'Content-Type': sniffFile(head) ?? 'application/octet-stream',
           'Content-Length': info.size,
           'Cache-Control': 'private, max-age=3600',
           'X-Content-Type-Options': 'nosniff',
@@ -172,6 +175,11 @@ export function supabaseStorage(projectUrl: string, serviceKey: string, bucket: 
       }
       return out
     },
+    async read(key) {
+      const res = await call('GET', `${base}/object/authenticated/${bucket}/${path(key)}`)
+      if (!res.ok) throw new Error(`Storage couldn’t read a file: ${res.status}`)
+      return Buffer.from(await res.arrayBuffer())
+    },
     async remove(keys) {
       if (!keys.length) return
       const res = await call('DELETE', `${base}/object/${bucket}`, { prefixes: keys })
@@ -198,4 +206,10 @@ export function sniffImage(b: Buffer): string | null {
   if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
   if (b.length >= 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp'
   return null
+}
+
+// Photos, and the PDFs the documents vault keeps
+export function sniffFile(b: Buffer): string | null {
+  if (b.length >= 5 && b.subarray(0, 5).toString('latin1') === '%PDF-') return 'application/pdf'
+  return sniffImage(b)
 }

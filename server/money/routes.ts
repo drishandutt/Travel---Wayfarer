@@ -25,6 +25,8 @@ import { attachCityDb, loadCities } from '../cities/store'
 import { attachActivityDb, from, track } from '../dev/activity'
 import { attachSettingsDb } from '../dev/settings'
 import { startAnalystSchedule } from '../dev/analyst'
+import { registerDocsRoutes } from '../docs/routes'
+import { startAlertDelivery } from '../docs/notify'
 
 // The money API: accounts, groups, expenses, settling up, and a live stream per group.
 // The server trusts nothing it can work out itself: splits, balances and who may see
@@ -392,8 +394,9 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
 
   route('PATCH', '/auth/me', async c => {
     const user = needUser(c)
-    const body = await readBody(c.req, z.object({ name: name.optional(), payHandle: z.string().trim().max(120).nullable().optional() }))
-    const groups = await store.updateAccount(db, user, { name: body.name, payHandle: body.payHandle === '' ? null : body.payHandle })
+    const body = await readBody(c.req, z.object({ name: name.optional(), payHandle: z.string().trim().max(120).nullable().optional(), alertEmail: z.boolean().optional() }))
+    if (body.alertEmail !== undefined) await db.run(`UPDATE users SET alert_email = ${body.alertEmail ? 'TRUE' : 'FALSE'} WHERE id = ?`, user.id)
+    const groups = body.name !== undefined || body.payHandle !== undefined ? await store.updateAccount(db, user, { name: body.name, payHandle: body.payHandle === '' ? null : body.payHandle }) : []
     await publishAll(db, groups)
     return { user: toAccount((await db.one<UserRow>('SELECT * FROM users WHERE id = ?', user.id))!) }
   })
@@ -612,6 +615,7 @@ export function createMoneyApi(db: Db, vaultOpts: VaultOptions = { storage: null
   })
 
   registerVaultRoutes(db, vaultOpts, route, readBody, needUser)
+  registerDocsRoutes(db, vaultOpts.storage, route, readBody, needUser)
   registerDevRoutes(db, route, readBody, needUser)
 
   // Every request here, once answered, with who made it: the activity log (server/dev/activity.ts).
@@ -689,6 +693,7 @@ export function moneyApi(): Promise<MoneyApi | null> {
       // the cities built so far, travellers' promoted finds and the places' profiles
       await loadCities().catch(err => console.warn('[cities] loading:', (err as Error).message))
       startAnalystSchedule(db)
+      startAlertDelivery(db)
       const storage = vaultStorageFromEnv(MAX_ORIGINAL_BYTES)
       if (!storage) console.warn('[vault] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are unset: the photo vault is off.')
       return createMoneyApi(db, { storage, geocode: process.env.VAULT_GEOCODE === 'off' ? null : vault.nominatim(), limits: vaultLimitsFromEnv() })

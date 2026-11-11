@@ -20,6 +20,8 @@ import { PicksPanel, SwipeDeck, type DeckGroup } from './components/SwipeDeck'
 import { Dashboard } from './components/Dashboard'
 import { Profile } from './components/Profile'
 import { importPastedItinerary, looksLikeItinerary } from './planner/itineraryPaste'
+import { useAlerts } from './docs/client'
+import { onAlertTapped } from './docs/native'
 import { AuthScreen, JoinScreen, MoneyApp, useInvite, useMoneyBadge, type MoneyTrip } from './components/money/MoneyApp'
 import type { ExpensePrefill } from './components/money/ExpenseForm'
 import { Empty } from './components/money/parts'
@@ -648,7 +650,12 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   // Money and Photos. From the top bar: every trip together. From the trip (its dashboard, a
   // place on its map): that trip's own, made on the spot if accepting the plan didn't get to.
   const [moneyOpen, setMoneyOpen] = useState<{ scope?: string; prefill?: ExpensePrefill } | null>(null)
-  const [vaultOpen, setVaultOpen] = useState<{ scope?: string } | null>(null)
+  // ?docs (from an alert email) opens the documents
+  const [vaultOpen, setVaultOpen] = useState<{ scope?: string; section?: 'photos' | 'docs' } | null>(() => (new URLSearchParams(location.search).has('docs') ? { section: 'docs' } : null))
+  const openDocs = useCallback(() => { setProfileOpen(false); setVaultOpen({ section: 'docs' }) }, [])
+  const { alerts, markAllRead } = useAlerts(Boolean(account))
+  // a tapped alert on the phone opens the documents
+  useEffect(() => onAlertTapped(openDocs), [openDocs])
   const [profileOpen, setProfileOpen] = useState(false)
   // which screens people open, for the activity log
   const screens = { dashboard: dashOpen, money: Boolean(moneyOpen), photos: Boolean(vaultOpen), 'dev tools': devOpen, 'share sheet': Boolean(incoming) }
@@ -956,7 +963,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       <div className="vignette" />
 
       <TopBar state={state} brain={brain} trips={trips}  onOpen={openTrip} onDelete={removeTrip} onDeleteGroup={account ? deleteShared : undefined} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} onPhotos={() => setVaultOpen({})}
-        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} devReviews={devReviews} email={account?.email ?? null} onSignOut={signOut} onProfile={account ? () => setProfileOpen(true) : undefined} me={account} />
+        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} devReviews={devReviews} email={account?.email ?? null} onSignOut={signOut} onProfile={account ? () => setProfileOpen(true) : undefined} me={account} alertsUnread={alerts?.unread ?? 0} />
 
       {newGroup && (
         <div className="trip-nudge" role="status">
@@ -1027,8 +1034,8 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         onMoney={() => openTripMoney()} onPhotos={openTripPhotos} balance={tripBalance} />}
 
       {moneyOpen && <MoneyApp acct={acct} trip={moneyTrip} scope={moneyOpen.scope} prefill={moneyOpen.prefill} onClose={() => { setMoneyOpen(null); refreshGroups().catch(() => {}) }} />}
-      {profileOpen && account && <Profile acct={acct} trips={trips} groups={groups ?? []} theme={theme} onToggleTheme={toggleTheme} onClose={closeProfile} />}
-      {vaultOpen && <VaultApp acct={acct} scope={vaultOpen.scope} onClose={() => setVaultOpen(null)} />}
+      {profileOpen && account && <Profile acct={acct} trips={trips} groups={groups ?? []} theme={theme} onToggleTheme={toggleTheme} alerts={alerts} onReadAlerts={markAllRead} onDocs={openDocs} onClose={closeProfile} />}
+      {vaultOpen && <VaultApp acct={acct} scope={vaultOpen.scope} section={vaultOpen.section} onClose={() => { setVaultOpen(null); if (new URLSearchParams(location.search).has('docs')) history.replaceState(null, '', location.pathname) }} />}
 
       {incoming && <ShareSheet shared={incoming} targets={shareTargets} signedIn={Boolean(account)} onAdd={addShared} onClose={() => setIncoming(null)} onDevTools={devAdmin ? () => { setIncoming(null); setDevOpen(true) } : undefined} />}
       {devOpen && devAdmin && <DevTools onClose={() => { setDevOpen(false); if (new URLSearchParams(location.search).has('dev')) history.replaceState(null, '', location.pathname) }} />}

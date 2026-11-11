@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, NetworkError } from '../../money/client'
 import type { AccountHandle } from '../../money/hooks'
 import { deletePhotos, loadLibrary, originalUrl, setPlace, setShares, uploadAll, type UploadProgress } from '../../vault/client'
 import type { ShareTargets, VaultImage, VaultLibrary } from '../../vault/types'
 import { AuthScreen } from '../money/MoneyApp'
 import { Empty, Modal, useEscape } from '../money/parts'
+import { DocsLibrary } from './DocsTab'
 
-// The photo vault: every photo you can see (yours and what was shared to you), newest
+// The vault: photos and, on their own tab, documents (./DocsTab.tsx). The photos: every photo you can see (yours and what was shared to you), newest
 // first, with filters for where it was taken, when, and who it came through. A trip's
 // album is the same library narrowed to the photos shared with that trip's group.
 
@@ -268,7 +269,7 @@ const inGroup = (id: string) => (i: VaultImage) => i.viaGroups.includes(id) || B
 
 // ── the library ───────────────────────────────────────────────────────────────
 
-function Library({ album, scoped, onAlbum, onClose }: { album: string | null; scoped: boolean; onAlbum: (id: string | null) => void; onClose: () => void }) {
+function Library({ album, scoped, onAlbum, onClose, tabs }: { album: string | null; scoped: boolean; onAlbum: (id: string | null) => void; onClose: () => void; tabs?: ReactNode }) {
   const [lib, setLib] = useState<VaultLibrary | null>(null)
   const [error, setError] = useState<{ text: string; off?: boolean } | null>(null)
   const [f, setF] = useState<Filters>(NO_FILTERS)
@@ -339,7 +340,7 @@ function Library({ album, scoped, onAlbum, onClose }: { album: string | null; sc
         {scoped ? <button className="dash-back" onClick={onClose}>← Trip</button>
           : album ? <button className="dash-back" onClick={() => onAlbum(null)}>← All photos</button>
           : <button className="dash-back" onClick={onClose}>← Map</button>}
-        <h1>{albumName ?? 'Photos'}</h1>
+        {tabs && !album ? tabs : <h1>{albumName ?? 'Photos'}</h1>}
         <span className="v-count">{filtered ? `${shown.length} of ${images.length}` : `${images.length} photo${images.length === 1 ? '' : 's'}`}</span>
         <span className="m-spacer" />
         {images.length > 0 && <button className="ghost m-small v-filter-toggle" aria-expanded={showFilters} onClick={() => setShowFilters(s => !s)}>Filters{filtered ? ' •' : ''}</button>}
@@ -402,9 +403,16 @@ function Library({ album, scoped, onAlbum, onClose }: { album: string | null; sc
 }
 
 // With a scope it's that one trip's album; without, every photo, with each trip's album to step into.
-export function VaultApp({ acct, scope, onClose }: { acct: AccountHandle; scope?: string; onClose: () => void }) {
+export function VaultApp({ acct, scope, section: first = 'photos', onClose }: { acct: AccountHandle; scope?: string; section?: 'photos' | 'docs'; onClose: () => void }) {
   const { account, status, signedIn, retry } = acct
   const [album, setAlbum] = useState<string | null>(scope ?? null)
+  // a trip's own album is photos only; the whole vault is photos and documents
+  const [section, setSection] = useState<'photos' | 'docs'>(scope ? 'photos' : first)
+  const tabs = scope ? undefined : (
+    <nav className="v-sections" aria-label="Vault">
+      {(['photos', 'docs'] as const).map(t => <button key={t} aria-current={section === t ? 'page' : undefined} className={section === t ? 'on' : ''} onClick={() => setSection(t)}>{t === 'photos' ? 'Photos' : 'Documents'}</button>)}
+    </nav>
+  )
   useEscape(onClose)
   let body
   if (status === 'loading' && !account) body = <div className="v-loading"><div className="m-skeleton" /></div>
@@ -418,9 +426,10 @@ export function VaultApp({ acct, scope, onClose }: { acct: AccountHandle; scope?
       </div>
     )
   } else if (!account) body = <AuthScreen onDone={signedIn} />
-  else body = <Library key={account.id} album={album} scoped={Boolean(scope)} onAlbum={setAlbum} onClose={onClose} />
+  else if (section === 'docs') body = <DocsLibrary key={account.id} tabs={tabs} onClose={onClose} />
+  else body = <Library key={account.id} album={album} scoped={Boolean(scope)} onAlbum={setAlbum} onClose={onClose} tabs={tabs} />
   return (
-    <div className="dash m-app v-app" role="dialog" aria-label="Photo vault">
+    <div className="dash m-app v-app" role="dialog" aria-label={section === 'docs' ? 'Documents' : 'Photo vault'}>
       {!account && <div className="m-top"><button className="dash-back" onClick={onClose}>← Back to map</button></div>}
       {body}
     </div>

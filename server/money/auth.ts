@@ -15,9 +15,9 @@ const COOKIE = 'wf_session'
 const SESSION_MS = 365 * 86_400_000
 const N = 16384, R = 8, P = 1, KEYLEN = 32
 
-export interface UserRow { id: string; name: string; email: string; password_hash: string | null; pay_handle: string | null; created_at: number; email_verified_at: number | null }
+export interface UserRow { id: string; name: string; email: string; password_hash: string | null; pay_handle: string | null; created_at: number; email_verified_at: number | null; alert_email?: boolean }
 
-export const toAccount = (u: UserRow): Account => ({ id: u.id, name: u.name, email: u.email, hasPassword: Boolean(u.password_hash), payHandle: u.pay_handle, createdAt: Number(u.created_at) })
+export const toAccount = (u: UserRow): Account => ({ id: u.id, name: u.name, email: u.email, hasPassword: Boolean(u.password_hash), payHandle: u.pay_handle, createdAt: Number(u.created_at), alertEmail: u.alert_email !== false })
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16)

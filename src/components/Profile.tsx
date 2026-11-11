@@ -6,14 +6,16 @@ import type { Theme } from '../state/theme'
 import { AccountCtx, Avatar } from './money/parts'
 import { AccountCard } from './money/PeopleTab'
 import { ClaudeProfileCard } from './ConnectClaude'
+import { AlertsCard } from './AlertsCard'
+import type { Alerts } from '../docs/client'
 
-// Your profile, from your avatar in the top bar (or the Trips menu): who you are and how you sign in, your trips at a glance,
+// Your profile, from your avatar in the top bar (or the Trips menu): alerts from your documents, who you are and how you sign in, your trips at a glance,
 // the details you can change (name, how people pay you, email, password), and Claude: the
 // address to add it with, what it can do and the apps connected to this account.
 
 const since = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 
-export function Profile({ acct, trips, groups, theme, onToggleTheme, onClose }: { acct: AccountHandle; trips: SavedTrip[]; groups: GroupSummary[]; theme: Theme; onToggleTheme: () => void; onClose: () => void }) {
+export function Profile({ acct, trips, groups, theme, onToggleTheme, alerts, onReadAlerts, onDocs, onClose }: { acct: AccountHandle; trips: SavedTrip[]; groups: GroupSummary[]; theme: Theme; onToggleTheme: () => void; alerts: Alerts | null; onReadAlerts: () => void; onDocs: () => void; onClose: () => void }) {
   const { account, signedIn, signOut } = acct
   const ctx = useMemo(() => (account ? { account, signedIn, signOut: async () => { await signOut(); onClose() } } : null), [account, signedIn, signOut, onClose])
   if (!account || !ctx) return null
@@ -45,6 +47,7 @@ export function Profile({ acct, trips, groups, theme, onToggleTheme, onClose }: 
               {(['light', 'dark'] as const).map(t => <button key={t} className={theme === t ? 'on' : ''} aria-pressed={theme === t} onClick={() => theme !== t && onToggleTheme()}>{t === 'light' ? 'Light' : 'Dark'}</button>)}
             </div>
           </section>
+          <AlertsCard className="span-12" alerts={alerts} onRead={onReadAlerts} onDocs={onDocs} />
           <AccountCard className="span-6" claude={false} />
           <ClaudeProfileCard className="span-6" />
         </div>

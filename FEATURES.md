@@ -3,7 +3,7 @@
 > The consolidated, final list of every feature idea discussed. Organized into three tiers.
 > This is the master reference; `UPDATES.md` remains the raw running log.
 >
-> _Last updated: 2026-11-10_
+> _Last updated: 2026-11-11_
 
 **Legend:** 🟢 design locked · 🔵 building · ⚪ idea (not yet scoped)
 
@@ -14,8 +14,8 @@
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
 | 1 | **Image Vault** | 🟢🔵 | Design locked (`docs/image-vault.md`). Slice 1 live: multi-upload, share to a group or selected people, sorted by places and dates. Next: people (faces) and themes. |
-| 2 | **Documents Vault** | ⚪ | Store passports, tickets, bookings, IDs. |
-| 3 | **Paste Itinerary → Get the Vibe** | ⚪ | Paste an itinerary; app reads it to surface the trip's feel. |
+| 2 | **Documents Vault** | 🔵 | First slice live: PDFs and photos of tickets, bookings, passports, visas, IDs and insurance, read by the model; alerts for check-in, departures, stays, expiry and trip coverage, in the app, by email and as iPhone notifications. Next: OCR auto-sort into trips, an offline pack, sharing a booking with the group. |
+| 3 | **Paste Itinerary → Get the Vibe** | 🔵 | Pasting an itinerary into the chat (or giving it to Claude) makes it a trip. Next: reading the trip's feel from it. |
 | 4 | **Real-Time Updates** | ⚪ | Location-based, crisis alerts, population count, safety, events, flight & travel-cost updates, and more. |
 | 5 | **Truly Hidden** | ⚪ | Collaborate with locals; influencers & agents; download podcasts/user stories and analyze them. |
 | 6 | **Suggestion-Based Algorithm** | 🔵 | First slice live: every place carries a profile (strengths, weaknesses, who it suits), from rules, Claude and travellers' swipes; the sliders, deck and planner read it. Next: learn from saved and rejected trips, not just swipes. |
@@ -28,7 +28,7 @@
 ### Extending the Vaults (#1, #2)
 - **Auto-sorting vault** — drop any photo/doc in and it tags itself by trip, city, date, and type (ticket vs. passport vs. receipt), pulling dates/confirmation numbers via OCR.
 - **Offline pack** — one tap bundles docs + maps + key info for a trip into an offline-accessible kit.
-- **Expiry & renewal watch** — flags a passport/visa/insurance that expires before or during a trip.
+- **Expiry & renewal watch** — flags a passport/visa/insurance that expires before or during a trip. _(Live, in the documents vault's alerts.)_
 
 ### Extending "Paste → Vibe" (#3)
 - **Itinerary health-check** — flags tight connections, over-packed days, long transit gaps, or an empty day.

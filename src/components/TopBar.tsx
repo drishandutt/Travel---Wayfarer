@@ -41,6 +41,7 @@ interface Props {
   onSignOut: () => void
   onProfile?: () => void
   me?: { id: string; name: string } | null
+  alertsUnread?: number
 }
 
 function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut, onProfile, onDevTools, devReviews = 0 }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'onDeleteGroup' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut' | 'onProfile' | 'onDevTools' | 'devReviews'>) {
@@ -99,7 +100,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, ac
   )
 }
 
-export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut, onProfile, me }: Props) {
+export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut, onProfile, me, alertsUnread = 0 }: Props) {
   const b = state.brief
   const city = cityById(b.destination)
   const at = STEPS.findIndex(s => s.id === state.phase)
@@ -124,12 +125,12 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, t
         <button className="money-btn" onClick={onMoney} aria-label="Money">
           Money
         </button>
-        <button className="money-btn photos-btn" onClick={onPhotos} aria-label="Photos"><span>Photos</span><PhotoIcon /></button>
+        <button className="money-btn photos-btn" onClick={onPhotos} aria-label="Vault: photos and documents" title="Photos and documents"><span>Vault</span><PhotoIcon /></button>
         {onStartOver && <button className="money-btn restart-btn" onClick={onStartOver} aria-label="Start over" title="Start over: your plan so far stays in My trips"><RestartIcon /><span>Start over</span></button>}
         <button className="theme-btn" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
           {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
         </button>
-        {onProfile && me && <button className="profile-btn" onClick={onProfile} aria-label="Profile" title="Profile"><Avatar id={me.id} name={me.name} size={30} /></button>}
+        {onProfile && me && <button className="profile-btn" onClick={onProfile} aria-label={alertsUnread ? `Profile: ${alertsUnread} new alert${alertsUnread > 1 ? 's' : ''}` : 'Profile'} title="Profile"><Avatar id={me.id} name={me.name} size={30} />{alertsUnread > 0 && <span className="alert-dot">{alertsUnread > 9 ? '9+' : alertsUnread}</span>}</button>}
       </div>
       {/* phones: the full stepper doesn't fit, so show where you are in one line */}
       <span className="step-mini"><i>{at + 1}/{STEPS.length}</i>{STEPS[at]?.label}</span>
