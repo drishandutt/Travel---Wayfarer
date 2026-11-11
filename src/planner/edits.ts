@@ -578,7 +578,11 @@ const handlers: Handler[] = [
     if (!m) return false
     const cat = categoryOf(phrase)
     if (!cat) { d.notes.push(`I don’t have “${phrase.trim()}” on my ${d.city.name} map yet.`); return true }
-    const p = pool(d).filter(cat.test).sort((a, b) => score(b, d) - score(a, d))[0]
+    // "add Kew Gardens", not on the map by that name: a garden whose name shares a word with it
+    // ("Kew Green") before the trip's best garden elsewhere
+    const asked = words(phrase).filter(t => !GENERIC.has(t) && t.length >= 3)
+    const sharesWord = (p: Place) => (words(p.name).some(t => asked.includes(t)) ? 10 : 0)
+    const p = pool(d).filter(cat.test).sort((a, b) => sharesWord(b) + score(b, d) - sharesWord(a) - score(a, d))[0]
     if (!p) { d.notes.push(`I’ve already used every ${cat.label} spot I know.`); return true }
     const target = day ?? nearestDay(d, p)
     insert(d, p, target)

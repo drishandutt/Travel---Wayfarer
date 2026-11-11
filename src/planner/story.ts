@@ -174,11 +174,14 @@ export function applyStory(b: TripBrief): TripBrief {
   if (avoids(/walk|hik/)) out.walking ??= 0.25
   if (avoids(/rush|packed|hectic/)) out.paceLevel ??= 0.25
   if (feels(/romanc|romantic/) || /honeymoon|anniversary|date|proposal|babymoon|romantic/i.test(s.occasion ?? '')) vibe('romantic')
+  // a night out in anything they said: the feel, the occasion, a moment, or what someone loves
+  const said = [...feel, s.occasion ?? '', ...(s.moments ?? []).map(m => m.what), ...(s.people ?? []).map(p => p.notes ?? '')].join(' ').toLowerCase()
+  const nightOut = /\b(night ?life|night out|date night|party|partying|club(bing|s)?|danc(e|ing)|cocktails?|drinks?|bars?|pubs?|speakeas(y|ies)|rooftops?|lounges?|dj|live music|gigs?|crazy|wild)\b/.test(said) || (s.moments ?? []).some(m => m.when === 'night')
+  if (nightOut && !avoids(/night ?life|club|bar|party|drink/)) { vibe('nightlife'); out.rhythm ??= 0.75 }
   if (feels(/relax|chill|slow|lazy/)) vibe('relaxed')
   if (feels(/adventur|thrill/)) { vibe('adventure'); out.energy ??= 0.75 }
   if (feels(/\b(arts?|artsy|artistic|galler(y|ies))\b/)) vibe('art')
   if ((s.people ?? []).some(p => /kid|child|son|daughter|toddler|baby/i.test(p.who))) out.kids ??= 0.75
-  if (s.moments?.some(m => m.when === 'night')) out.rhythm ??= 0.6
   return out
 }
 

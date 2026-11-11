@@ -121,12 +121,12 @@ describe('re-planning when the sliders move over a plan', () => {
     // same places, new times
     assert.deepEqual(next.days.map(d => d.stops.map(x => x.place.id)), days.map(d => d.stops.map(x => x.place.id)))
     assert.ok(next.days.every(d => d.stops[0].arrive >= 10 * 60 + 30))
-    // options: nothing already planned or skipped, places first and then food and drink
+    // options: nothing already planned or skipped; a foodie's food and drink first, then places
     const ids = next.deck.map(c => c.id)
     assert.ok(ids.length > 0 && ids.every(id => !planned.includes(id) && id !== skipped))
     const lanes = ids.map(id => laneOf(cityById('london')!.places.find(p => p.id === id)!))
     assert.ok(lanes.includes('places') && lanes.includes('food'))
-    assert.equal(lanes.indexOf('food'), lanes.lastIndexOf('places') + 1, 'places, then food')
+    assert.equal(lanes.indexOf('places'), lanes.lastIndexOf('food') + 1, 'food, then places')
     // keeping one adds it; nothing else changes
     const kept = reducer({ ...next, picks: { ...next.picks, [ids[0]]: 'like' } }, { type: 'finish-deck' })
     assert.ok(kept.days.some(d => d.stops.some(x => x.place.id === ids[0])))

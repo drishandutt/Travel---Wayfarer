@@ -22,7 +22,6 @@ import { promoteFind, recallVibe, rememberVibe, sameSpot } from './store'
 
 const KINDS: PlaceKind[] = ['food', 'cafe', 'bar', 'experience', 'viewpoint', 'park', 'market', 'museum', 'sight']
 const MAX_AGE = 30 * 86_400_000
-const WANT = 20
 
 const str = { type: 'string' } as const
 const SCHEMA = {
@@ -64,9 +63,22 @@ const Found = z.object({
 })
 type Candidate = z.infer<typeof Found>['places'][number]
 
-function ask(city: City, brief: TripBrief): string {
+// What the trip needs searching for, each as its own focused search: one broad search spreads
+// itself thin (a date-night trip got breakfasts and parks), so a trip about nights out gets a
+// search for nights out, and so on. They run side by side.
+export interface Focus { key: 'nights' | 'eats' | 'days'; want: number; ask: string }
+export function focusesOf(brief: TripBrief): Focus[] {
+  const nights = brief.vibes.includes('nightlife') || (brief.rhythm ?? 0.5) >= 0.6 || Boolean(brief.story?.moments?.some(m => m.when === 'night' || m.when === 'evening'))
+  const out: Focus[] = []
+  if (nights) out.push({ key: 'nights', want: 14, ask: 'Their nights out: cocktail bars, speakeasies, rooftop bars and lounges, wine bars, live music and jazz, places to dance, late-night food, and night experiences (a comedy show, a gig, a night walk or food tour). Cover a range from intimate to lively.' })
+  out.push({ key: 'eats', want: nights ? 8 : 12, ask: 'Where to eat: lunch and dinner places with character, a special-occasion dinner if it fits, cafés, and the street food or local dishes worth crossing a road for.' })
+  out.push({ key: 'days', want: nights ? 8 : 12, ask: 'Their days: at least three experiences to do together (a class, a workshop, a boat, a show, a spa, a walk with a local), a view at sunset, a neighbourhood to wander, and two or three surprising ideas they would never think of.' })
+  return out
+}
+
+function ask(city: City, brief: TripBrief, focus: Focus): string {
   const stay = brief.story?.stay?.name
-  return `You know ${city.name} like a well-connected local. Search the web and find about ${WANT} real places and experiences that fit this trip.
+  return `You know ${city.name} like a well-connected local. Search the web and find about ${focus.want} real places that fit this trip.
 
 The trip:
 Travellers: ${brief.travelers ?? 2}
@@ -74,17 +86,19 @@ Vibe: ${brief.vibes.join(', ') || 'open'}
 Budget: ${resolveBudgetTier(brief)}
 ${storyLines(brief).join('\n')}
 
-What to look for:
+This search is for: ${focus.ask}
+
+How to choose:
 - Places people who live there love, not the standard tourist list (skip the famous landmarks everyone already knows).
-- A real mix for their days: places to eat and drink, a view at sunset, cafés, at least three experiences to do together (a class, a workshop, a boat, a show, a spa, a tour by a local), and two or three surprising ideas they'd never think of.
+- Match the trip's feel and what they said about the people; leave out anything they said to avoid.
 - ${stay ? `Mostly within easy reach of ${stay}, so evenings aren't spent in traffic.` : 'Spread over the neighbourhoods that suit the trip.'}
 - Only places that are open and operating now: check with a search. Never include anything you can't find a page for.
 
 For each, give the exact URL of the page you found it on, and write the why, the order, the arrive, the move and the heads-up as a local friend would: short, specific, useful.`
 }
 
-async function searchClaude(city: City, brief: TripBrief, signal?: AbortSignal): Promise<{ found: Candidate[]; sources: Set<string> }> {
-  const messages: import('@anthropic-ai/sdk').default.Beta.BetaMessageParam[] = [{ role: 'user', content: ask(city, brief) }]
+async function searchClaude(city: City, brief: TripBrief, focus: Focus, signal?: AbortSignal): Promise<{ found: Candidate[]; sources: Set<string> }> {
+  const messages: import('@anthropic-ai/sdk').default.Beta.BetaMessageParam[] = [{ role: 'user', content: ask(city, brief, focus) }]
   const results = new Map<string, string>()
   let text = ''
   for (let turn = 0; turn < 4; turn++) {
@@ -103,13 +117,13 @@ async function searchClaude(city: City, brief: TripBrief, signal?: AbortSignal):
   return { found: text ? Found.parse(JSON.parse(text)).places : [], sources: new Set(results.keys()) }
 }
 
-async function searchOpenAI(city: City, brief: TripBrief, signal?: AbortSignal): Promise<{ found: Candidate[]; sources: Set<string> }> {
+async function searchOpenAI(city: City, brief: TripBrief, focus: Focus, signal?: AbortSignal): Promise<{ found: Candidate[]; sources: Set<string> }> {
   const response = await openai!.responses.create({
     model: OPENAI_MODEL,
     reasoning: { effort: 'medium' },
     tools: [{ type: 'web_search' }],
     include: ['web_search_call.action.sources'],
-    input: ask(city, brief),
+    input: ask(city, brief, focus),
     text: { format: { type: 'json_schema', name: 'places', strict: true, schema: SCHEMA as unknown as Record<string, unknown> } },
     max_output_tokens: 16000,
   }, { signal })
@@ -192,11 +206,22 @@ export async function findByVibe(cityId: string, brief: TripBrief, userId: strin
 
 async function search(city: City, brief: TripBrief, mood: string, key: string, userId: string | null, signal?: AbortSignal): Promise<VibeResult> {
   const started = Date.now()
-  const { found, sources } = brainEnabled ? await searchClaude(city, brief, signal) : openai ? await searchOpenAI(city, brief, signal) : { found: [], sources: new Set<string>() }
-  const sourced = found.filter(c => c.name.trim() && fromSearch(c.source_url, sources))
+  const focuses = focusesOf(brief)
+  const runs = await Promise.all(focuses.map(f => (brainEnabled ? searchClaude(city, brief, f, signal) : openai ? searchOpenAI(city, brief, f, signal) : Promise.resolve({ found: [], sources: new Set<string>() }))
+    .catch(err => { console.warn('[vibe]', city.id, f.key, (err as Error).message); return { found: [] as Candidate[], sources: new Set<string>() } })))
+  const found: Candidate[] = []
+  const seen = new Set<string>()
+  // each search keeps its own sources: a place counts only if its own search returned its page
+  for (const r of runs) for (const c of r.found) {
+    const k = c.name.trim().toLowerCase()
+    if (!k || seen.has(k) || !fromSearch(c.source_url, r.sources)) continue
+    seen.add(k)
+    found.push(c)
+  }
+  const sourced = found
   const places: Place[] = []
   let missed = 0
-  for (const c of sourced.slice(0, WANT + 5)) {
+  for (const c of sourced.slice(0, focuses.reduce((n, f) => n + f.want, 0) + 6)) {
     if (signal?.aborted) break
     const p = await placeOf(c, city, signal).catch(() => undefined)
     if (!p) { missed++; continue }
@@ -209,6 +234,6 @@ async function search(city: City, brief: TripBrief, mood: string, key: string, u
     recent.set(key, { ids: places.map(p => p.id), at: Date.now() })
     await rememberVibe(key, city.id, mood, places.map(p => p.id)).catch(() => {})
   }
-  track('city.vibe', { userId, subject: city.id, detail: { mood: mood.slice(0, 200), suggested: found.length, sourced: sourced.length, notOnMap: missed, kept: places.length, seconds: Math.round((Date.now() - started) / 1000) } })
-  return { places, cached: false, mood, searched: found.length }
+  track('city.vibe', { userId, subject: city.id, detail: { mood: mood.slice(0, 200), focuses: focuses.map(f => f.key), suggested: runs.reduce((n, r) => n + r.found.length, 0), sourced: sourced.length, notOnMap: missed, kept: places.length, seconds: Math.round((Date.now() - started) / 1000) } })
+  return { places, cached: false, mood, searched: runs.reduce((n, r) => n + r.found.length, 0) }
 }

@@ -397,12 +397,27 @@ Tokyo and Lisbon are hand-made and London was built once from Wikivoyage; every 
 **Places by mood** (`server/cities/vibeSearch.ts`, `POST /api/cities/:id/vibe`). A guide-built catalog leans to the famous sights. Once a trip has a mood (a feel, an occasion, moments, notes about the people, or things to avoid), the browser starts a search in the background while they chat (`findLocal` in `App.tsx`), and the deck waits for it, up to 90 seconds.
 
 How a search runs:
-- **The search.** The model searches the web (OpenAI's `web_search`, or Claude's) for about 20 places a local would pick for this trip: places to eat and drink, a sunset view, cafés, at least three experiences to do together, and a few surprises. Places should be near where they're staying.
+- **The searches.** One broad search spreads itself thin (a date-night trip got breakfasts and parks), so the model runs focused searches side by side (`focusesOf`), using OpenAI's `web_search` or Claude's. Places should be near where they're staying.
+  - **Nights out** (bars, speakeasies, rooftops, live music, dancing, late food, night experiences; 14) when the trip has nightlife, a late rhythm or an evening moment.
+  - **Eats** (8–12).
+  - **Days** (experiences together, a sunset view, a neighbourhood, surprises; 8–12).
+  - Each place counts only if its own search returned its page.
 - **What comes back for each place:** the know-how a local would give (`tips`: order, arrive, move, heads-up), mood words (`moods`), a price, the best time, the length of a visit, and the page it was found on.
 - **Nothing invented.** A place is kept only if its page is one the search really returned (or on the same site), and OpenStreetMap finds it near the city.
 - **Joining the city.** Each kept place joins the city's catalog for everyone, marked as a *Local pick* (`found.via = 'vibe'`, rank 0.3: known to people who care, not to the coach tours). Its opening hours come from OpenStreetMap.
 - **No repeats.** The same mood in the same city (`moodOf`: its words in any order) isn't searched again for 30 days. The search is remembered in `vibe_searches` (migration 9) and in memory, and a search already under way is shared.
 - **Limits.** 10 searches an hour per visitor, counted in the daily model cap. The search finishes even if the visitor leaves, since what it finds helps everyone.
+
+**What a vibe is made of** (`kindFit` in `core.ts`). Tags say what a place touches on; `kindFit` says what kinds of place a vibe mostly is:
+- Nightlife is bars first, then night spots, with parks, museums, markets and plain sights below them.
+- Food is restaurants, then cafés and food markets.
+- Nature is parks, art is museums, adventure is experiences.
+
+The trip's vibes share the say, and with little ones along (`kids` ≥ 0.5) nightlife has none.
+
+The story adds vibes too: a date night, a party, cocktails, dancing, rooftops, live music, or a night-time moment adds nightlife (unless they said no to bars or clubs) and a late rhythm.
+
+The deck is two runs, and the one the trip is about leads with the bigger share (`leadsWithFood`). A nightlife or food trip opens on food and drink, which nightlife trips call *Drinks & food*. Other trips open on places.
 
 **Matching the story.** `moodFit` (`src/planner/story.ts`) compares a place's mood words and cuisine with what they want: the feel, the occasion, the moments, and what they said about the people. It adds up to +4.5 to `scorePlace` and takes 4 off for each thing they said to avoid. The deck says why: "fits your jazz + cocktail".
 

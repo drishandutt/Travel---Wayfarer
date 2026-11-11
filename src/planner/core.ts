@@ -85,17 +85,47 @@ export function scorePlace(p: Place, brief: TripBrief): { score: number; why: st
   // what they told us: the feel, the occasion, the people, against the place's own mood words
   const mood = moodFit(p, brief)
   score += mood.score
+  // the kinds of place a vibe is really about: a nightlife trip is bars first, not gardens
+  const kind = kindFit(p, brief)
+  score += kind
+  // searched for this very mood by someone who knows the city (server/cities/vibeSearch.ts)
+  if (p.found?.via === 'vibe' && brief.story) score += 1.5
   const gem = local >= 0.6 && p.rank !== undefined && p.rank <= 0.4
   const icon = local <= 0.4 && p.rank !== undefined && p.rank >= 0.8
   const why = mood.match ? `fits your ${mood.match}`
     : loved.length ? `your kind of thing: ${loved.join(' + ')}`
     : tuned.why ? tuned.why
     : fit.why ? fit.why
+    : hits.length && kind > 0 ? `for your ${hits.join(' + ')}`
     : gem ? 'off the tourist trail'
     : icon ? 'a must on a first visit'
     : hits.length ? `matches ${hits.join(' + ')}`
-    : tier === 'shoestring' && p.price >= 3 ? 'over budget' : brief.vibes.length ? 'weak vibe match' : 'a local favourite'
+    : tier === 'shoestring' && p.price >= 3 ? 'over budget' : brief.vibes.length ? 'weak vibe match' : 'worth a look'
   return { score, why }
+}
+
+// How much a place's kind serves the trip's vibes. Tags say what a place touches on; this says
+// what the vibe is mostly made of, so a nightlife trip deals bars and late spots before forts and
+// gardens, and a food trip deals restaurants and markets before museums.
+const KIND_FIT: Partial<Record<Vibe, (p: Place) => number>> = {
+  nightlife: p => (p.kind === 'bar' ? 5 : p.bestAt === 'night' ? 3 : p.kind === 'experience' && p.bestAt === 'evening' ? 2 : p.kind === 'food' && p.bestAt !== 'morning' ? 1 : p.kind === 'park' || p.kind === 'museum' || p.kind === 'market' ? -2 : p.kind === 'sight' && !p.tags.includes('nightlife') ? -1.5 : 0),
+  romantic: p => (p.kind === 'food' && p.bestAt !== 'morning' ? 1.5 : p.kind === 'bar' || p.kind === 'viewpoint' || p.kind === 'experience' ? 1.5 : 0),
+  food: p => (p.kind === 'food' ? 3 : p.kind === 'cafe' || (p.kind === 'market' && p.tags.includes('food')) ? 2 : p.kind === 'bar' ? 1 : 0),
+  nature: p => (p.kind === 'park' ? 3 : p.kind === 'viewpoint' ? 1.5 : 0),
+  art: p => (p.kind === 'museum' ? 2.5 : 0),
+  culture: p => (p.kind === 'museum' || p.kind === 'sight' ? 1 : p.kind === 'experience' ? 1.5 : 0),
+  history: p => (p.kind === 'sight' || p.kind === 'museum' ? 1.5 : 0),
+  shopping: p => (p.kind === 'market' ? 2.5 : 0),
+  adventure: p => (p.kind === 'experience' ? 2.5 : 0),
+  relaxed: p => (p.kind === 'cafe' || p.kind === 'park' ? 1 : 0),
+}
+export function kindFit(p: Place, brief: Pick<TripBrief, 'vibes' | 'kids'>): number {
+  if (!brief.vibes.length) return 0
+  // little ones along: the kids slider decides about bars and late nights, not the vibe
+  const vibes = (brief.kids ?? 0) >= 0.5 ? brief.vibes.filter(v => v !== 'nightlife') : brief.vibes
+  // the vibes share the say, so a trip with five vibes isn't pulled five ways at full strength
+  const each = vibes.map(v => KIND_FIT[v]?.(p) ?? 0)
+  return each.reduce((a, b) => a + b, 0) / Math.max(1, Math.sqrt(brief.vibes.length))
 }
 
 // What the other sliders do to one place's score. Each term is zero with its slider in the middle.
@@ -426,14 +456,22 @@ export type Lane = 'places' | 'food'
 export const laneOf = (p: Pick<Place, 'kind' | 'tags'>): Lane =>
   p.kind === 'food' || p.kind === 'cafe' || p.kind === 'bar' || (p.kind === 'market' && p.tags.includes('food')) ? 'food' : 'places'
 
-// The swipe deck: places first, then food and drink, each best first. `size` caps a big city's
-// runs; a small one deals everything.
+// Which run the trip leads with: food and drink (the bars are there) for a trip that's about
+// nights out or eating, places to see for the rest.
+export const leadsWithFood = (brief: Pick<TripBrief, 'vibes' | 'foodie'>) =>
+  brief.vibes.includes('nightlife') || (brief.vibes.includes('food') && !brief.vibes.some(v => v === 'culture' || v === 'history' || v === 'art')) || (brief.foodie ?? 0.5) >= 0.75
+
+// The swipe deck in two runs, each best first: the one the trip is about leads, and gets the
+// bigger share. `size` caps a big city's runs; a small one deals everything.
 export function laneDeck(places: Place[], brief: TripBrief, size?: { places: number; food: number }): DeckCard[] {
   const run = (lane: Lane, n?: number) => {
     const all = places.filter(p => laneOf(p) === lane)
     return buildDeck(n ? shortlist(all, brief, n) : all, brief)
   }
-  return [...run('places', size?.places), ...run('food', size?.food)]
+  if (!leadsWithFood(brief)) return [...run('places', size?.places), ...run('food', size?.food)]
+  const bigger = size ? Math.max(size.places, size.food) : undefined
+  const smaller = size ? Math.min(size.places, size.food) : undefined
+  return [...run('food', bigger), ...run('places', smaller)]
 }
 
 export function buildDeck(places: Place[], brief: TripBrief): DeckCard[] {

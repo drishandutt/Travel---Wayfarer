@@ -7,7 +7,9 @@ import { buildDay, scorePlace } from '../src/planner/core'
 import { addCatalogPlaces, cityById, tripCity } from '../src/data/cities'
 import { reducer, initialState } from '../src/state/tripStore'
 import { setOpenAIKey } from './openai'
-import { findByVibe, fromSearch } from './cities/vibeSearch'
+import { findByVibe, focusesOf, fromSearch } from './cities/vibeSearch'
+import { kindFit, laneDeck, laneOf } from '../src/planner/core'
+import { applyStory } from '../src/planner/story'
 import { planWithModel } from './planAgent'
 
 describe('calendar time', () => {
@@ -127,6 +129,8 @@ describe('the mood search, end to end', { skip: Boolean(process.env.ANTHROPIC_AP
     const brief: TripBrief = { destination: 'tokyo', vibes: [], story: { feel: ['jazz', 'cocktails'], people: [{ who: 'girlfriend', notes: 'loves jazz' }] } }
     const out = await findByVibe('tokyo', brief, null)
     assert.equal(out.cached, false)
+    const first = searches
+    assert.equal(first, focusesOf(brief).length, 'one search per focus')
     assert.deepEqual(out.places.map(p => p.name), ['Jazz Kissa Test'], 'the made-up source and the place the map can’t find are dropped')
     const p = out.places[0]
     assert.equal(p.found?.via, 'vibe')
@@ -139,7 +143,7 @@ describe('the mood search, end to end', { skip: Boolean(process.env.ANTHROPIC_AP
 
     // asked again while the first is remembered (in memory here; the database in production): no new search
     const again = await findByVibe('tokyo', brief, null)
-    assert.equal(searches, 1)
+    assert.equal(searches, first, 'remembered: no new searches')
     assert.equal(again.places[0]?.id ?? p.id, p.id)
   })
 
@@ -172,5 +176,43 @@ describe('the mood search, end to end', { skip: Boolean(process.env.ANTHROPIC_AP
     } finally {
       addCatalogPlaces('tokyo', [original])
     }
+  })
+})
+
+describe('a trip about nights out', () => {
+  const said: TripBrief = applyStory({ destination: 'tokyo', days: 3, travelers: 2, vibes: ['romantic'], story: { occasion: 'surprise date night', moments: [{ what: 'crazy date night', day: 1, when: 'night' }], feel: ['romantic', 'fun'] } })
+
+  it('hears nightlife in a date night, a party or cocktails, unless they said no to it', () => {
+    assert.ok(said.vibes.includes('nightlife'))
+    assert.equal(said.rhythm, 0.75)
+    assert.ok(applyStory({ vibes: [], story: { people: [{ who: 'friends', notes: 'into cocktails and dancing' }] } }).vibes.includes('nightlife'))
+    assert.ok(!applyStory({ vibes: [], story: { feel: ['quiet', 'cosy'] } }).vibes.includes('nightlife'))
+    assert.ok(!applyStory({ vibes: [], story: { occasion: 'date night', avoid: ['bars', 'clubs'] } }).vibes.includes('nightlife'))
+  })
+
+  it('deals drinks and food first, bars at the top, and parks and museums below them', () => {
+    const city = tripCity(said)!
+    const deck = laneDeck(city.places, said, { places: 28, food: 16 })
+    const kinds = deck.map(c => city.places.find(p => p.id === c.id)!)
+    assert.equal(laneOf(kinds[0]), 'food')
+    const firstBar = kinds.findIndex(p => p.kind === 'bar')
+    assert.ok(firstBar >= 0 && firstBar < 8, `first bar at ${firstBar}`)
+    assert.ok(kindFit(city.places.find(p => p.kind === 'bar')!, said) > kindFit(city.places.find(p => p.kind === 'park')!, said))
+  })
+
+  it('leaves bars out when little ones are along, whatever the vibe', () => {
+    const bar = tripCity(said)!.places.find(p => p.kind === 'bar')!
+    assert.ok(kindFit(bar, { ...said, kids: 1 }) < kindFit(bar, said))
+  })
+
+  it('searches for nights out on their own, beside food and days', () => {
+    assert.deepEqual(focusesOf(said).map(f => f.key), ['nights', 'eats', 'days'])
+    assert.deepEqual(focusesOf({ vibes: ['history'], rhythm: 0.25 }).map(f => f.key), ['eats', 'days'])
+  })
+
+  it('keeps leading with places for a trip about sights', () => {
+    const b: TripBrief = { destination: 'tokyo', days: 3, vibes: ['history', 'culture'] }
+    const city = tripCity(b)!
+    assert.equal(laneOf(city.places.find(p => p.id === laneDeck(city.places, b)[0].id)!), 'places')
   })
 })

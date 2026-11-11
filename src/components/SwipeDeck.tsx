@@ -154,19 +154,25 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
   const done = state.deckIndex >= state.deck.length
   // two runs of cards, places then food and drink, each with its own progress
   const laneAt = (i: number): Lane => { const p = byId(state.deck[i]?.id); return p ? laneOf(p) : 'places' }
-  const lanes = (['places', 'food'] as Lane[]).map(lane => {
+  // a trip about nights out calls its food run drinks first
+  const nights = state.brief.vibes.includes('nightlife')
+  const laneName = (l: Lane) => (l === 'food' && nights ? 'Drinks & food' : LANE_NAME[l])
+  // the run the deck deals first leads the tabs too
+  const order: Lane[] = laneAt(0) === 'food' ? ['food', 'places'] : ['places', 'food']
+  const lanes = order.map(lane => {
     const cards = state.deck.filter((_, i) => laneAt(i) === lane)
     return { lane, total: cards.length, decided: cards.filter(c => state.picks[c.id]).length, kept: cards.filter(c => state.picks[c.id] === 'like').length }
   })
   const lane = done ? undefined : laneAt(state.deckIndex)
   const both = lanes.every(l => l.total > 0)
   const decided = lanes.reduce((n, l) => n + l.decided, 0)
-  // the places are done and the food hasn't started: a pause between the two decks
-  const [foodReady, setFoodReady] = useState(false)
-  useEffect(() => setFoodReady(false), [state.deck[0]?.id, state.deckMode?.label])
-  const placesRun = lanes[0]
-  const foodRun = lanes[1]
-  const between = both && lane === 'food' && !foodReady && placesRun.decided === placesRun.total && foodRun.decided === 0
+  // the first run is done and the second hasn't started: a pause between the two decks
+  const [nextReady, setNextReady] = useState(false)
+  useEffect(() => setNextReady(false), [state.deck[0]?.id, state.deckMode?.label])
+  const firstRun = lanes[0]
+  const secondRun = lanes[1]
+  const between = both && lane === secondRun.lane && !nextReady && firstRun.decided === firstRun.total && secondRun.decided === 0
+  const keptIn = (l: Lane) => lanes.find(x => x.lane === l)?.kept ?? 0
   // a private mini deck doesn't count as voting
   const group = editing ? undefined : shared
   const member = group?.role === 'member'
@@ -230,7 +236,7 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
   return (
     <section className="deck-zone">
       <header className="deck-head">
-        <h2>{done ? 'That’s the whole deck' : editing ? state.deckMode!.label : lane === 'food' ? 'Where to eat & drink?' : group ? 'Like or skip?' : 'Keep or skip?'}</h2>
+        <h2>{done ? 'That’s the whole deck' : editing ? state.deckMode!.label : lane === 'food' ? (nights ? 'Where to drink & eat?' : 'Where to eat & drink?') : group ? 'Like or skip?' : 'Keep or skip?'}</h2>
         <div className="deck-actions">
           {inGroup && group?.ranking && <button className="deck-cancel deck-votes" onClick={() => setVotesOpen(true)}>Votes</button>}
           {inGroup && group && (
@@ -245,8 +251,8 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
           <div className="deck-lanes" role="tablist" aria-label="Which deck">
             {lanes.map(l => (
               <button key={l.lane} role="tab" aria-selected={lane === l.lane} className={lane === l.lane ? 'on' : ''}
-                disabled={l.decided === l.total} onClick={() => { setFoodReady(true); dispatch({ type: 'deck-lane', lane: l.lane }) }}>
-                {LANE_NAME[l.lane]} <small>{l.decided}/{l.total}</small>
+                disabled={l.decided === l.total} onClick={() => { setNextReady(true); dispatch({ type: 'deck-lane', lane: l.lane }) }}>
+                {laneName(l.lane)} <small>{l.decided}/{l.total}</small>
               </button>
             ))}
           </div>
@@ -254,7 +260,7 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
         <div className="deck-progress">
           <i style={{ width: `${(decided / Math.max(1, state.deck.length)) * 100}%` }} />
         </div>
-        <small>{done ? 'All done' : `${decided + 1} of ${state.deck.length}`} · {liked} {group ? 'liked' : 'kept'}{both ? ` (${lanes[0].kept} to see, ${lanes[1].kept} to eat & drink)` : ''}{inGroup && progress ? ` · ${progress.finished.length}/${progress.voters.length} done` : ''}</small>
+        <small>{done ? 'All done' : `${decided + 1} of ${state.deck.length}`} · {liked} {group ? 'liked' : 'kept'}{both ? ` (${keptIn('places')} to see, ${keptIn('food')} to eat & drink)` : ''}{inGroup && progress ? ` · ${progress.finished.length}/${progress.voters.length} done` : ''}</small>
       </header>
 
       <div className="deck">
@@ -274,10 +280,10 @@ export function SwipeDeck({ state, dispatch, onPlan, onCancel, group: shared }: 
         ) : between ? (
           <div className="deck-end deck-between">
             <Memphis layout="sprinkle" />
-            <p>That’s the places: you kept <b>{placesRun.kept}</b>.</p>
-            <p>Now somewhere to eat and drink? <b>{foodRun.total}</b> spots that fit your trip.</p>
-            <button className="cta" onClick={() => setFoodReady(true)}>Swipe food & drink</button>
-            {!member && <button className="ghost" disabled={!editing && !canMap} onClick={onPlan}>{editing ? (liked ? `Skip, add ${liked} to my trip` : 'Skip, keep my plan as is') : 'Skip food, map my picks'}</button>}
+            <p>That’s the {firstRun.lane === 'food' ? (nights ? 'drinks and food' : 'food and drink') : 'places'}: you kept <b>{firstRun.kept}</b>.</p>
+            <p>{secondRun.lane === 'food' ? 'Now somewhere to eat and drink?' : 'Now things to see and do?'} <b>{secondRun.total}</b> that fit your trip.</p>
+            <button className="cta" onClick={() => setNextReady(true)}>Swipe {laneName(secondRun.lane).toLowerCase()}</button>
+            {!member && <button className="ghost" disabled={!editing && !canMap} onClick={onPlan}>{editing ? (liked ? `Skip, add ${liked} to my trip` : 'Skip, keep my plan as is') : 'Skip, map my picks'}</button>}
             <button className="ghost" onClick={undo}>Undo last</button>
           </div>
         ) : (
