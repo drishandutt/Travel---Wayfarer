@@ -9,6 +9,7 @@ import { FALLBACK, MODEL, brainEnabled, client, textOf } from './claude'
 import { OPENAI_MODEL, openai } from './openai'
 import { buildStatus, lookupCity } from './cities/store'
 import { resolvePlace } from './places'
+import { asJob } from './usage'
 
 // An itinerary someone already made (in Claude, ChatGPT, a doc, a friend's notes), pasted as
 // text, turned into a Wayfarer trip: the model reads the city, dates and each day's stops in
@@ -65,24 +66,26 @@ const Parsed = z.object({
 export type ParsedItinerary = z.infer<typeof Parsed>
 
 export async function parseItinerary(text: string, signal?: AbortSignal): Promise<ParsedItinerary> {
-  let json: string
-  if (brainEnabled) {
-    const response = await client.beta.messages.create({
-      ...FALLBACK, model: MODEL, max_tokens: 16000, system: brief,
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
-      messages: [{ role: 'user', content: text }],
-    }, { signal })
-    if (response.stop_reason === 'refusal') throw new ImportError('I couldn’t read that itinerary.')
-    json = textOf(response)
-  } else if (openai) {
-    const response = await openai.responses.create({
-      model: OPENAI_MODEL, reasoning: { effort: 'low' }, instructions: brief, input: text,
-      text: { format: { type: 'json_schema', name: 'itinerary', strict: true, schema: SCHEMA as unknown as Record<string, unknown> } },
-    }, { signal })
-    if (response.status !== 'completed') throw new ImportError('I couldn’t read that itinerary.')
-    json = response.output_text
-  } else throw new ImportError('Reading a pasted itinerary needs Claude or OpenAI connected on the server.')
-  return Parsed.parse(JSON.parse(json))
+  return asJob('import', async () => {
+    let json: string
+    if (brainEnabled) {
+      const response = await client.beta.messages.create({
+        ...FALLBACK, model: MODEL, max_tokens: 16000, system: brief,
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+        messages: [{ role: 'user', content: text }],
+      }, { signal })
+      if (response.stop_reason === 'refusal') throw new ImportError('I couldn’t read that itinerary.')
+      json = textOf(response)
+    } else if (openai) {
+      const response = await openai.responses.create({
+        model: OPENAI_MODEL, reasoning: { effort: 'low' }, instructions: brief, input: text,
+        text: { format: { type: 'json_schema', name: 'itinerary', strict: true, schema: SCHEMA as unknown as Record<string, unknown> } },
+      }, { signal })
+      if (response.status !== 'completed') throw new ImportError('I couldn’t read that itinerary.')
+      json = response.output_text
+    } else throw new ImportError('Reading a pasted itinerary needs Claude or OpenAI connected on the server.')
+    return Parsed.parse(JSON.parse(json))
+  })
 }
 
 // The city the itinerary is in, mapped first if Wayfarer doesn't know it yet (up to a minute).

@@ -17,6 +17,7 @@ export interface Video {
 export interface PlaceVideos {
   topic?: string       // Instagram's public reel grid for this place: instagram.com/popular/<topic>
   videos: Video[]
+  social?: boolean     // Instagram and TikTok have been looked for (only when someone asks: it costs)
 }
 
 export const PLATFORM_NAME: Record<Platform, string> = { instagram: 'Instagram', youtube: 'YouTube', tiktok: 'TikTok' }
@@ -65,18 +66,21 @@ function keep(key: string, value: PlaceVideos) {
   }
 }
 
-export async function getVideos(place: { id: string; name: string; custom?: { address?: string } }, city?: string): Promise<PlaceVideos> {
+// `find`: they asked for this place's reels and TikToks (a web search on the server the first
+// time, then kept for good). Without it, only what's kept, or YouTube, which costs nothing.
+export async function getVideos(place: { id: string; name: string; custom?: { address?: string } }, city?: string, find = false): Promise<PlaceVideos> {
   const held = await curated(place.id)
-  if (held.videos.length || !city) return held
+  if (held.videos.length || !city) return { ...held, social: true }
   const key = `${place.name}|${city}`.toLowerCase()
   const onDevice = kept(key)
-  if (onDevice) return onDevice
-  let found = live.get(key)
+  if (onDevice && (!find || onDevice.social)) return onDevice
+  const liveKey = `${key}|${find ? 'find' : 'kept'}`
+  let found = live.get(liveKey)
   if (!found) {
-    const q = new URLSearchParams({ name: place.name, city, ...(place.custom?.address ? { area: place.custom.address } : {}) })
+    const q = new URLSearchParams({ name: place.name, city, ...(place.custom?.address ? { area: place.custom.address } : {}), ...(find ? { find: '1' } : {}) })
     found = fetch(`/api/places/videos?${q}`).then(r => (r.ok ? r.json() as Promise<PlaceVideos> : { videos: [] }))
-    live.set(key, found)
-    found.then(v => { if (v.videos.length) keep(key, v); else live.delete(key) }, () => live.delete(key))
+    live.set(liveKey, found)
+    found.then(v => { if (v.videos.length) keep(key, v); else live.delete(liveKey) }, () => live.delete(liveKey))
   }
   return found.catch(() => ({ videos: [] }))
 }

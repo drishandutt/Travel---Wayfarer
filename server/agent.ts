@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { MAX_ROUNDS, toolSchemas, type ToolCall } from '../src/agent/tools'
 import { FALLBACK, MODEL, brainEnabled, client, effortFor, textOf } from './claude'
 import { OPENAI_MODEL, openai } from './openai'
+import { asJob } from './usage'
 
 // The trip chatbot's brain. This server only relays: it sends the model the conversation and
 // the allowlisted tools (src/agent/tools.ts), and hands any tool calls back to the browser,
@@ -50,18 +51,20 @@ const Request = z.object({
 })
 
 export async function agentTurn(body: unknown, signal: AbortSignal): Promise<AgentReply> {
-  const req = Request.parse(body)
-  const round = (req.state?.round ?? -1) + 1
-  if (round >= MAX_ROUNDS) throw new AgentError('That took too many steps. Try asking for one thing at a time.')
-  let opening: string | undefined
-  if (!req.state) {
-    if (!req.message) throw new AgentError('Nothing to answer.')
-    const said = (req.history ?? []).map(m => `${m.role === 'user' ? 'Traveller' : 'Assistant'}: ${m.text}`).join('\n')
-    opening = `${said ? `Recent chat:\n${said}\n\n` : ''}The trip now:\n${req.context ?? '(no trip yet)'}\n\nTraveller: ${req.message}`
-  }
-  if (brainEnabled && (!req.state || req.state.provider === 'claude')) return claudeTurn(opening, req.state?.provider === 'claude' ? req.state.messages : [], req.results ?? [], round, signal)
-  if (openai && (!req.state || req.state.provider === 'openai')) return openaiTurn(opening, req.state?.provider === 'openai' ? req.state.previousId : undefined, req.results ?? [], round, signal)
-  throw new AgentError('The assistant isn’t switched on here.')
+  return asJob('agent', async () => {
+    const req = Request.parse(body)
+    const round = (req.state?.round ?? -1) + 1
+    if (round >= MAX_ROUNDS) throw new AgentError('That took too many steps. Try asking for one thing at a time.')
+    let opening: string | undefined
+    if (!req.state) {
+      if (!req.message) throw new AgentError('Nothing to answer.')
+      const said = (req.history ?? []).map(m => `${m.role === 'user' ? 'Traveller' : 'Assistant'}: ${m.text}`).join('\n')
+      opening = `${said ? `Recent chat:\n${said}\n\n` : ''}The trip now:\n${req.context ?? '(no trip yet)'}\n\nTraveller: ${req.message}`
+    }
+    if (brainEnabled && (!req.state || req.state.provider === 'claude')) return claudeTurn(opening, req.state?.provider === 'claude' ? req.state.messages : [], req.results ?? [], round, signal)
+    if (openai && (!req.state || req.state.provider === 'openai')) return openaiTurn(opening, req.state?.provider === 'openai' ? req.state.previousId : undefined, req.results ?? [], round, signal)
+    throw new AgentError('The assistant isn’t switched on here.')
+  })
 }
 
 async function claudeTurn(opening: string | undefined, past: Anthropic.Beta.BetaMessageParam[], results: { id: string; output: string }[], round: number, signal: AbortSignal): Promise<AgentReply> {

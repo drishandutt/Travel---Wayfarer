@@ -4,12 +4,13 @@ import type { PlaceVideos, Video } from '../src/services/videos'
 import { NEARBY_KM, cityById } from '../src/data/cities'
 import { mapsHost, parseCoords, parseMapsLink, type MapsLink } from '../src/planner/customPlaces'
 import { haversineKm } from '../src/planner/geo'
-import { FALLBACK, MODEL, brainEnabled, client, textOf } from './claude'
-import { OPENAI_MODEL, openai } from './openai'
+import { FALLBACK, brainEnabled, client, textOf, MODEL_LIGHT } from './claude'
+import { openai, openaiLightModel } from './openai'
 import type { Db } from './money/db'
 import { PROFILE_PROPS, PROFILE_REQUIRED, ProfileOut, profileFrom } from './cities/profile'
 import { priorReview, promoteFind, queueReview } from './cities/store'
 import { track } from './dev/activity'
+import { asJob, canSearch } from './usage'
 
 // Travellers' own places: find what they shared or typed, and the reels and videos of it.
 //   resolvePlace  a maps link (Google, Apple, OpenStreetMap, Waze, bare coordinates) or a name
@@ -254,44 +255,46 @@ const describeBrief = (city: City) => `You describe a place a traveller found th
 interface Described { place: Partial<Place>; public?: 'yes' | 'no' | 'unsure' }
 
 async function describe(p: Place, city: City, osm: string, signal?: AbortSignal): Promise<Described> {
-  const about = `Name: ${p.name}\nWhere: ${p.custom?.address ?? city.name}, ${city.name}\nMap data: ${osm}`
-  let json: string
-  let by: 'claude' | 'openai' = 'claude'
-  if (brainEnabled) {
-    const response = await client.beta.messages.create({
-      ...FALLBACK,
-      model: MODEL,
-      max_tokens: 4000,
-      system: describeBrief(city),
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: DESCRIBE_SCHEMA } },
-      messages: [{ role: 'user', content: about }],
-    }, { signal: anySignal(signal, 20_000) })
-    if (response.stop_reason !== 'end_turn') return { place: {} }
-    json = textOf(response)
-  } else if (openai) {
-    const response = await openai.responses.create({
-      model: OPENAI_MODEL,
-      reasoning: { effort: 'low' },
-      instructions: describeBrief(city),
-      input: about,
-      text: { format: { type: 'json_schema', name: 'place', strict: true, schema: DESCRIBE_SCHEMA as unknown as Record<string, unknown> } },
-    }, { signal: anySignal(signal, 20_000) })
-    if (response.status !== 'completed') return { place: {} }
-    json = response.output_text
-    by = 'openai'
-  } else return { place: {} }
-  const d = Described.parse(JSON.parse(json))
-  const place: Partial<Place> = {
-    kind: d.kind,
-    tags: d.tags.length ? [...new Set(d.tags)].slice(0, 3) : p.tags,
-    price: Math.max(0, Math.min(3, d.price)) as Place['price'],
-    minutes: Math.max(15, Math.min(240, d.minutes)),
-    bestAt: d.best_at,
-    blurb: d.blurb.trim().slice(0, 90) || p.blurb,
-    keywords: d.keywords.map(k => k.toLowerCase().trim()).filter(Boolean).slice(0, 6),
-  }
-  const profile = profileFrom(d.profile, { ...p, ...place }, by)
-  return { place: profile ? { ...place, profile } : place, public: d.public }
+  return asJob('describe', async () => {
+    const about = `Name: ${p.name}\nWhere: ${p.custom?.address ?? city.name}, ${city.name}\nMap data: ${osm}`
+    let json: string
+    let by: 'claude' | 'openai' = 'claude'
+    if (brainEnabled) {
+      const response = await client.beta.messages.create({
+        ...FALLBACK,
+        model: MODEL_LIGHT,
+        max_tokens: 4000,
+        system: describeBrief(city),
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: DESCRIBE_SCHEMA } },
+        messages: [{ role: 'user', content: about }],
+      }, { signal: anySignal(signal, 20_000) })
+      if (response.stop_reason !== 'end_turn') return { place: {} }
+      json = textOf(response)
+    } else if (openai) {
+      const response = await openai.responses.create({
+        model: openaiLightModel(),
+        reasoning: { effort: 'low' },
+        instructions: describeBrief(city),
+        input: about,
+        text: { format: { type: 'json_schema', name: 'place', strict: true, schema: DESCRIBE_SCHEMA as unknown as Record<string, unknown> } },
+      }, { signal: anySignal(signal, 20_000) })
+      if (response.status !== 'completed') return { place: {} }
+      json = response.output_text
+      by = 'openai'
+    } else return { place: {} }
+    const d = Described.parse(JSON.parse(json))
+    const place: Partial<Place> = {
+      kind: d.kind,
+      tags: d.tags.length ? [...new Set(d.tags)].slice(0, 3) : p.tags,
+      price: Math.max(0, Math.min(3, d.price)) as Place['price'],
+      minutes: Math.max(15, Math.min(240, d.minutes)),
+      bestAt: d.best_at,
+      blurb: d.blurb.trim().slice(0, 90) || p.blurb,
+      keywords: d.keywords.map(k => k.toLowerCase().trim()).filter(Boolean).slice(0, 6),
+    }
+    const profile = profileFrom(d.profile, { ...p, ...place }, by)
+    return { place: profile ? { ...place, profile } : place, public: d.public }
+  })
 }
 
 // Somewhere other travellers could go, by what the map calls it: not a house, an office, a
@@ -413,6 +416,7 @@ export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal, us
     blurb: `Your find: ${article(shape.label)} ${shape.label}${address ? ` in ${address}` : ''}.`,
     keywords: hit?.extratags?.cuisine?.split(';').map(c => c.replace(/_/g, ' ')).slice(0, 4),
     ...(hit?.extratags?.opening_hours ? { hours: hit.extratags.opening_hours.slice(0, 160) } : {}),
+    ...(linksOf(hit?.extratags) ? { links: linksOf(hit?.extratags) } : {}),
     custom: { ...source, ...(address ? { address } : {}) },
   }
 
@@ -457,6 +461,23 @@ export async function resolvePlace(req: ResolveRequest, signal?: AbortSignal, us
   return { place, note: notes.join(' ') || undefined, shared, review, map, category, model: modelSays }
 }
 
+// A place's own accounts and site from OpenStreetMap's contact tags: a handle becomes its page.
+const PROFILE = { instagram: 'https://www.instagram.com/', tiktok: 'https://www.tiktok.com/@', facebook: 'https://www.facebook.com/' } as const
+export function linksOf(tags?: Record<string, string> | null): Place['links'] | undefined {
+  if (!tags) return undefined
+  const out: NonNullable<Place['links']> = {}
+  const web = (u?: string) => (u && /^https?:\/\/[^\s]+$/i.test(u.trim()) ? u.trim().slice(0, 300) : u && /^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(u.trim()) ? `https://${u.trim()}`.slice(0, 300) : undefined)
+  for (const k of ['instagram', 'tiktok', 'facebook'] as const) {
+    const raw = (tags[`contact:${k}`] ?? tags[k])?.trim()
+    if (!raw) continue
+    const url = /^https?:\/\//i.test(raw) ? raw : `${PROFILE[k]}${raw.replace(/^@/, '').replace(/\/$/, '')}`
+    if (new RegExp(`^https?://(www\\.)?${k}\\.com/`, 'i').test(url)) out[k] = url.slice(0, 300)
+  }
+  const site = web(tags['contact:website'] ?? tags.website ?? tags.url)
+  if (site) out.website = site
+  return Object.keys(out).length ? out : undefined
+}
+
 const slug = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'place'
 const article = (w: string) => (/^[aeiou]/i.test(w) ? 'an' : 'a')
 
@@ -475,15 +496,14 @@ export function mentions(text: string, name: string): boolean {
 
 interface VideoQuery { name: string; city: string; area?: string }
 
-// Searching for a place's clips takes many seconds (YouTube, then a web search for reels and
-// TikToks), so whatever is found is kept: in memory, and in the database so a restart or a
-// deploy doesn't forget it and every traveller shares it. Clips kept a week are still served
-// at once, and searched for again in the background in case newer ones have appeared. Finding
-// nothing is remembered for a few hours only, in case the search itself was having a bad day.
+// A place's clips, kept with it for good: in memory, and in the database so a restart or a
+// deploy doesn't forget them and every traveller shares them. Two kinds of looking:
+// - YouTube (free: its own search page) runs the first time a place shows anywhere.
+// - Instagram reels and TikToks need a web search through the model, which costs, so they're
+//   looked for only when someone asks on that place (`social`), and never again once found.
+// Finding nothing is remembered for a week, then may be tried again.
 const DAY_MS = 86_400_000
-const FRESH_MS = 7 * DAY_MS
-const KEEP_MS = 60 * DAY_MS
-const EMPTY_MS = 6 * 3_600_000
+const EMPTY_MS = 7 * DAY_MS
 
 interface Held { at: number; value: PlaceVideos }
 const memory = new Map<string, Held>()
@@ -493,7 +513,7 @@ let videoDb: Db | null = null
 export function attachVideoDb(db: Db | null) { videoDb = db }
 
 const videoKey = (q: VideoQuery) => fold(`${q.name.trim()}|${q.city.trim()}`)
-const usable = (h: Held | undefined, now = Date.now()) => Boolean(h && now - h.at < (h.value.videos.length ? KEEP_MS : EMPTY_MS))
+const usable = (h: Held | undefined, now = Date.now()) => Boolean(h && (h.value.videos.length || now - h.at < EMPTY_MS))
 
 function remember(key: string, held: Held) {
   memory.delete(key)
@@ -517,13 +537,12 @@ async function stored(key: string): Promise<Held | undefined> {
 }
 
 // One search per place at a time, however many travellers open it together.
-function search(q: VideoQuery, key: string, previous?: Held): Promise<PlaceVideos> {
-  let run = running.get(key)
+function search(q: VideoQuery, key: string, previous: Held | undefined, social: boolean): Promise<PlaceVideos> {
+  const runKey = `${key}|${social ? 'social' : 'youtube'}`
+  let run = running.get(runKey)
   if (run) return run
-  run = findVideos(q)
+  run = findVideos(q, social, previous?.value)
     .then(async value => {
-      // a search that came back empty never replaces clips found before
-      if (!value.videos.length && previous?.value.videos.length) return previous.value
       const held = { at: Date.now(), value }
       remember(key, held)
       await videoDb?.run(`INSERT INTO place_videos (key, name, city, videos, found_at) VALUES (?, ?, ?, ?, ?)
@@ -532,40 +551,47 @@ function search(q: VideoQuery, key: string, previous?: Held): Promise<PlaceVideo
         .catch(err => console.warn('[videos] saving to the cache:', (err as Error).message))
       return value
     })
-    .finally(() => running.delete(key))
-  running.set(key, run)
+    .finally(() => running.delete(runKey))
+  running.set(runKey, run)
   return run
 }
 
-// What we already hold for this place, without searching: for the rate limit, which only counts real searches.
 export async function cachedVideos(q: VideoQuery): Promise<PlaceVideos | undefined> {
   const held = await stored(videoKey(q))
   return usable(held) ? held!.value : undefined
 }
 
-export async function placeVideos(q: VideoQuery): Promise<PlaceVideos> {
+// What's kept for a place, found the free way (YouTube) if nothing is kept yet; with `social`,
+// the reels and TikToks too, searched for once and kept for good.
+export async function placeVideos(q: VideoQuery, social = false): Promise<PlaceVideos> {
   const key = videoKey(q)
   const held = await stored(key)
-  if (!usable(held)) return search(q, key, held)
-  if (Date.now() - held!.at > FRESH_MS && !running.has(key)) search(q, key, held).catch(err => console.warn('[videos] refreshing:', (err as Error).message))
-  return held!.value
+  if (usable(held) && (!social || held!.value.social)) return held!.value
+  return search(q, key, held, social)
 }
 
-async function findVideos(q: VideoQuery): Promise<PlaceVideos> {
-  const [yt, social] = await Promise.all([
-    youtube(q).catch(err => { console.warn('[videos] youtube:', (err as Error).message); return [] as Video[] }),
-    (brainEnabled ? socialWithClaude(q) : openai ? socialWithOpenAI(q) : Promise.resolve([])).catch(err => { console.warn('[videos] social:', (err as Error).message); return [] as Video[] }),
+// Whether a place's reels and TikToks have been looked for already.
+export const socialSearched = async (q: VideoQuery) => Boolean((await stored(videoKey(q)))?.value.social)
+
+async function findVideos(q: VideoQuery, social: boolean, had?: PlaceVideos): Promise<PlaceVideos> {
+  const kept = had?.videos ?? []
+  // the web search costs: only when asked, and only while the day's searches last
+  const lookSocial = social && !had?.social && canSearch(2)
+  const [yt, found] = await Promise.all([
+    kept.some(v => v.platform === 'youtube') ? Promise.resolve(kept.filter(v => v.platform === 'youtube')) : youtube(q).catch(err => { console.warn('[videos] youtube:', (err as Error).message); return [] as Video[] }),
+    lookSocial ? (brainEnabled ? socialWithClaude(q) : openai ? socialWithOpenAI(q) : Promise.resolve([])).catch(err => { console.warn('[videos] social:', (err as Error).message); return null }) : Promise.resolve(kept.filter(v => v.platform !== 'youtube')),
   ])
-  // mixed platforms read better than a block of each
+  const socialClips = found ?? kept.filter(v => v.platform !== 'youtube')
   const lanes: Video[][] = [
-    social.filter(v => v.platform === 'instagram'),
+    socialClips.filter(v => v.platform === 'instagram'),
     yt.filter(v => !v.short),
-    social.filter(v => v.platform === 'tiktok'),
+    socialClips.filter(v => v.platform === 'tiktok'),
     yt.filter(v => v.short),
   ]
   const videos: Video[] = []
   for (let i = 0; videos.length < 12 && lanes.some(l => l.length > i); i++) for (const l of lanes) if (l[i] && videos.length < 12) videos.push(l[i])
-  return { videos }
+  // a failed search (found === null) isn't "looked for": it can be asked again
+  return { ...(had?.topic ? { topic: had.topic } : {}), videos, ...((had?.social || (lookSocial && found !== null)) ? { social: true } : {}) }
 }
 
 async function youtube(q: VideoQuery): Promise<Video[]> {
@@ -628,25 +654,27 @@ const REEL_RE = /https?:\/\/(?:www\.)?instagram\.com\/(?:[\w.]+\/)?reels?\/([\w-
 const socialAsk = (q: VideoQuery) => `Find Instagram reels and TikTok videos about this specific place: ${q.name}${q.area ? ` (${q.area})` : ''} in ${q.city}. Search Instagram and TikTok separately, using the place's name with the city.`
 
 async function socialWithClaude(q: VideoQuery): Promise<Video[]> {
-  const messages: import('@anthropic-ai/sdk').default.Beta.BetaMessageParam[] = [{
-    role: 'user',
-    content: `${socialAsk(q)} Then reply "done".`,
-  }]
-  const results = new Map<string, string>() // url → title, from the search results
-  for (let turn = 0; turn < 3; turn++) {
-    const response = await client.beta.messages.create({
-      ...FALLBACK,
-      model: MODEL,
-      max_tokens: 4000,
-      output_config: { effort: 'low' },
-      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4, allowed_domains: ['instagram.com', 'tiktok.com'] }],
-      messages,
-    }, { signal: AbortSignal.timeout(60_000) })
-    collectResults(response.content, results)
-    if (response.stop_reason !== 'pause_turn') break
-    messages.push({ role: 'assistant', content: response.content })
-  }
-  return clipsFrom(results, q)
+  return asJob('videos', async () => {
+    const messages: import('@anthropic-ai/sdk').default.Beta.BetaMessageParam[] = [{
+      role: 'user',
+      content: `${socialAsk(q)} Then reply "done".`,
+    }]
+    const results = new Map<string, string>() // url → title, from the search results
+    for (let turn = 0; turn < 3; turn++) {
+      const response = await client.beta.messages.create({
+        ...FALLBACK,
+        model: MODEL_LIGHT,
+        max_tokens: 4000,
+        output_config: { effort: 'low' },
+        tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4, allowed_domains: ['instagram.com', 'tiktok.com'] }],
+        messages,
+      }, { signal: AbortSignal.timeout(60_000) })
+      collectResults(response.content, results)
+      if (response.stop_reason !== 'pause_turn') break
+      messages.push({ role: 'assistant', content: response.content })
+    }
+    return clipsFrom(results, q)
+  })
 }
 
 const CLIPS_SCHEMA = {
@@ -674,6 +702,7 @@ const Clips = z.object({ clips: z.array(z.object({ url: z.string(), creator: z.s
 export const socialTrace: { at: string; query: string; status?: string; sources: string[]; listed: string; kept: number; error?: string }[] = []
 
 export async function traceSocial(q: VideoQuery) {
+  if (!canSearch(2)) return { error: 'The day’s web searches are used up.' }
   try {
     const videos = await (brainEnabled ? socialWithClaude(q) : openai ? socialWithOpenAI(q) : Promise.resolve([]))
     return { videos, trace: socialTrace.at(-1) }
@@ -683,23 +712,25 @@ export async function traceSocial(q: VideoQuery) {
 }
 
 async function socialWithOpenAI(q: VideoQuery): Promise<Video[]> {
-  const response = await openai!.responses.create({
-    model: OPENAI_MODEL,
-    reasoning: { effort: 'low' },
-    tools: [{ type: 'web_search', filters: { allowed_domains: ['instagram.com', 'tiktok.com'] } }],
-    include: ['web_search_call.action.sources'],
-    input: `${socialAsk(q)} List every reel or video you found that is about this place, with its exact URL from the search results, the creator's handle, and its caption.`,
-    text: { format: { type: 'json_schema', name: 'clips', strict: true, schema: CLIPS_SCHEMA } },
-  }, { signal: AbortSignal.timeout(90_000) })
+  return asJob('videos', async () => {
+    const response = await openai!.responses.create({
+      model: openaiLightModel(),
+      reasoning: { effort: 'low' },
+      tools: [{ type: 'web_search', filters: { allowed_domains: ['instagram.com', 'tiktok.com'] } }],
+      include: ['web_search_call.action.sources'],
+      input: `${socialAsk(q)} List every reel or video you found that is about this place, with its exact URL from the search results, the creator's handle, and its caption.`,
+      text: { format: { type: 'json_schema', name: 'clips', strict: true, schema: CLIPS_SCHEMA } },
+    }, { signal: AbortSignal.timeout(90_000) })
 
-  const results = openAIResults(response.output, response.status === 'completed' ? response.output_text : null)
-  const kept = await clipsFrom(results, q)
-  const sources = new Map<string, string>()
-  collectOpenAISources(response.output, sources)
-  socialTrace.push({ at: new Date().toISOString(), query: `${q.name} ${q.city}`, status: response.status, sources: [...sources.keys()].slice(0, 40), listed: response.output_text.slice(0, 3000), kept: kept.length })
-  if (socialTrace.length > 10) socialTrace.shift()
-  console.log(`[videos] openai ${q.name}: ${sources.size} sources, ${results.size} candidates, ${kept.length} kept`)
-  return kept
+    const results = openAIResults(response.output, response.status === 'completed' ? response.output_text : null)
+    const kept = await clipsFrom(results, q)
+    const sources = new Map<string, string>()
+    collectOpenAISources(response.output, sources)
+    socialTrace.push({ at: new Date().toISOString(), query: `${q.name} ${q.city}`, status: response.status, sources: [...sources.keys()].slice(0, 40), listed: response.output_text.slice(0, 3000), kept: kept.length })
+    if (socialTrace.length > 10) socialTrace.shift()
+    console.log(`[videos] openai ${q.name}: ${sources.size} sources, ${results.size} candidates, ${kept.length} kept`)
+    return kept
+  })
 }
 
 // url → title for each clip: what the model reported, kept only when the search returned that clip.

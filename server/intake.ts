@@ -4,6 +4,7 @@ import { CITIES, cityById, findCity } from '../src/data/cities'
 import { applyStory } from '../src/planner/story'
 import { structured } from './llm'
 import { lookupCity, type Lookup } from './cities/store'
+import { asJob } from './usage'
 
 const VIBES: Vibe[] = ['food', 'culture', 'nightlife', 'nature', 'art', 'shopping', 'relaxed', 'adventure', 'romantic', 'history']
 const WHEN = ['', 'morning', 'afternoon', 'evening', 'night'] as const
@@ -129,33 +130,35 @@ function storyOf(s: z.infer<typeof Output>['story'], prev: TripStory | undefined
 }
 
 export async function runIntake(req: IntakeRequest, signal: AbortSignal): Promise<IntakeResult> {
-  // The greeting is UI chrome; the conversation must start with the user.
-  const firstUser = req.messages.findIndex(m => m.role === 'user')
-  const messages = req.messages.slice(firstUser).map(m => ({ role: m.role === 'user' ? 'user' as const : 'assistant' as const, content: m.text }))
-  const today = new Date().toISOString().slice(0, 10)
+  return asJob('intake', async () => {
+    // The greeting is UI chrome; the conversation must start with the user.
+    const firstUser = req.messages.findIndex(m => m.role === 'user')
+    const messages = req.messages.slice(firstUser).map(m => ({ role: m.role === 'user' ? 'user' as const : 'assistant' as const, content: m.text }))
+    const today = new Date().toISOString().slice(0, 10)
 
-  const out = Output.parse(await structured({ kind: 'intake', name: 'trip_brief', system: system(today), messages, schema: SCHEMA, signal }))
-  const b = out.brief
-  const city = await destinationOf(b.destination, req.brief.destination, signal)
-  const days = b.days > 0 ? Math.min(5, b.days) : undefined
-  const brief: TripBrief = applyStory({
-    // what the chat's sliders and the trip already hold stays; the model owns the rest
-    ...req.brief,
-    destination: city.id,
-    days,
-    travelers: b.travelers > 0 ? b.travelers : undefined,
-    vibes: b.vibes,
-    budgetTier: b.budget_tier || undefined,
-    budgetAmount: b.budget_usd > 0 ? b.budget_usd : undefined,
-    pace: b.pace || undefined,
-    startDate: /^\d{4}-\d{2}-\d{2}$/.test(b.start_date) ? b.start_date : req.brief.startDate,
-    story: storyOf(out.story, req.brief.story, days),
+    const out = Output.parse(await structured({ kind: 'intake', name: 'trip_brief', system: system(today), messages, schema: SCHEMA, signal }))
+    const b = out.brief
+    const city = await destinationOf(b.destination, req.brief.destination, signal)
+    const days = b.days > 0 ? Math.min(5, b.days) : undefined
+    const brief: TripBrief = applyStory({
+      // what the chat's sliders and the trip already hold stays; the model owns the rest
+      ...req.brief,
+      destination: city.id,
+      days,
+      travelers: b.travelers > 0 ? b.travelers : undefined,
+      vibes: b.vibes,
+      budgetTier: b.budget_tier || undefined,
+      budgetAmount: b.budget_usd > 0 ? b.budget_usd : undefined,
+      pace: b.pace || undefined,
+      startDate: /^\d{4}-\d{2}-\d{2}$/.test(b.start_date) ? b.start_date : req.brief.startDate,
+      story: storyOf(out.story, req.brief.story, days),
+    })
+    let reply = out.reply
+    if (city.building) reply = `${reply} (I don’t have ${city.building.name} mapped yet, so I’m building it from public guides now. It takes about a minute.)`
+    if (city.unknown) reply = `${reply} I couldn’t find a guide for “${city.unknown}”, so I can’t map it. Which city is it nearest? I have ${CITIES.map(c => c.name).join(', ')} ready, and can build most cities.`
+    const chips = out.chips.map(c => c.trim().slice(0, 30)).filter(Boolean).slice(0, 4)
+    return { reply, chips, brief, ...(city.building ? { building: city.building } : {}) }
   })
-  let reply = out.reply
-  if (city.building) reply = `${reply} (I don’t have ${city.building.name} mapped yet, so I’m building it from public guides now. It takes about a minute.)`
-  if (city.unknown) reply = `${reply} I couldn’t find a guide for “${city.unknown}”, so I can’t map it. Which city is it nearest? I have ${CITIES.map(c => c.name).join(', ')} ready, and can build most cities.`
-  const chips = out.chips.map(c => c.trim().slice(0, 30)).filter(Boolean).slice(0, 4)
-  return { reply, chips, brief, ...(city.building ? { building: city.building } : {}) }
 }
 
 // The city id for what the model heard: a city the app knows (by id or name), the one already on

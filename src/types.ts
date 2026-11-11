@@ -76,7 +76,11 @@ export interface Place {
   hours?: string                // opening hours as OpenStreetMap writes them ("Tu-Su 12:00-23:00")
   moods?: string[]              // the feel, in plain words: "romantic", "sunset", "live music", "local"
   source?: string               // the page it was found on, for places found by searching the web
+  links?: PlaceLinks            // its own accounts and site, kept with it so they show wherever it does
 }
+
+// A place's own presence online, from the map (OpenStreetMap's contact tags) or the search that found it.
+export interface PlaceLinks { instagram?: string; website?: string; facebook?: string; tiktok?: string }
 
 // What a local would tell you before you go. Each is a short sentence, when known.
 export interface PlaceTips {

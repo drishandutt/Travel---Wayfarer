@@ -18,6 +18,13 @@ export function SocialVideos({ place, city: cityName, active = true }: { place: 
     getVideos(place, city).then(d => { if (live) setData(d) })
     return () => { live = false }
   }, [place.id, city, active])
+  // reels and TikToks are looked for when they ask (a web search, the first time only)
+  const [finding, setFinding] = useState(false)
+  const find = () => {
+    setFinding(true)
+    getVideos(place, city, true).then(setData).finally(() => setFinding(false))
+  }
+  const own = place.links
   const videos = data?.videos ?? []
   const platforms = (Object.keys(PLATFORM_NAME) as Platform[]).filter(p => videos.some(v => v.platform === p))
   const shown = only ? videos.filter(v => v.platform === only) : videos
@@ -36,7 +43,20 @@ export function SocialVideos({ place, city: cityName, active = true }: { place: 
           ))}
         </div>
       )}
+      {own && (own.instagram || own.tiktok || own.website || own.facebook) && (
+        <div className="sv-own">
+          {own.instagram && <a href={own.instagram} target="_blank" rel="noreferrer">Their Instagram ↗</a>}
+          {own.tiktok && <a href={own.tiktok} target="_blank" rel="noreferrer">Their TikTok ↗</a>}
+          {own.facebook && <a href={own.facebook} target="_blank" rel="noreferrer">Facebook ↗</a>}
+          {own.website && <a href={own.website} target="_blank" rel="noreferrer">Website ↗</a>}
+        </div>
+      )}
       {shown.map(v => <VideoItem key={v.platform + v.id} video={v} />)}
+      {data && !data.social && (
+        <button className="sv-find" disabled={finding} onClick={e => { e.stopPropagation(); find() }}>
+          {finding ? 'Looking for reels and TikToks…' : 'Find Instagram & TikTok reels'}
+        </button>
+      )}
       {data && (
         <div className="sv-more">
           <span>More on</span>

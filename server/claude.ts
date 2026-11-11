@@ -1,7 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { meteredFetch } from './usage'
 
 // One place for model choice and request defaults.
 export const MODEL = process.env.WAYFARER_MODEL ?? 'claude-opus-5-5'
+// for the simple jobs: see openaiLightModel in ./openai
+export const MODEL_LIGHT = process.env.WAYFARER_MODEL_LIGHT ?? 'claude-haiku-5-5'
 
 // The SDK resolves credentials itself (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
 // or an `ant auth login` profile). We only gate on the env vars so the app can
@@ -10,7 +13,7 @@ export const brainEnabled =
   process.env.WAYFARER_BRAIN !== 'mock' &&
   Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.WAYFARER_BRAIN === 'claude')
 
-export const client = new Anthropic()
+export const client = new Anthropic({ fetch: meteredFetch('claude') })
 
 // Server-side refusal fallback: if a safety classifier declines, the API re-runs
 // the request on Anthropic's recommended fallback model inside the same call.

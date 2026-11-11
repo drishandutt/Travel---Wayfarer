@@ -8,6 +8,7 @@ import type { DayPlan, PlannerEvent, TripBrief } from '../src/types'
 import type { Picks } from '../src/planner/engine'
 import { describeError } from './claude'
 import { modelName, provider } from './llm'
+import { asJobGen, canSearch } from './usage'
 import { runIntake, type IntakeRequest } from './intake'
 import { planWithModel } from './planAgent'
 import { hotelsWithModel } from './hotelAgent'
@@ -185,18 +186,18 @@ const server = createServer(async (req, res) => {
       const q = { name: (url.searchParams.get('name') ?? '').slice(0, 120).trim(), city: (url.searchParams.get('city') ?? '').slice(0, 60).trim(), area: url.searchParams.get('area')?.slice(0, 120) || undefined }
       if (!q.name || !q.city) return json(res, 400, { error: 'name and city are required' })
       await moneyApi() // opens the database the found clips are kept in, once
-      // each fresh lookup can run a web search, so fresh ones are limited; cached ones are free
+      // ?find=1: someone asked for reels and TikToks on this place, a web search the first time
+      // (then kept for good); without it, only what's kept, or YouTube, which is free
+      const find = url.searchParams.get('find') === '1'
       const held = url.searchParams.get('debug') === '1' ? undefined : await cachedVideos(q)
-      if (held) {
+      if (held && (!find || held.social)) {
         res.setHeader('Cache-Control', 'private, max-age=3600')
-        // served from what's kept, with a background refresh when it's getting old
-        return json(res, 200, await placeVideos(q))
+        return json(res, 200, held)
       }
-      if (overLimit(`videos:${clientIp(req)}`, 30, 3_600_000)) return json(res, 429, { error: 'Too many lookups. Try again in a bit.' })
+      if (overLimit(`videos:${clientIp(req)}`, find ? 20 : 60, 3_600_000)) return json(res, 429, { error: 'Too many lookups. Try again in a bit.' })
       // ?debug=1: run the Instagram/TikTok search fresh and show what it found and kept (temporary, for checking it live)
       if (url.searchParams.get('debug') === '1') return json(res, 200, await traceSocial(q))
-      res.setHeader('Cache-Control', 'private, max-age=3600')
-      return json(res, 200, await placeVideos(q))
+      return json(res, 200, await placeVideos(q, find))
     }
     // Wayfarer as an MCP server for Claude and other clients (server/mcp): OAuth discovery,
     // sign-in and tokens, then the MCP endpoint. Before the Claude check: none of it needs a key.
@@ -253,7 +254,7 @@ const server = createServer(async (req, res) => {
       // longer than the host keeps a request open), and the browser asks again until it's done.
       // Only starting one counts against the limits; it carries on if they close the tab.
       const ip = clientIp(req)
-      const out = await vibeStatus(cityPath[1], brief, (await whoIs(req))?.id ?? null, () => !overLimit(`vibe:${ip}`, 10, 3_600_000) && !overLimit('model:day', DAILY_MODEL_CALLS, 86_400_000))
+      const out = await vibeStatus(cityPath[1], brief, (await whoIs(req))?.id ?? null, () => canSearch(8) && !overLimit(`vibe:${ip}`, 10, 3_600_000) && !overLimit('model:day', DAILY_MODEL_CALLS, 86_400_000))
       if (out.status === 'limited') return json(res, 429, { error: 'That’s a lot of searches in a short while. Try again in a bit.' })
       return json(res, 200, out)
     }
@@ -314,11 +315,11 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/plan') {
       const { brief, picks } = await readJson<{ brief: TripBrief; picks?: Picks }>(req)
-      return stream(res, signal => planWithModel(brief, signal, picks))
+      return stream(res, signal => asJobGen('plan', () => planWithModel(brief, signal, picks)))
     }
     if (req.method === 'POST' && url.pathname === '/api/hotels') {
       const { brief, days } = await readJson<{ brief: TripBrief; days: DayPlan[] }>(req)
-      return stream(res, signal => hotelsWithModel(brief, days, signal))
+      return stream(res, signal => asJobGen('hotels', () => hotelsWithModel(brief, days, signal)))
     }
     if (PRODUCTION && !url.pathname.startsWith('/api/') && (req.method === 'GET' || req.method === 'HEAD')) {
       return await serveStatic(url.pathname, res)

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { DOC_KINDS, type DocMime, type Extracted, type LocalTime } from '../../src/docs/types'
 import { FALLBACK, MODEL, brainEnabled, client, textOf } from '../claude'
 import { OPENAI_MODEL, openai } from '../openai'
+import { asJob } from '../usage'
 
 // Reading a document: one model call (Claude, else OpenAI) on the PDF or photo, returning
 // what Wayfarer needs to raise alerts and show it: the kind, each leg's times with the UTC
@@ -102,32 +103,34 @@ export function tidy(o: z.infer<typeof Out>): Extracted {
 }
 
 export async function readDocument(bytes: Buffer, mime: DocMime, fileName: string, signal?: AbortSignal): Promise<Extracted> {
-  const data = bytes.toString('base64')
-  const ask = `The file is “${fileName}”. Read it.`
-  let json: string
-  if (brainEnabled) {
-    const file = mime === 'application/pdf'
-      ? { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data } }
-      : { type: 'image' as const, source: { type: 'base64' as const, media_type: mime as 'image/jpeg' | 'image/png' | 'image/webp', data } }
-    const response = await client.beta.messages.create({
-      ...FALLBACK, model: MODEL, max_tokens: 8000, system: brief,
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
-      messages: [{ role: 'user', content: [file, { type: 'text', text: ask }] }],
-    }, { signal })
-    if (response.stop_reason === 'refusal') throw new ReadError('The model wouldn’t read this one.')
-    json = textOf(response)
-  } else if (openai) {
-    const url = `data:${mime};base64,${data}`
-    const file = mime === 'application/pdf'
-      ? { type: 'input_file' as const, filename: fileName.replace(/[^\w.\- ]/g, '_').slice(0, 100) || 'document.pdf', file_data: url }
-      : { type: 'input_image' as const, image_url: url, detail: 'high' as const }
-    const response = await openai.responses.create({
-      model: OPENAI_MODEL, reasoning: { effort: 'low' }, instructions: brief,
-      input: [{ role: 'user', content: [file, { type: 'input_text', text: ask }] }],
-      text: { format: { type: 'json_schema', name: 'document', strict: true, schema: SCHEMA as unknown as Record<string, unknown> } },
-    }, { signal })
-    if (response.status !== 'completed') throw new ReadError('The model couldn’t finish reading this one.')
-    json = response.output_text
-  } else throw new ReadError('Reading documents needs Claude or OpenAI connected on the server.')
-  return tidy(Out.parse(JSON.parse(json)))
+  return asJob('docs', async () => {
+    const data = bytes.toString('base64')
+    const ask = `The file is “${fileName}”. Read it.`
+    let json: string
+    if (brainEnabled) {
+      const file = mime === 'application/pdf'
+        ? { type: 'document' as const, source: { type: 'base64' as const, media_type: 'application/pdf' as const, data } }
+        : { type: 'image' as const, source: { type: 'base64' as const, media_type: mime as 'image/jpeg' | 'image/png' | 'image/webp', data } }
+      const response = await client.beta.messages.create({
+        ...FALLBACK, model: MODEL, max_tokens: 8000, system: brief,
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+        messages: [{ role: 'user', content: [file, { type: 'text', text: ask }] }],
+      }, { signal })
+      if (response.stop_reason === 'refusal') throw new ReadError('The model wouldn’t read this one.')
+      json = textOf(response)
+    } else if (openai) {
+      const url = `data:${mime};base64,${data}`
+      const file = mime === 'application/pdf'
+        ? { type: 'input_file' as const, filename: fileName.replace(/[^\w.\- ]/g, '_').slice(0, 100) || 'document.pdf', file_data: url }
+        : { type: 'input_image' as const, image_url: url, detail: 'high' as const }
+      const response = await openai.responses.create({
+        model: OPENAI_MODEL, reasoning: { effort: 'low' }, instructions: brief,
+        input: [{ role: 'user', content: [file, { type: 'input_text', text: ask }] }],
+        text: { format: { type: 'json_schema', name: 'document', strict: true, schema: SCHEMA as unknown as Record<string, unknown> } },
+      }, { signal })
+      if (response.status !== 'completed') throw new ReadError('The model couldn’t finish reading this one.')
+      json = response.output_text
+    } else throw new ReadError('Reading documents needs Claude or OpenAI connected on the server.')
+    return tidy(Out.parse(JSON.parse(json)))
+  })
 }

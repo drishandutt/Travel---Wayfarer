@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import type { Audience, City, Place, PlaceProfile } from '../../src/types'
 import { AUDIENCES, ruleProfile } from '../../src/planner/profile'
-import { FALLBACK, MODEL, brainEnabled, client, textOf } from '../claude'
-import { OPENAI_MODEL, openai } from '../openai'
+import { FALLBACK, brainEnabled, client, textOf, MODEL_LIGHT } from '../claude'
+import { openai, openaiLightModel } from '../openai'
+import { asJob } from '../usage'
 
 // What a place is good and bad at, and who it suits, from a model that knows it. Every place
 // gets a rules profile for free (src/planner/profile.ts); this is the better one, asked for in
@@ -80,40 +81,42 @@ export const profilingEnabled = () => brainEnabled || Boolean(openai)
 
 // Profiles for a batch of places (up to about 20 at a time). Places the model doesn't know are left out.
 export async function profileBatch(city: City, places: Place[], signal?: AbortSignal): Promise<Map<string, PlaceProfile>> {
-  const out = new Map<string, PlaceProfile>()
-  if (!places.length) return out
-  const ask = `Places:\n${places.map(placeLine).join('\n')}`
-  let json: string
-  let by: 'claude' | 'openai'
-  if (brainEnabled) {
-    const response = await client.beta.messages.create({
-      ...FALLBACK,
-      model: MODEL,
-      max_tokens: 12000,
-      system: batchBrief(city),
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: BATCH_SCHEMA } },
-      messages: [{ role: 'user', content: ask }],
-    }, { signal: signal ?? AbortSignal.timeout(120_000) })
-    if (response.stop_reason !== 'end_turn') return out
-    json = textOf(response)
-    by = 'claude'
-  } else if (openai) {
-    const response = await openai.responses.create({
-      model: OPENAI_MODEL,
-      reasoning: { effort: 'low' },
-      instructions: batchBrief(city),
-      input: ask,
-      text: { format: { type: 'json_schema', name: 'profiles', strict: true, schema: BATCH_SCHEMA as unknown as Record<string, unknown> } },
-    }, { signal: signal ?? AbortSignal.timeout(120_000) })
-    if (response.status !== 'completed') return out
-    json = response.output_text
-    by = 'openai'
-  } else return out
-  const byId = new Map(places.map(p => [p.id, p]))
-  for (const raw of BatchOut.parse(JSON.parse(json)).places) {
-    const p = byId.get(raw.id)
-    const prof = p && profileFrom(raw, p, by)
-    if (prof) out.set(p!.id, prof)
-  }
-  return out
+  return asJob('profiles', async () => {
+    const out = new Map<string, PlaceProfile>()
+    if (!places.length) return out
+    const ask = `Places:\n${places.map(placeLine).join('\n')}`
+    let json: string
+    let by: 'claude' | 'openai'
+    if (brainEnabled) {
+      const response = await client.beta.messages.create({
+        ...FALLBACK,
+        model: MODEL_LIGHT,
+        max_tokens: 12000,
+        system: batchBrief(city),
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: BATCH_SCHEMA } },
+        messages: [{ role: 'user', content: ask }],
+      }, { signal: signal ?? AbortSignal.timeout(120_000) })
+      if (response.stop_reason !== 'end_turn') return out
+      json = textOf(response)
+      by = 'claude'
+    } else if (openai) {
+      const response = await openai.responses.create({
+        model: openaiLightModel(),
+        reasoning: { effort: 'low' },
+        instructions: batchBrief(city),
+        input: ask,
+        text: { format: { type: 'json_schema', name: 'profiles', strict: true, schema: BATCH_SCHEMA as unknown as Record<string, unknown> } },
+      }, { signal: signal ?? AbortSignal.timeout(120_000) })
+      if (response.status !== 'completed') return out
+      json = response.output_text
+      by = 'openai'
+    } else return out
+    const byId = new Map(places.map(p => [p.id, p]))
+    for (const raw of BatchOut.parse(JSON.parse(json)).places) {
+      const p = byId.get(raw.id)
+      const prof = p && profileFrom(raw, p, by)
+      if (prof) out.set(p!.id, prof)
+    }
+    return out
+  })
 }

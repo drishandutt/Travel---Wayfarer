@@ -8,6 +8,7 @@ import { Activity } from './Activity'
 import { Analyst } from './Analyst'
 import { Places } from './Places'
 import { Settings } from './Settings'
+import { Spend } from './Spend'
 
 // The owner's dev tools (server/dev): every log line and error, every activity and the
 // analyst agent over it, new places (the review queue, bulk imports), the signed-in sessions
@@ -19,9 +20,10 @@ interface Site { domain: string; count: number; names: string[]; signedIn: boole
 interface Token { id: string; label: string; createdAt: number; lastUsedAt: number | null }
 interface Status { browser: string | null; ai: string | null; admins: string; uptime: number; memory: number }
 
-type Tab = 'activity' | 'analyst' | 'places' | 'logs' | 'sessions' | 'reader' | 'extension' | 'settings'
+type Tab = 'activity' | 'spend' | 'analyst' | 'places' | 'logs' | 'sessions' | 'reader' | 'extension' | 'settings'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'activity', label: 'Activity' },
+  { id: 'spend', label: 'Spend' },
   { id: 'analyst', label: 'Analyst' },
   { id: 'places', label: 'Places' },
   { id: 'logs', label: 'Logs' },
@@ -75,6 +77,7 @@ export function DevTools({ onClose }: { onClose: () => void }) {
           </nav>
           <div className="dev-page">
             {tab === 'activity' && <Activity />}
+            {tab === 'spend' && <Spend />}
             {tab === 'analyst' && <Analyst onSettings={() => go('settings')} onPlaces={() => go('places')} />}
             {tab === 'places' && <Places onReviewed={n => setReviews(n)} />}
             {tab === 'settings' && <Settings onChanged={() => void refreshStatus()} />}

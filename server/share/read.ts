@@ -4,11 +4,12 @@ import { z } from 'zod'
 import { findCity } from '../../src/data/cities'
 import { mapsHost, parseMapsLink } from '../../src/planner/customPlaces'
 import type { FoundPlace, LinkKind, ShareRead } from '../../src/share/types'
-import { FALLBACK, MODEL, brainEnabled, client, textOf } from '../claude'
-import { OPENAI_MODEL, openai } from '../openai'
+import { FALLBACK, brainEnabled, client, textOf, MODEL_LIGHT } from '../claude'
+import { openai, openaiLightModel } from '../openai'
 import type { Db } from '../money/db'
 import { cookiesFor, siteOf } from '../dev/cookies'
 import { chromiumPath, withPage } from './browser'
+import { asJob } from '../usage'
 
 // A link shared to Wayfarer (a reel, a video, a post, a search, a web page or a map) → the
 // places it's about. Maps links are read as they always were (server/places.ts); anything else
@@ -195,30 +196,32 @@ const Found = z.object({
 const PLACES_BRIEF = `Someone shared a link to their trip planner: a reel, a video, a social post, a web search or a web page. From what it says, list the specific real places it shows or recommends that a traveller could go to: restaurants, cafes, bars, sights, museums, shops, markets, parks, viewpoints, beaches. Only places named (or unmistakably identified) in the text. Never invent one, and skip vague ones ("a hidden cafe"). Use the place's usual name, without emoji or hashtags. area: its neighbourhood or street if the text says, else "". city and country: where it is, from the text or your knowledge of the place; "" if you can't tell. why: under 80 characters, what the post says about it ("Best tonkotsu in Shibuya, go before 11"). summary: one line on what the link is, under 100 characters. At most 15 places, in the order the text gives them. No places → an empty list. A web search is the one exception to naming only what the text names: answer the search with the real, well-known places that best fit it, as a local would.`
 
 async function namePlaces(about: string, signal?: AbortSignal): Promise<z.infer<typeof Found> | null> {
-  let json: string
-  if (brainEnabled) {
-    const response = await client.beta.messages.create({
-      ...FALLBACK,
-      model: MODEL,
-      max_tokens: 6000,
-      system: PLACES_BRIEF,
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: PLACES_SCHEMA } },
-      messages: [{ role: 'user', content: about }],
-    }, { signal })
-    if (response.stop_reason !== 'end_turn') return null
-    json = textOf(response)
-  } else if (openai) {
-    const response = await openai.responses.create({
-      model: OPENAI_MODEL,
-      reasoning: { effort: 'low' },
-      instructions: PLACES_BRIEF,
-      input: about,
-      text: { format: { type: 'json_schema', name: 'places', strict: true, schema: PLACES_SCHEMA as unknown as Record<string, unknown> } },
-    }, { signal })
-    if (response.status !== 'completed') return null
-    json = response.output_text
-  } else return null
-  return Found.parse(JSON.parse(json))
+  return asJob('reader', async () => {
+    let json: string
+    if (brainEnabled) {
+      const response = await client.beta.messages.create({
+        ...FALLBACK,
+        model: MODEL_LIGHT,
+        max_tokens: 6000,
+        system: PLACES_BRIEF,
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: PLACES_SCHEMA } },
+        messages: [{ role: 'user', content: about }],
+      }, { signal })
+      if (response.stop_reason !== 'end_turn') return null
+      json = textOf(response)
+    } else if (openai) {
+      const response = await openai.responses.create({
+        model: openaiLightModel(),
+        reasoning: { effort: 'low' },
+        instructions: PLACES_BRIEF,
+        input: about,
+        text: { format: { type: 'json_schema', name: 'places', strict: true, schema: PLACES_SCHEMA as unknown as Record<string, unknown> } },
+      }, { signal })
+      if (response.status !== 'completed') return null
+      json = response.output_text
+    } else return null
+    return Found.parse(JSON.parse(json))
+  })
 }
 
 // ── the whole read ───────────────────────────────────────────────────────────

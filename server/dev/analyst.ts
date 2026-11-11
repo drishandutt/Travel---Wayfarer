@@ -3,10 +3,11 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type OpenAI from 'openai'
 import { z } from 'zod'
 import type { Db } from '../money/db'
-import { FALLBACK, MODEL, brainEnabled, client, textOf } from '../claude'
-import { OPENAI_MODEL, openai } from '../openai'
+import { FALLBACK, MODEL, brainEnabled, client, textOf, MODEL_LIGHT } from '../claude'
+import { openai, openaiLightModel } from '../openai'
 import { listReviews } from '../cities/store'
 import { flushActivity, parseDetail, queryActivity, track, whereOf, type ActivityRow } from './activity'
+import { asJob } from '../usage'
 
 // The analyst over the activity log (./activity.ts), for the dev tools. Two layers:
 //   digest()  rules, no model: security signals, what each user is doing, the places pipeline
@@ -425,70 +426,72 @@ function toolsFor(db: Db, defaultHours: number): Tools & { users: Map<string, st
 const clip = (v: unknown) => { const s = JSON.stringify(v); return s.length > 60_000 ? `${s.slice(0, 60_000)}… (cut short)` : s }
 
 export async function analyse(db: Db, o: { hours: number; question?: string; kind: StoredReport['kind']; signal?: AbortSignal }): Promise<StoredReport> {
-  if (!analystEnabled()) throw new Error('No AI is connected: add an OpenAI key in the dev tools (Settings), or set ANTHROPIC_API_KEY.')
-  const tools = toolsFor(db, o.hours)
-  const ask = `${o.question ? `The owner asks: ${o.question}\n\nAnswer that first and foremost (put the answer in the headline and the sections it touches), using the tools.` : 'Review the activity.'} Window: the last ${o.hours} hours. Now: ${new Date().toISOString()}.`
-  let report: Report | undefined
-  let steps = 0
-  let model: string
-  if (brainEnabled) {
-    model = MODEL
-    const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content: ask }]
-    for (; steps < MAX_STEPS && !report; steps++) {
-      const response = await client.beta.messages.create({
-        ...FALLBACK,
-        model: MODEL,
-        max_tokens: 16000,
-        system: SYSTEM,
-        output_config: { effort: 'medium' },
-        tools: TOOLS.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters as unknown as Anthropic.Beta.BetaTool.InputSchema })),
-        messages,
-      }, { signal: o.signal ?? AbortSignal.timeout(300_000) })
-      messages.push({ role: 'assistant', content: response.content })
-      const uses = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use')
-      if (!uses.length) { report = fallbackReport(textOf(response)); break }
-      const results: Anthropic.Beta.BetaToolResultBlockParam[] = []
-      for (const u of uses) {
-        if (u.name === 'submit_report') { report = ReportOut.parse(u.input); results.push({ type: 'tool_result', tool_use_id: u.id, content: 'Received.' }); continue }
-        const out = await tools.run(u.name, (u.input ?? {}) as Record<string, unknown>).catch(err => ({ error: (err as Error).message }))
-        results.push({ type: 'tool_result', tool_use_id: u.id, content: clip(out) })
+  return asJob('analyst', async () => {
+    if (!analystEnabled()) throw new Error('No AI is connected: add an OpenAI key in the dev tools (Settings), or set ANTHROPIC_API_KEY.')
+    const tools = toolsFor(db, o.hours)
+    const ask = `${o.question ? `The owner asks: ${o.question}\n\nAnswer that first and foremost (put the answer in the headline and the sections it touches), using the tools.` : 'Review the activity.'} Window: the last ${o.hours} hours. Now: ${new Date().toISOString()}.`
+    let report: Report | undefined
+    let steps = 0
+    let model: string
+    if (brainEnabled) {
+      model = MODEL
+      const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content: ask }]
+      for (; steps < MAX_STEPS && !report; steps++) {
+        const response = await client.beta.messages.create({
+          ...FALLBACK,
+          model: MODEL_LIGHT,
+          max_tokens: 16000,
+          system: SYSTEM,
+          output_config: { effort: 'medium' },
+          tools: TOOLS.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters as unknown as Anthropic.Beta.BetaTool.InputSchema })),
+          messages,
+        }, { signal: o.signal ?? AbortSignal.timeout(300_000) })
+        messages.push({ role: 'assistant', content: response.content })
+        const uses = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use')
+        if (!uses.length) { report = fallbackReport(textOf(response)); break }
+        const results: Anthropic.Beta.BetaToolResultBlockParam[] = []
+        for (const u of uses) {
+          if (u.name === 'submit_report') { report = ReportOut.parse(u.input); results.push({ type: 'tool_result', tool_use_id: u.id, content: 'Received.' }); continue }
+          const out = await tools.run(u.name, (u.input ?? {}) as Record<string, unknown>).catch(err => ({ error: (err as Error).message }))
+          results.push({ type: 'tool_result', tool_use_id: u.id, content: clip(out) })
+        }
+        if (!report) messages.push({ role: 'user', content: results })
       }
-      if (!report) messages.push({ role: 'user', content: results })
-    }
-  } else {
-    model = OPENAI_MODEL
-    let previous: string | undefined
-    let input: OpenAI.Responses.ResponseInput = [{ role: 'user', content: ask }]
-    for (; steps < MAX_STEPS && !report; steps++) {
-      const response = await openai!.responses.create({
-        model: OPENAI_MODEL,
-        reasoning: { effort: 'medium' },
-        instructions: SYSTEM,
-        tools: TOOLS.map(t => ({ type: 'function' as const, name: t.name, description: t.description, parameters: t.parameters as unknown as Record<string, unknown>, strict: t.name !== 'pending_reviews' })),
-        input,
-        ...(previous ? { previous_response_id: previous } : {}),
-        store: true,
-        max_output_tokens: 16000,
-      }, { signal: o.signal ?? AbortSignal.timeout(300_000) })
-      previous = response.id
-      const calls = response.output.filter((x): x is OpenAI.Responses.ResponseFunctionToolCall => x.type === 'function_call')
-      if (!calls.length) { report = fallbackReport(response.output_text); break }
-      const next: OpenAI.Responses.ResponseInput = []
-      for (const c of calls) {
-        let args: Record<string, unknown> = {}
-        try { args = JSON.parse(c.arguments) } catch { /* reported back below */ }
-        if (c.name === 'submit_report') { report = ReportOut.parse(args); next.push({ type: 'function_call_output', call_id: c.call_id, output: 'Received.' }); continue }
-        const out = await tools.run(c.name, args).catch(err => ({ error: (err as Error).message }))
-        next.push({ type: 'function_call_output', call_id: c.call_id, output: clip(out) })
+    } else {
+      model = openaiLightModel()
+      let previous: string | undefined
+      let input: OpenAI.Responses.ResponseInput = [{ role: 'user', content: ask }]
+      for (; steps < MAX_STEPS && !report; steps++) {
+        const response = await openai!.responses.create({
+          model: openaiLightModel(),
+          reasoning: { effort: 'medium' },
+          instructions: SYSTEM,
+          tools: TOOLS.map(t => ({ type: 'function' as const, name: t.name, description: t.description, parameters: t.parameters as unknown as Record<string, unknown>, strict: t.name !== 'pending_reviews' })),
+          input,
+          ...(previous ? { previous_response_id: previous } : {}),
+          store: true,
+          max_output_tokens: 16000,
+        }, { signal: o.signal ?? AbortSignal.timeout(300_000) })
+        previous = response.id
+        const calls = response.output.filter((x): x is OpenAI.Responses.ResponseFunctionToolCall => x.type === 'function_call')
+        if (!calls.length) { report = fallbackReport(response.output_text); break }
+        const next: OpenAI.Responses.ResponseInput = []
+        for (const c of calls) {
+          let args: Record<string, unknown> = {}
+          try { args = JSON.parse(c.arguments) } catch { /* reported back below */ }
+          if (c.name === 'submit_report') { report = ReportOut.parse(args); next.push({ type: 'function_call_output', call_id: c.call_id, output: 'Received.' }); continue }
+          const out = await tools.run(c.name, args).catch(err => ({ error: (err as Error).message }))
+          next.push({ type: 'function_call_output', call_id: c.call_id, output: clip(out) })
+        }
+        input = next
       }
-      input = next
     }
-  }
-  if (!report) report = fallbackReport('The analyst ran out of steps before finishing. Try a narrower question or a shorter window.')
-  const stored: StoredReport = { id: `rp_${randomUUID().slice(0, 10)}`, at: Date.now(), kind: o.kind, question: o.question ?? null, hours: o.hours, model, report, steps }
-  await db.run('INSERT INTO dev_reports (id, at, kind, question, hours, model, report) VALUES (?, ?, ?, ?, ?, ?, ?)', stored.id, stored.at, stored.kind, stored.question, stored.hours, model, JSON.stringify({ ...report, steps }))
-  track('analyst.report', { subject: stored.id, detail: { kind: o.kind, hours: o.hours, question: o.question?.slice(0, 200) ?? null, steps, model, security: report.security.length, highs: report.security.filter(x => x.severity === 'high').length } })
-  return stored
+    if (!report) report = fallbackReport('The analyst ran out of steps before finishing. Try a narrower question or a shorter window.')
+    const stored: StoredReport = { id: `rp_${randomUUID().slice(0, 10)}`, at: Date.now(), kind: o.kind, question: o.question ?? null, hours: o.hours, model, report, steps }
+    await db.run('INSERT INTO dev_reports (id, at, kind, question, hours, model, report) VALUES (?, ?, ?, ?, ?, ?, ?)', stored.id, stored.at, stored.kind, stored.question, stored.hours, model, JSON.stringify({ ...report, steps }))
+    track('analyst.report', { subject: stored.id, detail: { kind: o.kind, hours: o.hours, question: o.question?.slice(0, 200) ?? null, steps, model, security: report.security.length, highs: report.security.filter(x => x.severity === 'high').length } })
+    return stored
+  })
 }
 
 const fallbackReport = (text: string): Report => ({ headline: text.trim().slice(0, 2000) || 'No report.', security: [], users: [], places: [], product: [], actions: [] })
@@ -503,11 +506,12 @@ export async function listReports(db: Db, limit = 20): Promise<StoredReport[]> {
 let scheduled: NodeJS.Timeout | undefined
 let running = false
 
-// Every WAYFARER_ANALYST_HOURS hours (6 unless set; "off" to stop), when a model is connected
+// Every WAYFARER_ANALYST_HOURS hours ("off" unless set: on demand from the dev tools), when a model is connected
 // and enough has happened since the last report. Checked every half hour.
 export function startAnalystSchedule(db: Db) {
   if (scheduled) return
-  const setting = process.env.WAYFARER_ANALYST_HOURS ?? '6'
+  // on demand unless asked for: a scheduled review is a big model call, read or not
+  const setting = process.env.WAYFARER_ANALYST_HOURS ?? 'off'
   if (setting === 'off') return
   const every = Math.max(1, Number(setting) || 6)
   const check = async () => {

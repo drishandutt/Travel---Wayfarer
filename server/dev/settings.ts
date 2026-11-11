@@ -1,10 +1,11 @@
 import type { Db } from '../money/db'
-import { setOpenAIKey } from '../openai'
+import { setOpenAIKey, setOpenAILightModel } from '../openai'
 
 // Settings the owner changes in the dev tools without a redeploy. Kept in `dev_settings`,
 // a table only this server can read (row security on, no grants), like the site sessions.
 
 export const OPENAI_KEY = 'openai_api_key'
+export const LIGHT_MODEL = 'openai_light_model'
 
 let db: Db | null = null
 
@@ -14,6 +15,8 @@ export async function attachSettingsDb(d: Db | null) {
   // a key saved in the dev tools wins over the environment's
   const key = await getSetting(OPENAI_KEY).catch(() => null)
   if (key) setOpenAIKey(key)
+  const light = await getSetting(LIGHT_MODEL).catch(() => null)
+  if (light) setOpenAILightModel(light)
 }
 
 export async function getSetting(key: string): Promise<string | null> {

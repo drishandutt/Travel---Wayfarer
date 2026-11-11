@@ -36,6 +36,11 @@
 .social .sv-info p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 4px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--paper-dim); }
 
 .sv-more { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 12px; color: var(--paper-faint); }
+.sv-own { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; }
+.sv-own a { color: var(--amber); font-weight: 600; text-decoration: none; }
+.sv-find { align-self: flex-start; min-height: 36px; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--paper); font-size: 13px; }
+.sv-find:hover:not(:disabled) { background: rgba(var(--paper-rgb), .08); }
+.sv-find:disabled { opacity: .6; }
 .sv-more a { color: var(--paper-dim); text-decoration: none; }
 .sv-more a:hover { color: var(--paper); text-decoration: underline; }
 

@@ -10,6 +10,7 @@ import { OPENAI_MODEL, openai } from '../openai'
 import { collectOpenAISources, collectResults, resolvePlace } from '../places'
 import { track } from '../dev/activity'
 import { promoteFind, recallVibe, rememberVibe, sameSpot } from './store'
+import { asJob } from '../usage'
 
 // Places a local would pick for this trip's mood. Built cities come from travel guides, which
 // lean to the famous sights; this searches the web for the places that fit what the travellers
@@ -34,7 +35,7 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'area', 'kind', 'why', 'order', 'arrive', 'move', 'heads', 'price', 'best_at', 'minutes', 'moods', 'source_url'],
+        required: ['name', 'area', 'kind', 'why', 'order', 'arrive', 'move', 'heads', 'price', 'best_at', 'minutes', 'moods', 'source_url', 'instagram'],
         properties: {
           name: { type: 'string', description: 'The name as it appears on maps.' },
           area: { type: 'string', description: 'Neighbourhood.' },
@@ -49,6 +50,7 @@ const SCHEMA = {
           minutes: { type: 'integer', description: 'A typical visit, in minutes.' },
           moods: { type: 'array', items: str, description: '3-5 plain words for its feel: "romantic", "sunset", "live music", "local", "quiet".' },
           source_url: { type: 'string', description: 'The exact URL of the page you found it on.' },
+          instagram: { type: 'string', description: 'Its own Instagram account URL if you found it in your search, else "".' },
         },
       },
     },
@@ -58,7 +60,7 @@ const SCHEMA = {
 const Found = z.object({
   places: z.array(z.object({
     name: z.string(), area: z.string(), kind: z.enum(KINDS as [PlaceKind, ...PlaceKind[]]), why: z.string(), order: z.string(), arrive: z.string(), move: z.string(), heads: z.string(),
-    price: z.number().int(), best_at: z.enum(['morning', 'midday', 'evening', 'night']), minutes: z.number().int(), moods: z.array(z.string()), source_url: z.string(),
+    price: z.number().int(), best_at: z.enum(['morning', 'midday', 'evening', 'night']), minutes: z.number().int(), moods: z.array(z.string()), source_url: z.string(), instagram: z.string(),
   })),
 })
 type Candidate = z.infer<typeof Found>['places'][number]
@@ -155,7 +157,7 @@ const VIBE_OF: [RegExp, Vibe][] = [
 const clip = (s: string, n: number) => s.trim().slice(0, n)
 
 // One candidate, found on the map and shaped into a catalog place. Undefined when the map can't find it.
-async function placeOf(c: Candidate, city: City, signal?: AbortSignal): Promise<Place | undefined> {
+async function placeOf(c: Candidate, city: City, sources: Set<string>, signal?: AbortSignal): Promise<Place | undefined> {
   let resolved
   for (const name of [c.name, `${c.name}, ${c.area}`]) {
     try { resolved = await resolvePlace({ name: name.slice(0, 110), kind: c.kind, city: city.id, describe: false }, signal); break } catch { /* try the next way of naming it */ }
@@ -182,7 +184,18 @@ async function placeOf(c: Candidate, city: City, signal?: AbortSignal): Promise<
     keywords: [...new Set([...(r.keywords ?? []), ...moods])].slice(0, 6),
     rank: 0.3, // known to people who care, not to the coach tours
     source: c.source_url.slice(0, 300),
+    ...(links(r.links, c.instagram, sources) ? { links: links(r.links, c.instagram, sources) } : {}),
   }
+}
+
+// The map's links, with the Instagram account the search found: only an account page that the
+// search actually returned, never one the model wrote down.
+function links(fromMap: Place['links'], instagram: string, sources: Set<string>): Place['links'] | undefined {
+  const out = { ...fromMap }
+  const handle = instagram.match(/^https?:\/\/(?:www\.)?instagram\.com\/([A-Za-z0-9_.]{2,30})\/?$/)?.[1]
+  const seen = handle && [...sources].some(u => new RegExp(`instagram\\.com/${handle.replace(/\./g, '\\.')}(/|$|\\?)`, 'i').test(u))
+  if (!out.instagram && seen) out.instagram = `https://www.instagram.com/${handle}/`
+  return Object.keys(out).length ? out : undefined
 }
 
 const running = new Map<string, Promise<VibeResult>>()
@@ -238,38 +251,41 @@ export async function vibeStatus(cityId: string, brief: TripBrief, userId: strin
 }
 
 async function search(city: City, brief: TripBrief, mood: string, key: string, userId: string | null, signal?: AbortSignal): Promise<VibeResult> {
-  const started = Date.now()
-  const focuses = focusesOf(brief)
-  const runs = await Promise.all(focuses.map(f => (brainEnabled ? searchClaude(city, brief, f, signal) : openai ? searchOpenAI(city, brief, f, signal) : Promise.resolve({ found: [], sources: new Set<string>() }))
-    .then(r => ({ ...r, error: undefined as string | undefined }))
-    .catch(err => { console.warn('[vibe]', city.id, f.key, (err as Error).message); return { found: [] as Candidate[], sources: new Set<string>(), error: (err as Error).message } })))
-  // every search failed (the provider is down, or out of credits): a failure, not "found nothing"
-  if (runs.every(r => r.error)) throw new Error(runs[0].error ?? 'The search failed.')
-  const found: Candidate[] = []
-  const seen = new Set<string>()
-  // each search keeps its own sources: a place counts only if its own search returned its page
-  for (const r of runs) for (const c of r.found) {
-    const k = c.name.trim().toLowerCase()
-    if (!k || seen.has(k) || !fromSearch(c.source_url, r.sources)) continue
-    seen.add(k)
-    found.push(c)
-  }
-  const sourced = found
-  const places: Place[] = []
-  let missed = 0
-  for (const c of sourced.slice(0, focuses.reduce((n, f) => n + f.want, 0) + 6)) {
-    if (signal?.aborted) break
-    const p = await placeOf(c, city, signal).catch(() => undefined)
-    if (!p) { missed++; continue }
-    const listed = city.places.find(x => x.id === p.id || sameSpot(x, p))
-    if (listed) { if (!places.includes(listed)) places.push(listed); continue }
-    const added = await promoteFind(city.id, p, userId, 'vibe').catch(() => undefined)
-    places.push(added ?? p)
-  }
-  if (places.length) {
-    recent.set(key, { ids: places.map(p => p.id), at: Date.now() })
-    await rememberVibe(key, city.id, mood, places.map(p => p.id)).catch(() => {})
-  }
-  track('city.vibe', { userId, subject: city.id, detail: { mood: mood.slice(0, 200), focuses: focuses.map(f => f.key), suggested: runs.reduce((n, r) => n + r.found.length, 0), sourced: sourced.length, notOnMap: missed, kept: places.length, seconds: Math.round((Date.now() - started) / 1000) } })
-  return { places, cached: false, mood, searched: runs.reduce((n, r) => n + r.found.length, 0) }
+  return asJob('vibe', async () => {
+    const started = Date.now()
+    const focuses = focusesOf(brief)
+    const runs = await Promise.all(focuses.map(f => (brainEnabled ? searchClaude(city, brief, f, signal) : openai ? searchOpenAI(city, brief, f, signal) : Promise.resolve({ found: [], sources: new Set<string>() }))
+      .then(r => ({ ...r, error: undefined as string | undefined }))
+      .catch(err => { console.warn('[vibe]', city.id, f.key, (err as Error).message); return { found: [] as Candidate[], sources: new Set<string>(), error: (err as Error).message } })))
+    // every search failed (the provider is down, or out of credits): a failure, not "found nothing"
+    if (runs.every(r => r.error)) throw new Error(runs[0].error ?? 'The search failed.')
+    const found: Candidate[] = []
+    const seen = new Set<string>()
+    // each search keeps its own sources: a place counts only if its own search returned its page
+    for (const r of runs) for (const c of r.found) {
+      const k = c.name.trim().toLowerCase()
+      if (!k || seen.has(k) || !fromSearch(c.source_url, r.sources)) continue
+      seen.add(k)
+      found.push(c)
+    }
+    const sourced = found
+    const allSources = new Set(runs.flatMap(r => [...r.sources]))
+    const places: Place[] = []
+    let missed = 0
+    for (const c of sourced.slice(0, focuses.reduce((n, f) => n + f.want, 0) + 6)) {
+      if (signal?.aborted) break
+      const p = await placeOf(c, city, allSources, signal).catch(() => undefined)
+      if (!p) { missed++; continue }
+      const listed = city.places.find(x => x.id === p.id || sameSpot(x, p))
+      if (listed) { if (!places.includes(listed)) places.push(listed); continue }
+      const added = await promoteFind(city.id, p, userId, 'vibe').catch(() => undefined)
+      places.push(added ?? p)
+    }
+    if (places.length) {
+      recent.set(key, { ids: places.map(p => p.id), at: Date.now() })
+      await rememberVibe(key, city.id, mood, places.map(p => p.id)).catch(() => {})
+    }
+    track('city.vibe', { userId, subject: city.id, detail: { mood: mood.slice(0, 200), focuses: focuses.map(f => f.key), suggested: runs.reduce((n, r) => n + r.found.length, 0), sourced: sourced.length, notOnMap: missed, kept: places.length, seconds: Math.round((Date.now() - started) / 1000) } })
+    return { places, cached: false, mood, searched: runs.reduce((n, r) => n + r.found.length, 0) }
+  })
 }

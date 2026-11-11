@@ -25,8 +25,12 @@ describe('kept reels and videos', () => {
     assert.deepEqual(await cachedVideos({ name: ' borough market ', city: 'LONDON' }), clips)
   })
 
-  it('counts nothing as held once it’s too old', async () => {
-    await db.run('INSERT INTO place_videos (key, name, city, videos, found_at) VALUES (?, ?, ?, ?, ?)', 'nowhere|london', 'Nowhere', 'London', JSON.stringify({ videos: [] }), Date.now() - 7 * 3_600_000)
-    assert.equal(await cachedVideos({ name: 'Nowhere', city: 'London' }), undefined)
+  it('keeps clips for good, and remembers finding nothing for a week', async () => {
+    await db.run('INSERT INTO place_videos (key, name, city, videos, found_at) VALUES (?, ?, ?, ?, ?)', 'old favourite|london', 'Old Favourite', 'London', JSON.stringify(clips), Date.now() - 400 * 86_400_000)
+    assert.deepEqual(await cachedVideos({ name: 'Old Favourite', city: 'London' }), clips, 'clips never expire')
+    await db.run('INSERT INTO place_videos (key, name, city, videos, found_at) VALUES (?, ?, ?, ?, ?)', 'quiet spot|london', 'Quiet Spot', 'London', JSON.stringify({ videos: [] }), Date.now() - 2 * 86_400_000)
+    assert.deepEqual(await cachedVideos({ name: 'Quiet Spot', city: 'London' }), { videos: [] }, 'nothing found, two days ago: still held')
+    await db.run('INSERT INTO place_videos (key, name, city, videos, found_at) VALUES (?, ?, ?, ?, ?)', 'nowhere|london', 'Nowhere', 'London', JSON.stringify({ videos: [] }), Date.now() - 8 * 86_400_000)
+    assert.equal(await cachedVideos({ name: 'Nowhere', city: 'London' }), undefined, 'a week on, it may be tried again')
   })
 })

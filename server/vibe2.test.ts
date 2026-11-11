@@ -114,12 +114,12 @@ describe('the mood search, end to end', { skip: Boolean(process.env.ANTHROPIC_AP
       }
       searches++
       const places = [
-        { name: 'Jazz Kissa Test', area: 'Shibuya', kind: 'bar', why: 'Vinyl jazz and cocktails, made for the two of you.', order: 'The house highball', arrive: 'Before 8 for the corner seats', move: 'Ask for a request slip', heads: 'Cash only', price: 2, best_at: 'night', minutes: 90, moods: ['jazz', 'cocktails', 'intimate'], source_url: 'https://www.timeout.com/tokyo/bars/jazz-kissa' },
-        { name: 'Invented Place', area: 'Ginza', kind: 'food', why: 'x', order: '', arrive: '', move: '', heads: '', price: 2, best_at: 'evening', minutes: 60, moods: ['romantic'], source_url: 'https://made.up/page' },
-        { name: 'Nowhere Diner', area: 'Ginza', kind: 'food', why: 'x', order: '', arrive: '', move: '', heads: '', price: 2, best_at: 'evening', minutes: 60, moods: ['romantic'], source_url: 'https://www.timeout.com/tokyo/x' },
+        { name: 'Jazz Kissa Test', area: 'Shibuya', kind: 'bar', why: 'Vinyl jazz and cocktails, made for the two of you.', order: 'The house highball', arrive: 'Before 8 for the corner seats', move: 'Ask for a request slip', heads: 'Cash only', price: 2, best_at: 'night', minutes: 90, moods: ['jazz', 'cocktails', 'intimate'], source_url: 'https://www.timeout.com/tokyo/bars/jazz-kissa', instagram: 'https://www.instagram.com/jazzkissatest/' },
+        { name: 'Invented Place', area: 'Ginza', kind: 'food', why: 'x', order: '', arrive: '', move: '', heads: '', price: 2, best_at: 'evening', minutes: 60, moods: ['romantic'], source_url: 'https://made.up/page', instagram: '' },
+        { name: 'Nowhere Diner', area: 'Ginza', kind: 'food', why: 'x', order: '', arrive: '', move: '', heads: '', price: 2, best_at: 'evening', minutes: 60, moods: ['romantic'], source_url: 'https://www.timeout.com/tokyo/x', instagram: 'https://www.instagram.com/madeuphandle/' },
       ]
       const output = [
-        { type: 'web_search_call', id: 'ws', status: 'completed', action: { type: 'search', query: 'jazz bars tokyo', sources: [{ type: 'url', url: 'https://www.timeout.com/tokyo/bars' }] } },
+        { type: 'web_search_call', id: 'ws', status: 'completed', action: { type: 'search', query: 'jazz bars tokyo', sources: [{ type: 'url', url: 'https://www.timeout.com/tokyo/bars' }, { type: 'url', url: 'https://www.instagram.com/jazzkissatest/' }] } },
         { type: 'message', id: 'm', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify({ places }), annotations: [] }] },
       ]
       return new Response(JSON.stringify({ id: 'resp_v', object: 'response', created_at: 0, status: 'completed', model: 'test', output }), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -137,6 +137,7 @@ describe('the mood search, end to end', { skip: Boolean(process.env.ANTHROPIC_AP
     assert.equal(p.tips?.move, 'Ask for a request slip')
     assert.equal(p.hours, 'Tu-Su 18:00-02:00')
     assert.equal(p.source, 'https://www.timeout.com/tokyo/bars/jazz-kissa')
+    assert.equal(p.links?.instagram, 'https://www.instagram.com/jazzkissatest/', 'an account page the search returned')
     assert.ok(p.tags.includes('nightlife'))
     assert.ok(cityById('tokyo')!.places.some(x => x.id === p.id), 'it joined the city')
     assert.ok(!asked.some(q => /Invented/.test(q)), 'an unsourced place isn’t even looked up')

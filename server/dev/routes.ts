@@ -11,10 +11,11 @@ import { chromiumPath } from '../share/browser'
 import { ShareError, readShare } from '../share/read'
 import { listCookieSites, parseCookies, saveCookies } from './cookies'
 import { clip, flush, record, type Level } from './log'
-import { checkOpenAIKey, openaiKeyInfo, setOpenAIKey } from '../openai'
+import { checkOpenAIKey, openaiKeyInfo, openaiLightModel, openaiLightSource, openaiModels, setOpenAIKey, setOpenAILightModel } from '../openai'
+import { SEARCH_CAP, addUp, searchesUsedToday, type Usage } from '../usage'
 import { isDevAdmin } from './owner'
 import { mailConfigured, mailProvider } from '../mail'
-import { OPENAI_KEY, setSetting, settingMeta } from './settings'
+import { LIGHT_MODEL, OPENAI_KEY, setSetting, settingMeta } from './settings'
 import { cleanDetail, from, parseDetail, queryActivity, track } from './activity'
 import { analyse, analystEnabled, digest, listReports, pseudonym, userProfile } from './analyst'
 import { ReviewError, buildFromDevTools, decideReview, hideCatalogPlace, listReviews, recentAdditions } from '../cities/store'
@@ -193,7 +194,33 @@ export function registerDevRoutes(
   // ── settings: the OpenAI key ──
   route('GET', '/dev/settings', async c => {
     needAdmin(c)
-    return { openai: { ...openaiKeyInfo(), saved: await settingMeta(OPENAI_KEY) }, claude: brainEnabled, analystEvery: process.env.WAYFARER_ANALYST_HOURS ?? '6' }
+    return { openai: { ...openaiKeyInfo(), saved: await settingMeta(OPENAI_KEY), light: openaiLightModel(), lightSource: openaiLightSource() }, claude: brainEnabled, analystEvery: process.env.WAYFARER_ANALYST_HOURS ?? 'off', searchCap: SEARCH_CAP() }
+  })
+
+  // the models this key can use, to choose the light one from
+  route('GET', '/dev/settings/models', async c => {
+    needAdmin(c)
+    try { return { models: await openaiModels() } } catch (err) { throw new HttpError(502, `OpenAI didn’t list its models: ${(err as Error).message}`) }
+  })
+
+  // the cheaper model for simple jobs (see openaiLightModel); empty goes back to the default
+  route('PUT', '/dev/settings/light-model', async c => {
+    const user = needAdmin(c)
+    const body = await readBody(c.req, z.object({ model: z.string().trim().max(80).regex(/^[A-Za-z0-9._:-]*$/, 'That isn’t a model id.') }))
+    await setSetting(LIGHT_MODEL, body.model || null, user.email)
+    setOpenAILightModel(body.model || null)
+    track('dev.settings.light_model', { ...from(c.req, user.id), detail: { model: body.model || null } })
+    return { light: openaiLightModel(), lightSource: openaiLightSource() }
+  })
+
+  // ── spend: what the models used, by job and model (server/usage.ts) ──
+  route('GET', '/dev/usage', async c => {
+    needAdmin(c)
+    const days = Math.min(90, Math.max(1, Number(c.url.searchParams.get('days')) || 1))
+    const since = Date.now() - days * 86_400_000
+    const rows = await db.all<{ at: number | string; detail: string | null }>("SELECT at, detail FROM activity_events WHERE kind = 'model.usage' AND at >= ? ORDER BY at DESC LIMIT 200000", since)
+    const usages = rows.flatMap(r => { try { return r.detail ? [JSON.parse(r.detail) as Usage] : [] } catch { return [] } })
+    return { days, ...addUp(usages), searchesToday: searchesUsedToday(), searchCap: SEARCH_CAP() }
   })
 
   // The key is checked with OpenAI before it's kept, and never sent back: only its last four.

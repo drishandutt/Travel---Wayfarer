@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import type OpenAI from 'openai'
-import { FALLBACK, MODEL, brainEnabled, client, effortFor, textOf } from './claude'
-import { OPENAI_MODEL, openai } from './openai'
+import { FALLBACK, MODEL, MODEL_LIGHT, brainEnabled, client, effortFor, textOf } from './claude'
+import { OPENAI_MODEL, openai, openaiLightModel } from './openai'
 
 // The planner's brain, whichever is connected: Claude when ANTHROPIC_API_KEY is set, otherwise
 // OpenAI (its key from the environment or the dev tools). The intake, the planner and the hotel
@@ -25,13 +25,18 @@ const openaiEffort = (kind: Kind): 'low' | 'medium' | 'high' => {
 
 export interface Turn { role: 'user' | 'assistant'; content: string }
 
+// the intake and the hotel pick read and choose; they don't need the biggest model
+const light = (kind: Kind) => kind === 'intake' || kind === 'hotel'
+const claudeModel = (kind: Kind) => (light(kind) ? MODEL_LIGHT : MODEL)
+const openaiModel = (kind: Kind) => (light(kind) ? openaiLightModel() : OPENAI_MODEL)
+
 // One call that answers in JSON matching `schema` (strict: every property required, no extras).
 export async function structured(o: { kind: Kind; name: string; system?: string; messages: Turn[]; schema: Record<string, unknown>; signal?: AbortSignal }): Promise<unknown> {
   const p = provider()
   if (p === 'claude') {
     const response = await client.beta.messages.create({
       ...FALLBACK,
-      model: MODEL,
+      model: claudeModel(o.kind),
       max_tokens: 16000,
       ...(o.system ? { system: o.system } : {}),
       output_config: { effort: effortFor(o.kind), format: { type: 'json_schema', schema: o.schema } },
@@ -42,7 +47,7 @@ export async function structured(o: { kind: Kind; name: string; system?: string;
   }
   if (p === 'openai') {
     const response = await openai!.responses.create({
-      model: OPENAI_MODEL,
+      model: openaiModel(o.kind),
       reasoning: { effort: openaiEffort(o.kind) },
       ...(o.system ? { instructions: o.system } : {}),
       input: o.messages.map(m => ({ role: m.role, content: m.content })),

@@ -2,10 +2,11 @@ import { z } from 'zod'
 import type { City, Essentials, Hotel, LngLat, Place, Transport } from '../../src/types'
 import { CITIES, findCity } from '../../src/data/cities'
 import { currencySymbol } from '../../src/money/currency'
-import { FALLBACK, MODEL, brainEnabled, client, textOf } from '../claude'
-import { OPENAI_MODEL, openai } from '../openai'
+import { FALLBACK, brainEnabled, client, textOf, MODEL_LIGHT } from '../claude'
+import { openai, openaiLightModel } from '../openai'
 import { nominatim } from '../places'
 import { UA, articleKind, dedupe, districtLinks, geoOf, listingsOf, placeholderHotels, shapeCatalog, slug, type Listing, type Money } from './wikivoyage'
+import { asJob } from '../usage'
 
 // Builds a city the app doesn't know yet, from public guides, when a traveller names it:
 //   1. its Wikivoyage article (and its district pages, for a big city) give every sight,
@@ -187,31 +188,33 @@ const EssentialsOut = z.object({
 const essentialsBrief = `You fill in the practical facts a trip dashboard shows for a city, for travellers arriving from abroad. Be accurate and specific to this city; if something is genuinely unknown to you, say "Check locally" rather than guess. Style, like these examples: plugs "Type F · 230 V (EU two-pin)"; tipping "Optional: round up, or 5–10% for great table service"; emergency "All emergencies 112"; transit card "Navegante card: load it for metro, trams, buses and the river ferries"; water "Tap water is safe to drink". Etiquette: 3 short, useful points. Phrases: 4 everyday ones in the local language (hello, thank you, excuse me, cheers) with a plain pronunciation; none if English is the local language. Packing: 2 city-specific extras. Transit: the main network's name ("Metro", "Tube", "MRT") and a typical single fare in US dollars; taxi flag-fall and per-km in US dollars. Aliases: 2-5 lowercase, at least 4 letters each.`
 
 export async function essentialsFor(name: string, country: string, signal?: AbortSignal): Promise<z.infer<typeof EssentialsOut> | undefined> {
-  const ask = `City: ${name}, ${country}`
-  let json: string
-  if (brainEnabled) {
-    const response = await client.beta.messages.create({
-      ...FALLBACK,
-      model: MODEL,
-      max_tokens: 4000,
-      system: essentialsBrief,
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: ESSENTIALS_SCHEMA } },
-      messages: [{ role: 'user', content: ask }],
-    }, { signal: signal ?? AbortSignal.timeout(60_000) })
-    if (response.stop_reason !== 'end_turn') return undefined
-    json = textOf(response)
-  } else if (openai) {
-    const response = await openai.responses.create({
-      model: OPENAI_MODEL,
-      reasoning: { effort: 'low' },
-      instructions: essentialsBrief,
-      input: ask,
-      text: { format: { type: 'json_schema', name: 'essentials', strict: true, schema: ESSENTIALS_SCHEMA as unknown as Record<string, unknown> } },
-    }, { signal: signal ?? AbortSignal.timeout(60_000) })
-    if (response.status !== 'completed') return undefined
-    json = response.output_text
-  } else return undefined
-  return EssentialsOut.parse(JSON.parse(json))
+  return asJob('city', async () => {
+    const ask = `City: ${name}, ${country}`
+    let json: string
+    if (brainEnabled) {
+      const response = await client.beta.messages.create({
+        ...FALLBACK,
+        model: MODEL_LIGHT,
+        max_tokens: 4000,
+        system: essentialsBrief,
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: ESSENTIALS_SCHEMA } },
+        messages: [{ role: 'user', content: ask }],
+      }, { signal: signal ?? AbortSignal.timeout(60_000) })
+      if (response.stop_reason !== 'end_turn') return undefined
+      json = textOf(response)
+    } else if (openai) {
+      const response = await openai.responses.create({
+        model: openaiLightModel(),
+        reasoning: { effort: 'low' },
+        instructions: essentialsBrief,
+        input: ask,
+        text: { format: { type: 'json_schema', name: 'essentials', strict: true, schema: ESSENTIALS_SCHEMA as unknown as Record<string, unknown> } },
+      }, { signal: signal ?? AbortSignal.timeout(60_000) })
+      if (response.status !== 'completed') return undefined
+      json = response.output_text
+    } else return undefined
+    return EssentialsOut.parse(JSON.parse(json))
+  })
 }
 
 // ── building ─────────────────────────────────────────────────────────────────
