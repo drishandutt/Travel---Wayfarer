@@ -162,19 +162,22 @@ export function applyStory(b: TripBrief): TripBrief {
   const s = b.story
   if (!s) return b
   const out: TripBrief = { ...b, vibes: [...b.vibes] }
-  const avoid = s.avoid ?? []
-  const feel = s.feel ?? []
+  // a model writes these in its own words ("touristy vibes", "not touristy" as a feel): read them loosely
+  const feel = (s.feel ?? []).map(f => f.toLowerCase())
+  const avoid = [...(s.avoid ?? []), ...feel.filter(f => /^(not|no|never)\b/.test(f))].map(a => a.toLowerCase())
+  const avoids = (re: RegExp) => avoid.some(a => re.test(a))
+  const feels = (re: RegExp) => feel.some(f => !/^(not|no|never)\b/.test(f) && re.test(f))
   const vibe = (v: Vibe) => { if (!out.vibes.includes(v)) out.vibes.push(v) }
-  if (avoid.includes('touristy') || feel.includes('local')) out.familiarity ??= 0.75
-  if (avoid.includes('crowds')) out.crowds ??= 0.75
-  if (avoid.includes('early starts')) out.rhythm ??= 0.75
-  if (avoid.includes('long walks')) out.walking ??= 0.25
-  if (avoid.includes('a rushed pace')) out.paceLevel ??= 0.25
-  if (feel.includes('romantic') || /honeymoon|anniversary|date|proposal|babymoon/.test(s.occasion ?? '')) vibe('romantic')
-  if (feel.includes('relaxed')) vibe('relaxed')
-  if (feel.includes('adventurous')) { vibe('adventure'); out.energy ??= 0.75 }
-  if (feel.includes('artsy')) vibe('art')
-  if ((s.people ?? []).some(p => p.who === 'kids')) out.kids ??= 0.75
+  if (avoids(/touris/) || feels(/\blocal|hidden|off the beaten/)) out.familiarity ??= 0.75
+  if (avoids(/crowd|queue/)) out.crowds ??= 0.75
+  if (avoids(/early/)) out.rhythm ??= 0.75
+  if (avoids(/walk|hik/)) out.walking ??= 0.25
+  if (avoids(/rush|packed|hectic/)) out.paceLevel ??= 0.25
+  if (feels(/romanc|romantic/) || /honeymoon|anniversary|date|proposal|babymoon|romantic/i.test(s.occasion ?? '')) vibe('romantic')
+  if (feels(/relax|chill|slow|lazy/)) vibe('relaxed')
+  if (feels(/adventur|thrill/)) { vibe('adventure'); out.energy ??= 0.75 }
+  if (feels(/\b(arts?|artsy|artistic|galler(y|ies))\b/)) vibe('art')
+  if ((s.people ?? []).some(p => /kid|child|son|daughter|toddler|baby/i.test(p.who))) out.kids ??= 0.75
   if (s.moments?.some(m => m.when === 'night')) out.rhythm ??= 0.6
   return out
 }

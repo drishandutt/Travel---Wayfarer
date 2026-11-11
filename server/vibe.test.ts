@@ -227,3 +227,20 @@ describe('what to avoid', () => {
     assert.deepEqual(c.story?.avoid, ['clubs', 'museums'])
   })
 })
+
+describe('reading a model’s own words', () => {
+  it('reads "touristy vibes", and "not touristy" given as a feel, as things to avoid', () => {
+    const b = applyStory({ vibes: [], story: { feel: ['romantic', 'fun', 'not touristy'], avoid: ['touristy vibes'], people: [{ who: 'our two children' }] } })
+    assert.equal(b.familiarity, 0.75)
+    assert.equal(b.kids, 0.75)
+    assert.ok(b.vibes.includes('romantic'))
+    assert.ok(!b.vibes.includes('art'), '"not touristy" isn’t a feel')
+  })
+})
+
+describe('the feel', () => {
+  it('reads art only as art, not inside other words', () => {
+    assert.ok(!applyStory({ vibes: [], story: { feel: ['party', 'smart casual'] } }).vibes.includes('art'))
+    assert.ok(applyStory({ vibes: [], story: { feel: ['artsy'] } }).vibes.includes('art'))
+  })
+})
