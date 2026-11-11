@@ -6,6 +6,7 @@ import type { Theme } from '../state/theme'
 import type { GroupSummary } from '../money/types'
 import { groupCopyOf } from '../state/persistence'
 import { MoonIcon, PhotoIcon, RestartIcon, SunIcon } from './Icons'
+import { Avatar } from './money/parts'
 
 const STEPS: { id: Phase; label: string }[] = [
   { id: 'intake', label: 'Brief' },
@@ -39,6 +40,7 @@ interface Props {
   email: string | null
   onSignOut: () => void
   onProfile?: () => void
+  me?: { id: string; name: string } | null
 }
 
 function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, activeGroup, onOpenGroup, onNewTrip, email, onSignOut, onProfile, onDevTools, devReviews = 0 }: { trips: SavedTrip[]; current?: string } & Pick<Props, 'onOpen' | 'onDelete' | 'onDeleteGroup' | 'groups' | 'activeGroup' | 'onOpenGroup' | 'onNewTrip' | 'email' | 'onSignOut' | 'onProfile' | 'onDevTools' | 'devReviews'>) {
@@ -97,7 +99,7 @@ function TripsMenu({ trips, current, onOpen, onDelete, onDeleteGroup, groups, ac
   )
 }
 
-export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut, onProfile }: Props) {
+export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, theme, onToggleTheme, onMoney, onPhotos, groups, activeGroup, onOpenGroup, onNewTrip, onStartOver, onDevTools, devReviews, email, onSignOut, onProfile, me }: Props) {
   const b = state.brief
   const city = cityById(b.destination)
   const at = STEPS.findIndex(s => s.id === state.phase)
@@ -127,6 +129,7 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, t
         <button className="theme-btn" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
           {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
         </button>
+        {onProfile && me && <button className="profile-btn" onClick={onProfile} aria-label="Profile" title="Profile"><Avatar id={me.id} name={me.name} size={30} /></button>}
       </div>
       {/* phones: the full stepper doesn't fit, so show where you are in one line */}
       <span className="step-mini"><i>{at + 1}/{STEPS.length}</i>{STEPS[at]?.label}</span>

@@ -923,7 +923,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       <div className="vignette" />
 
       <TopBar state={state} brain={brain} trips={trips}  onOpen={openTrip} onDelete={removeTrip} onDeleteGroup={account ? deleteShared : undefined} theme={theme} onToggleTheme={toggleTheme} onMoney={() => setMoneyOpen({})} onPhotos={() => setVaultOpen({})}
-        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} devReviews={devReviews} email={account?.email ?? null} onSignOut={signOut} onProfile={account ? () => setProfileOpen(true) : undefined} />
+        groups={groups ?? []} activeGroup={activeGroup} onOpenGroup={openShared} onNewTrip={newTrip} onStartOver={canStartOver ? startOver : undefined} onDevTools={devAdmin ? () => setDevOpen(true) : undefined} devReviews={devReviews} email={account?.email ?? null} onSignOut={signOut} onProfile={account ? () => setProfileOpen(true) : undefined} me={account} />
 
       {newGroup && (
         <div className="trip-nudge" role="status">

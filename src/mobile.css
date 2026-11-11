@@ -214,6 +214,7 @@
   .trips-btn, .money-btn, .step-mini, .sheet-tabs button, .day-tabs button, .dash-actions button, .dash-back,
   .day-chip, .danger, .m-tabs button, .m-small, .chat-to button, .v-filter-toggle { min-height: 44px; }
   .theme-btn { min-width: 44px; min-height: 44px; }
+  .profile-btn { min-width: 44px; min-height: 44px; }
   .stop-tools button { width: 40px; height: 40px; }
   .v-nav { width: 44px; height: 44px; }
   .place-card .close { width: 44px; height: 44px; }
