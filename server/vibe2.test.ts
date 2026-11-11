@@ -9,7 +9,7 @@ import { reducer, initialState } from '../src/state/tripStore'
 import { setOpenAIKey } from './openai'
 import { findByVibe, focusesOf, fromSearch, vibeStatus } from './cities/vibeSearch'
 import { kindFit, laneDeck, laneOf } from '../src/planner/core'
-import { applyStory } from '../src/planner/story'
+import { applyStory, isSpecial } from '../src/planner/story'
 import { planWithModel } from './planAgent'
 
 describe('calendar time', () => {
@@ -206,7 +206,7 @@ describe('a trip about nights out', () => {
   })
 
   it('searches for nights out on their own, beside food and days', () => {
-    assert.deepEqual(focusesOf(said).map(f => f.key), ['nights', 'eats', 'days'])
+    assert.deepEqual(focusesOf(said).map(f => f.key), ['wow', 'nights', 'eats', 'days'], 'a surprise date night gets its showstoppers too')
     assert.deepEqual(focusesOf({ vibes: ['history'], rhythm: 0.25 }).map(f => f.key), ['eats', 'days'])
   })
 
@@ -246,5 +246,43 @@ describe('the mood search as a job', { skip: Boolean(process.env.ANTHROPIC_API_K
   it('says when the limits stop a new search', async () => {
     const out = await vibeStatus('lisbon', { destination: 'lisbon', vibes: [], story: { feel: ['brand new mood'] } }, null, () => false)
     assert.equal(out.status, 'limited')
+  })
+})
+
+describe('a trip meant to be remembered', () => {
+  const date: TripBrief = { destination: 'tokyo', days: 2, vibes: ['romantic'], story: { occasion: 'surprise date night', feel: ['crazy', 'romantic'] } }
+
+  it('knows a special occasion, unless the budget is tight or they said no to fancy', () => {
+    assert.equal(isSpecial(date), true)
+    assert.equal(isSpecial({ ...date, budgetTier: 'shoestring' }), false)
+    assert.equal(isSpecial({ story: { occasion: 'anniversary', avoid: ['expensive places'] } }), false)
+    assert.equal(isSpecial({ story: { feel: ['relaxed'] } }), false)
+    assert.equal(applyStory(date).splurgeOn, 0.8)
+  })
+
+  it('puts a memorable dinner above a canteen, and never calls a food court one to remember', () => {
+    const city = tripCity(date)!
+    const base = { ...city.places.find(p => p.kind === 'food')!, keywords: undefined, moods: undefined }
+    const rooftop = { ...base, id: 'x-roof', price: 3 as const, moods: ['rooftop', 'skyline', 'cocktails'] }
+    const court = { ...base, id: 'x-court', name: 'Mall Food Court', price: 3 as const, blurb: 'A food court.' }
+    const canteen = { ...base, id: 'x-canteen', price: 1 as const, blurb: 'Simple thalis.' }
+    const b = applyStory(date)
+    assert.ok(scorePlace(rooftop, b).score > scorePlace(canteen, b).score)
+    assert.ok(scorePlace(rooftop, b).score > scorePlace(court, b).score)
+    assert.equal(scorePlace(rooftop, b).why, 'a dinner to remember')
+    assert.notEqual(scorePlace(court, b).why, 'a dinner to remember')
+  })
+
+  it('searches for the showstoppers first', () => {
+    assert.equal(focusesOf(applyStory(date))[0].key, 'wow')
+    assert.ok(!focusesOf({ vibes: ['history'] }).some(f => f.key === 'wow'))
+  })
+
+  it('deals the places found for this trip ahead of the guidebook', () => {
+    const city = tripCity(date)!
+    const last = [...city.places].filter(p => laneOf(p) === 'food').pop()!
+    const deck = laneDeck(city.places, { ...applyStory(date), curated: [last.id] })
+    const foodRun = deck.filter(c => laneOf(city.places.find(p => p.id === c.id)!) === 'food')
+    assert.equal(foodRun[0].id, last.id)
   })
 })

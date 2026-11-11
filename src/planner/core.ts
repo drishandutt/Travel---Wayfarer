@@ -2,7 +2,7 @@ import type { DayPlan, Hotel, HotelScore, Leg, LngLat, Place, Stop, TripBrief, V
 import { estimateTravel, haversineKm, kmeans, trafficOf } from './geo'
 import { resolveBudgetTier } from './intake'
 import { audiencesOf, profileFit, profileOf } from './profile'
-import { arrivalFloor, moodFit } from './story'
+import { arrivalFloor, isSpecial, moodFit } from './story'
 
 // Deterministic planning primitives shared by the offline MockPlanner (browser)
 // and the Claude planning agent (server). Claude decides *what* and *in which
@@ -90,9 +90,13 @@ export function scorePlace(p: Place, brief: TripBrief): { score: number; why: st
   score += kind
   // searched for this very mood by someone who knows the city (server/cities/vibeSearch.ts)
   if (p.found?.via === 'vibe' && brief.story) score += 1.5
+  // a trip meant to be remembered: the memorable over the everyday, for eating, drinking and doing
+  const special = isSpecial(brief) ? specialFit(p) : 0
+  score += special
   const gem = local >= 0.6 && p.rank !== undefined && p.rank <= 0.4
   const icon = local <= 0.4 && p.rank !== undefined && p.rank >= 0.8
-  const why = mood.match ? `fits your ${mood.match}`
+  const why = special >= 2 && memorable(p) ? (p.kind === 'food' ? 'a dinner to remember' : p.kind === 'bar' ? 'a night to remember' : 'one to remember')
+    : mood.match ? `fits your ${mood.match}`
     : loved.length ? `your kind of thing: ${loved.join(' + ')}`
     : tuned.why ? tuned.why
     : fit.why ? fit.why
@@ -119,6 +123,17 @@ const KIND_FIT: Partial<Record<Vibe, (p: Place) => number>> = {
   adventure: p => (p.kind === 'experience' ? 2.5 : 0),
   relaxed: p => (p.kind === 'cafe' || p.kind === 'park' ? 1 : 0),
 }
+// What a special trip wants from a place: the splurge, the view, the thing to do, not the canteen.
+export const memorable = (p: Place) => /unforgettable|rooftop|view|sunset|sea[- ]?(facing|view|side|front)|by the sea|waterfront|private|chef|tasting|speakeasy|live (music|jazz|band)|candle|romantic|luxur|iconic|skyline|terrace|yacht|boat|cruise/.test([...(p.moods ?? []), ...(p.keywords ?? []), p.blurb].join(' ').toLowerCase())
+const everyday = (p: Place) => /food court|canteen|\bmess\b|lunch home|fast food|\bchain\b|mall/.test(`${p.name} ${p.blurb}`.toLowerCase())
+function specialFit(p: Place): number {
+  const wow = memorable(p)
+  if (p.kind === 'food' || p.kind === 'bar') return (p.price >= 3 ? 1.5 : p.price === 2 ? 0.5 : -2) + (wow ? 2 : 0) - (everyday(p) ? 3 : 0)
+  if (p.kind === 'cafe') return p.price <= 1 && !wow ? -1.5 : 0
+  if (p.kind === 'experience' || p.kind === 'viewpoint') return 1.5 + (wow ? 1 : 0)
+  return 0
+}
+
 export function kindFit(p: Place, brief: Pick<TripBrief, 'vibes' | 'kids'>): number {
   if (!brief.vibes.length) return 0
   // little ones along: the kids slider decides about bars and late nights, not the vibe
@@ -464,9 +479,13 @@ export const leadsWithFood = (brief: Pick<TripBrief, 'vibes' | 'foodie'>) =>
 // The swipe deck in two runs, each best first: the one the trip is about leads, and gets the
 // bigger share. `size` caps a big city's runs; a small one deals everything.
 export function laneDeck(places: Place[], brief: TripBrief, size?: { places: number; food: number }): DeckCard[] {
+  // found for this trip's own mood: always dealt, ahead of the guidebook's places
+  const mine = new Set(brief.curated ?? [])
   const run = (lane: Lane, n?: number) => {
     const all = places.filter(p => laneOf(p) === lane)
-    return buildDeck(n ? shortlist(all, brief, n) : all, brief)
+    const picked = all.filter(p => mine.has(p.id))
+    const rest = n ? shortlist(all.filter(p => !mine.has(p.id)), brief, Math.max(0, n - picked.length)) : all.filter(p => !mine.has(p.id))
+    return [...buildDeck(picked, brief), ...buildDeck(rest, brief)]
   }
   if (!leadsWithFood(brief)) return [...run('places', size?.places), ...run('food', size?.food)]
   const bigger = size ? Math.max(size.places, size.food) : undefined

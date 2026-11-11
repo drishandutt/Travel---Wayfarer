@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { City, Place, PlaceKind, TripBrief, Vibe } from '../../src/types'
 import { cityById } from '../../src/data/cities'
 import { resolveBudgetTier } from '../../src/planner/intake'
-import { hasMood, moodOf, storyLines } from '../../src/planner/story'
+import { hasMood, isSpecial, moodOf, storyLines } from '../../src/planner/story'
 
 export { hasMood, moodOf }
 import { FALLBACK, MODEL, brainEnabled, client, textOf } from '../claude'
@@ -66,12 +66,16 @@ type Candidate = z.infer<typeof Found>['places'][number]
 // What the trip needs searching for, each as its own focused search: one broad search spreads
 // itself thin (a date-night trip got breakfasts and parks), so a trip about nights out gets a
 // search for nights out, and so on. They run side by side.
-export interface Focus { key: 'nights' | 'eats' | 'days'; want: number; ask: string }
+export interface Focus { key: 'wow' | 'nights' | 'eats' | 'days'; want: number; ask: string }
 export function focusesOf(brief: TripBrief): Focus[] {
   const nights = brief.vibes.includes('nightlife') || (brief.rhythm ?? 0.5) >= 0.6 || Boolean(brief.story?.moments?.some(m => m.when === 'night' || m.when === 'evening'))
   const out: Focus[] = []
+  // a trip meant to be remembered gets a search for its showstoppers first
+  if (isSpecial(brief)) out.push({ key: 'wow', want: 10, ask: 'The showstoppers: the most unforgettable things two people could do here for this occasion. Think a private sunset boat or yacht, a rooftop bar on a high floor with the whole city below, a chef’s table or tasting menu, a hidden speakeasy, a once-in-a-lifetime experience, a show or a setting that makes the night. The kind of places people talk about for years. Premium is fine; ordinary is not.' })
   if (nights) out.push({ key: 'nights', want: 14, ask: 'Their nights out: cocktail bars, speakeasies, rooftop bars and lounges, wine bars, live music and jazz, places to dance, late-night food, and night experiences (a comedy show, a gig, a night walk or food tour). Cover a range from intimate to lively.' })
-  out.push({ key: 'eats', want: nights ? 8 : 12, ask: 'Where to eat: lunch and dinner places with character, a special-occasion dinner if it fits, cafés, and the street food or local dishes worth crossing a road for.' })
+  out.push({ key: 'eats', want: nights ? 8 : 12, ask: isSpecial(brief)
+    ? 'Where to eat for this occasion: dinners with a setting (by the sea, on a roof, candlelit, a chef’s counter), lunches with character, and one or two local dishes worth crossing town for. Not everyday canteens.'
+    : 'Where to eat: lunch and dinner places with character, cafés, and the street food or local dishes worth crossing a road for.' })
   out.push({ key: 'days', want: nights ? 8 : 12, ask: 'Their days: at least three experiences to do together (a class, a workshop, a boat, a show, a spa, a walk with a local), a view at sunset, a neighbourhood to wander, and two or three surprising ideas they would never think of.' })
   return out
 }
@@ -89,8 +93,8 @@ ${storyLines(brief).join('\n')}
 This search is for: ${focus.ask}
 
 How to choose:
-- Places people who live there love, not the standard tourist list (skip the famous landmarks everyone already knows).
-- Match the trip's feel and what they said about the people; leave out anything they said to avoid.
+- Make it memorable. "Not touristy" means not the coach-tour checklist of monuments; it does not mean ordinary, cheap or a neighbourhood canteen. Pick places with character, a setting, a story or a view, the ones a well-connected friend would be proud to recommend.
+${isSpecial(brief) ? '- This trip is for a special occasion: lean to the special and the premium, unless the budget says otherwise. No everyday breakfast spots, chains or plain parks.\n' : ''}- Match the trip's feel and what they said about the people; leave out anything they said to avoid.
 - ${stay ? `Mostly within easy reach of ${stay}, so evenings aren't spent in traffic.` : 'Spread over the neighbourhoods that suit the trip.'}
 - Only places that are open and operating now: check with a search. Never include anything you can't find a page for.
 

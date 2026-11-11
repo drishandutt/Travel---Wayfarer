@@ -547,9 +547,13 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         else setTyping(false)
         return
       } catch (e) {
-        // the model can't answer (no credits, too busy, offline): carry on without it, quietly,
-        // through the offline reading below
+        // the model can't answer (no credits, too busy, offline): carry on through the offline
+        // reading below, and say once, plainly, that suggestions are simpler for now
         console.warn('[intake] the model intake failed, answering offline:', (e as Error).message)
+        if (!saidBasic.current) {
+          saidBasic.current = true
+          dispatch({ type: 'chat', role: 'ai', text: 'Heads up: my planning brain is offline for a moment, so I’m working from the city’s guidebook and my suggestions will be simpler than usual. Everything you tell me is kept for when it’s back.' })
+        }
       }
     }
     const heard = converse(text, s.brief)
@@ -589,6 +593,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   // Places that fit what they told us, searched for in the background while they talk, and at the
   // top of the deck once found. One search per city and mood; the deck waits for one under way.
   const vibeKey = useRef('')
+  const saidBasic = useRef(false)
   const vibeJob = useRef<Promise<void> | null>(null)
   const findLocal = (b: TripBrief) => {
     if (!plansRemotely(brain) || !b.destination || !hasMood(b)) return
@@ -600,6 +605,8 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       if (!out.places.length) return
       addCatalogPlaces(city, out.places)
       dispatch({ type: 'city-ready', id: city })
+      // they lead the deck for this trip
+      if (latest.current.brief.destination === city) dispatch({ type: 'brief', brief: { ...latest.current.brief, curated: out.places.map(p => p.id) } })
       if (latest.current.brief.destination !== city || latest.current.phase !== 'intake' || out.cached) return
       const names = out.places.slice(0, 3).map(p => p.name)
       dispatch({ type: 'chat', role: 'ai', text: `I found ${out.places.length} places locals love that fit what you told me, like ${names.slice(0, -1).join(', ')}${names.length > 1 ? ' and ' : ''}${names[names.length - 1]}. They’ll be at the top of your deck.` })

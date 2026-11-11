@@ -36,6 +36,7 @@ export interface TripBrief {
   customPlaces?: Place[]        // places the travellers found themselves and added from chat
   story?: TripStory             // what they told us beyond the basics (src/planner/story.ts)
   why?: Record<string, string>  // place id → why it's in their plan, from the planner
+  curated?: string[]            // places found on the web for this trip's own mood: they lead the deck
 }
 
 // The trip as they told it: why they're going, who with, where they're staying, what they want

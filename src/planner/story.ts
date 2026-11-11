@@ -182,6 +182,8 @@ export function applyStory(b: TripBrief): TripBrief {
   if (feels(/adventur|thrill/)) { vibe('adventure'); out.energy ??= 0.75 }
   if (feels(/\b(arts?|artsy|artistic|galler(y|ies))\b/)) vibe('art')
   if ((s.people ?? []).some(p => /kid|child|son|daughter|toddler|baby/i.test(p.who))) out.kids ??= 0.75
+  // a trip meant to be remembered spends on the experiences rather than on the room
+  if (isSpecial(out) && !out.budgetAmount) out.splurgeOn ??= 0.8
   return out
 }
 
@@ -289,3 +291,15 @@ export function moodOf(brief: TripBrief): string {
 
 // Worth searching for places by mood: there's something to search for beyond "a city".
 export const hasMood = (brief: TripBrief) => Boolean(brief.story?.feel?.length || brief.story?.occasion || brief.story?.moments?.length || brief.story?.avoid?.length || brief.story?.people?.some(p => p.notes) || brief.tastes?.length)
+
+// A trip that's meant to be remembered: a date night, an anniversary, a honeymoon, a proposal, a
+// birthday, a surprise, or anything they called crazy, unforgettable or special. It leans to the
+// places people talk about afterwards (a high rooftop, a private boat, a chef's table), and to
+// spending on them, unless they set a budget or said cheap.
+export function isSpecial(brief: Pick<TripBrief, 'story' | 'budgetTier'>): boolean {
+  if (brief.budgetTier === 'shoestring') return false
+  const s = brief.story ?? {}
+  const said = [s.occasion ?? '', ...(s.moments ?? []).map(m => m.what), ...(s.feel ?? []).filter(f => !/^(not|no|never)\b/i.test(f))].join(' ').toLowerCase()
+  const cheap = (s.avoid ?? []).some(a => /expensive|fancy|posh|pricey|splurg/i.test(a))
+  return !cheap && /\b(honeymoon|anniversary|propos|birthday|bday|babymoon|date night|surprise|celebrat|engage|wedding|unforgettable|crazy|wild|epic|special|luxur|once in a lifetime|bucket list)/.test(said)
+}
