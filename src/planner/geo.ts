@@ -10,13 +10,33 @@ export function haversineKm(a: LngLat, b: LngLat): number {
   return 2 * R * Math.asin(Math.sqrt(h))
 }
 
+// How much slower getting around is at rush hour, by city: roads and trains that jam badly at
+// peak times. Until there's a routing API, a rough factor, with a middling one for the rest.
+const RUSH: Record<string, number> = {
+  mumbai: 1.8, delhi: 1.7, 'new-delhi': 1.7, bangalore: 1.9, bengaluru: 1.9, kolkata: 1.6, chennai: 1.6, hyderabad: 1.6, pune: 1.6,
+  jakarta: 1.9, manila: 1.9, bangkok: 1.7, 'ho-chi-minh-city': 1.6, dhaka: 2, karachi: 1.7, lagos: 1.9, nairobi: 1.7, cairo: 1.7,
+  istanbul: 1.6, 'mexico-city': 1.6, 'sao-paulo': 1.6, bogota: 1.6, lima: 1.6, 'los-angeles': 1.5, dubai: 1.3, rome: 1.3, paris: 1.25,
+  'new-york-city': 1.3, london: 1.2, lisbon: 1.2, tokyo: 1.05, seoul: 1.15, singapore: 1.1, 'hong-kong': 1.1,
+}
+export const trafficOf = (cityId?: string): number => (cityId ? RUSH[cityId] ?? 1.3 : 1.3)
+// mornings 8–10:30 and evenings 17:00–20:30, with the shoulders in between
+function rushAt(at: number): number {
+  const h = (at / 60) % 24
+  if ((h >= 8 && h < 10.5) || (h >= 17 && h < 20.5)) return 1
+  if ((h >= 7.5 && h < 11) || (h >= 16.5 && h < 21)) return 0.5
+  return 0
+}
+
 // Heuristic travel model. Swap for a routing API (OSRM / Mapbox / Google) later;
 // callers only depend on { mode, minutes, km }.
 // `walkKm`: how far they'll walk before taking transit (the walking slider; 1.4 km by default).
-export function estimateTravel(a: LngLat, b: LngLat, walkKm = 1.4): { mode: TravelMode; minutes: number; km: number } {
+// `when`: leaving at `at` (minutes after midnight) in a city with that rush-hour `traffic`.
+export function estimateTravel(a: LngLat, b: LngLat, walkKm = 1.4, when?: { at: number; traffic: number }): { mode: TravelMode; minutes: number; km: number } {
   const km = haversineKm(a, b) * 1.3 // street-network detour factor
   if (km <= walkKm) return { mode: 'walk', minutes: Math.max(4, Math.round((km / 4.6) * 60)), km }
-  return { mode: 'transit', minutes: Math.round(8 + (km / 22) * 60), km }
+  const ride = (km / 22) * 60
+  const slow = when ? 1 + (when.traffic - 1) * rushAt(when.at) : 1
+  return { mode: 'transit', minutes: Math.round(8 + ride * slow), km }
 }
 
 // Gently curved line between two points: avoids pretending we know the street

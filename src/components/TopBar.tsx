@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Phase, SavedTrip, TripState } from '../state/tripStore'
 import { cityById } from '../data/cities'
-import type { BrainStatus } from '../planner/brain'
+import { modelLabel, plansRemotely, type BrainStatus } from '../planner/brain'
 import type { GroupSummary } from '../money/types'
 import { groupCopyOf } from '../state/persistence'
 import { RestartIcon, ToolsIcon } from './Icons'
@@ -151,9 +151,9 @@ export function TopBar({ state, brain, trips, onOpen, onDelete, onDeleteGroup, o
         <span className="mark">◐</span>
         <span>Wayfarer</span>
         {brain && (
-          <span className={`brain ${brain.claude ? 'on' : ''}`} role="img"
-            aria-label={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'Offline planner'}
-            title={brain.claude ? `Planning with ${brain.model?.replace('claude-', 'Claude ').replace(/-(\d)-(\d)$/, ' $1.$2')}` : 'No ANTHROPIC_API_KEY on the server: using the offline planner'} />
+          <span className={`brain ${plansRemotely(brain) ? 'on' : ''}`} role="img"
+            aria-label={plansRemotely(brain) ? `Planning with ${modelLabel(brain.model)}` : 'Offline planner'}
+            title={plansRemotely(brain) ? `Planning with ${modelLabel(brain.model)}` : 'No model connected on the server: using the offline planner'} />
         )}
         <TripsMenu trips={trips} current={state.tripId} onOpen={onOpen} onDelete={onDelete} onDeleteGroup={onDeleteGroup} groups={groups} activeGroup={activeGroup} onOpenGroup={onOpenGroup} onNewTrip={onNewTrip} email={email} onSignOut={onSignOut} onProfile={onProfile} onDevTools={onDevTools} devReviews={devReviews} />
         <ToolsMenu onMoney={onMoney} onPhotos={onPhotos} onDocs={onDocs} alertsUnread={alertsUnread} />

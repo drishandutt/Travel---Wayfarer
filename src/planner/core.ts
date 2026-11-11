@@ -1,7 +1,8 @@
 import type { DayPlan, Hotel, HotelScore, Leg, LngLat, Place, Stop, TripBrief, Vibe } from '../types'
-import { estimateTravel, haversineKm, kmeans } from './geo'
+import { estimateTravel, haversineKm, kmeans, trafficOf } from './geo'
 import { resolveBudgetTier } from './intake'
 import { audiencesOf, profileFit, profileOf } from './profile'
+import { arrivalFloor } from './story'
 
 // Deterministic planning primitives shared by the offline MockPlanner (browser)
 // and the Claude planning agent (server). Claude decides *what* and *in which
@@ -270,12 +271,14 @@ export function buildDay(day: number, places: Place[], brief: TripBrief, opts: {
   const color = DAY_COLORS[(day - 1) % DAY_COLORS.length]
   const stops: Stop[] = []
   const legs: Leg[] = []
-  let clock = opts.start ?? pace.start
+  // nothing before they've arrived and dropped their bags
+  let clock = Math.max(opts.start ?? pace.start, arrivalFloor(brief, day) ?? 0)
+  const traffic = trafficOf(brief.destination)
   ;(opts.keepOrder ? places : orderDay(places)).forEach((place, i) => {
     let legIn: Leg | undefined
     if (i > 0) {
       const prev = stops[i - 1]
-      const t = estimateTravel(prev.place.coord, place.coord, pace.walkKm)
+      const t = estimateTravel(prev.place.coord, place.coord, pace.walkKm, { at: prev.depart + prev.bufferAfter, traffic })
       legIn = { id: `d${day}-${i}`, day, from: prev.place.coord, to: place.coord, kind: 'stop', ...t }
       legs.push(legIn)
       clock = prev.depart + prev.bufferAfter + t.minutes
@@ -290,6 +293,13 @@ export function buildDay(day: number, places: Place[], brief: TripBrief, opts: {
   const first = stops[0]?.place.name.split(/[ &(]/)[0]
   const last = stops[stops.length - 1]?.place.name.split(/[ &(]/)[0]
   return { day, color, stops, legs, title: opts.title ?? (first === last ? first : `${first} → ${last}`) }
+}
+
+// Where they told us they're staying, once it's on the map: their base, chosen already.
+export function stayHotel(brief: TripBrief): Hotel | undefined {
+  const stay = brief.story?.stay
+  if (!stay?.coord) return undefined
+  return { id: 'my-stay', name: stay.name, coord: stay.coord, nightly: 0, tier: resolveBudgetTier(brief), tags: [], blurb: 'Where you’re staying.' }
 }
 
 export function hotelLegs(hotel: Hotel, days: DayPlan[]): DayPlan[] {

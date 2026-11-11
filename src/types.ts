@@ -34,6 +34,21 @@ export interface TripBrief {
   open?: string[]               // questions answered "you choose" (or not caught): don't ask again
   moneyGroupId?: string         // the shared-expenses group this trip is connected to
   customPlaces?: Place[]        // places the travellers found themselves and added from chat
+  story?: TripStory             // what they told us beyond the basics (src/planner/story.ts)
+}
+
+// The trip as they told it: why they're going, who with, where they're staying, what they want
+// to happen and what they don't. The intake fills it, the read-back card shows it, and the
+// planners plan around it.
+export interface TripStory {
+  occasion?: string             // "surprise date night", "honeymoon", "mum's 60th"
+  people?: { who: string; notes?: string }[]   // besides the one planning: "girlfriend", "kids 4 and 7"
+  stay?: { name: string; coord?: LngLat }      // where they're staying, placed on the map once found
+  arrive?: number               // minutes after midnight they're free on day 1 ("we land at 1 pm" → 13:00)
+  leave?: number                // minutes after midnight they need to be done on the last day
+  moments?: { what: string; day?: number; when?: 'morning' | 'afternoon' | 'evening' | 'night' }[]
+  feel?: string[]               // the mood in their words: "romantic", "fun", "lazy"
+  avoid?: string[]              // what not to plan: "touristy", "clubs", "long drives"
 }
 
 export type PlaceKind = 'sight' | 'food' | 'cafe' | 'bar' | 'park' | 'museum' | 'market' | 'viewpoint'

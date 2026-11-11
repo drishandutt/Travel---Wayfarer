@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatMessage, TripState } from '../state/tripStore'
 import { ChevronIcon, SendIcon } from './Icons'
 import { QUICK_REPLIES, nextField } from '../planner/intake'
+import { readBack } from '../planner/story'
 import { SLIDERS, sliderPatch, sliderValue, stepOf, valueOf, type BriefSlider } from '../planner/sliders'
 import { cityById } from '../data/cities'
 import type { TripBrief } from '../types'
@@ -42,6 +43,7 @@ interface Props {
   onInvite?: () => void
   onBrief?: (patch: Partial<TripBrief>) => void   // a slider moved, while setting up
   onRetune?: (patch: Partial<TripBrief>) => void  // sliders moved over a plan: plan again with them
+  modelIntake?: boolean       // a model runs the conversation: its own chips, not the fixed questions'
 }
 
 // Message ids start with the time they were made, which is enough to slot the group's own
@@ -65,7 +67,7 @@ function threadOf(messages: ChatMessage[], notes: TripNote[]): (ChatMessage | Tr
   return out
 }
 
-export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, onCollapse, onFocusInput, group, onNote, invitePrompt, confirm, onInvite, onBrief, onRetune }: Props) {
+export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, onCollapse, onFocusInput, group, onNote, invitePrompt, confirm, onInvite, onBrief, onRetune, modelIntake }: Props) {
   const [tuneOpen, setTuneOpen] = useState(false)
   const [text, setText] = useState('')
   const [toGroup, setToGroup] = useState(false)
@@ -98,7 +100,16 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
   const locked = state.phase !== 'intake'
   // tap-to-answer chips for the question on screen (not over the opening examples)
   const field = !member && !locked && !typing && state.messages.length > 1 ? nextField(state.brief) : undefined
-  const replies = field && QUICK_REPLIES[field]
+  // a model asks its own question, with its own chips; offline, the fixed questions have theirs
+  const last = state.messages[state.messages.length - 1]
+  const asked = !member && !locked && !typing && last?.role === 'ai' ? last.chips : undefined
+  const replies = modelIntake ? asked : asked?.length ? asked : field && QUICK_REPLIES[field]
+  // what we heard so far, to check and correct, once there's more than a city to show
+  const heard = !member && !locked && state.messages.length > 1 ? readBack(state.brief, cityById(state.brief.destination)?.name) : []
+  const correct = (label: string) => {
+    setText(`Not quite: ${label} should be `)
+    requestAnimationFrame(() => { const el = box.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } })
+  }
   // once the basic questions are answered, the sliders tune the rest
   const cityName = cityById(state.brief.destination)?.name
   const tuning = !member && !locked && !typing && !field && cityName && onBrief && state.messages.length > 1
@@ -166,6 +177,19 @@ export function ChatPanel({ state, typing, canPlan, onSend, onPlan, collapsed, o
               <button onClick={confirm.onNo}>Cancel</button>
             </div>
           </>
+        )}
+        {heard.length >= 3 && !confirm && (
+          <div className="read-back" aria-label="What I heard">
+            <p className="read-back-title">What I heard</p>
+            <ul>
+              {heard.map(c => (
+                <li key={c.key} className="read-chip">
+                  <button className="read-chip-label" title="Correct this" onClick={() => correct(c.label)}><span aria-hidden>{c.icon}</span> {c.label}</button>
+                  {c.drop && onBrief && <button className="read-chip-drop" aria-label={`Remove ${c.label}`} title="Remove" onClick={() => onBrief(c.drop!)}>×</button>}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {tuning && !confirm && <TuneCard brief={state.brief} city={cityName} onBrief={onBrief} />}
         {retuning && !confirm && (tuneOpen

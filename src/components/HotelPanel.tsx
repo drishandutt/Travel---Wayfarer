@@ -34,7 +34,7 @@ export function HotelPanel({ state, dispatch }: { state: TripState; dispatch: Di
               <div className="fit">{Math.round(s.total * 100)}<sup>%</sup></div>
             </div>
             <div className="hotel-meta">
-              <span>${s.hotel.nightly} a night</span>
+              <span>{s.hotel.nightly ? `$${s.hotel.nightly} a night` : 'Where you’re staying'}</span>
               <span>~{Math.round(s.avgCommute)} min to each day</span>
             </div>
             {chosen && <span className="badge">Your base</span>}

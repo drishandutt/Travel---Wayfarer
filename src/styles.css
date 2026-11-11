@@ -142,6 +142,14 @@ input { font: inherit; }
 .quick-replies { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; animation: msgIn .35s var(--ease) both; }
 .quick-replies button { min-height: 34px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--paper); font-size: 13px; transition: background .2s; }
 .quick-replies button:hover { background: rgba(var(--paper-rgb), .08); }
+.read-back { padding: 12px 14px; border-radius: 18px; background: rgba(var(--paper-rgb), .06); border: 1px solid var(--line); animation: msgIn .35s var(--ease) both; }
+.read-back-title { margin: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--paper-dim); }
+.read-back ul { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.read-chip { display: inline-flex; align-items: center; max-width: 100%; border-radius: 999px; border: 1px solid var(--line-2); }
+.read-chip-label { min-height: 32px; padding: 5px 4px 5px 11px; border: 0; background: transparent; color: var(--paper); font-size: 13px; text-align: left; overflow-wrap: anywhere; }
+.read-chip:not(:has(.read-chip-drop)) .read-chip-label { padding-right: 11px; }
+.read-chip-drop { min-width: 30px; min-height: 32px; padding: 0 9px 0 4px; border: 0; background: transparent; color: var(--paper-dim); font-size: 16px; line-height: 1; }
+.read-chip-label:hover, .read-chip-drop:hover { color: var(--amber); }
 .trip-tune { display: flex; flex-direction: column; gap: 8px; animation: msgIn .35s var(--ease) both; }
 .trip-tune-more { align-self: flex-start; min-height: 34px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--paper); font-size: 13px; }
 .trip-tune-actions { position: sticky; bottom: 0; padding: 6px 0 2px; background: var(--glass-hi); }

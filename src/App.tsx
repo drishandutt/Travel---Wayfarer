@@ -5,7 +5,7 @@ import { deleteTrip, groupCopyOf, loadCurrent, loadPanels, loadTrips, localCopyO
 import { converse, isReady, nextField } from './planner/intake'
 import { MockPlanner } from './planner/mockPlanner'
 import { RemotePlanner } from './planner/remotePlanner'
-import { claudeIntake, detectBrain, type BrainStatus } from './planner/brain'
+import { claudeIntake, detectBrain, findStay, plansRemotely, type BrainStatus } from './planner/brain'
 import { customPlaceRequest, isFind, mapsHost, resolveCustomPlace, type CustomPlaceRequest } from './planner/customPlaces'
 import { runAgent } from './agent/run'
 import type { Place, PlannerEvent, TripBrief } from './types'
@@ -223,8 +223,8 @@ function TripApp({ acct }: { acct: AccountHandle }) {
 
   const [brain, setBrain] = useState<BrainStatus | null>(null)
   useEffect(() => { detectBrain().then(setBrain) }, [])
-  // Claude on the server when configured; otherwise the offline heuristic planner.
-  const engine = useMemo(() => (brain?.claude ? new RemotePlanner() : new MockPlanner(1)), [brain])
+  // A model on the server (Claude, or OpenAI) when configured; otherwise the offline heuristic planner.
+  const engine = useMemo(() => (plansRemotely(brain) ? new RemotePlanner() : new MockPlanner(1)), [brain])
   const abort = useRef<AbortController | null>(null)
   const latest = useRef<TripState>(state)
   latest.current = state
@@ -383,9 +383,11 @@ function TripApp({ acct }: { acct: AccountHandle }) {
         const { brief, reply } = converse(text, s.brief, city.id)
         dispatch({ type: 'brief', brief })
         dispatch({ type: 'chat', role: 'ai', text: `${mapped} ${reply}` })
+        void placeStay(brief)
       } else {
         const brief = { ...s.brief, destination: city.id }
         dispatch({ type: 'brief', brief })
+        void placeStay(brief)
         dispatch({ type: 'chat', role: 'ai', text: `${mapped}${nextField(brief) ? '' : ' Hit “Pick places” whenever you’re ready.'}` })
       }
       dispatch({ type: 'city-ready', id: city.id })
@@ -528,17 +530,19 @@ function TripApp({ acct }: { acct: AccountHandle }) {
     }
 
     setTyping(true)
-    if (brain?.claude && s.phase === 'intake') {
+    if (plansRemotely(brain) && s.phase === 'intake') {
       try {
         const out = await claudeIntake([...s.messages, { id: 'pending', role: 'user', text }], s.brief)
         dispatch({ type: 'brief', brief: { ...out.brief, moneyGroupId: s.brief.moneyGroupId } })
-        dispatch({ type: 'chat', role: 'ai', text: out.reply })
+        dispatch({ type: 'chat', role: 'ai', text: out.reply, chips: out.chips })
+        void placeStay(out.brief)
         // a city being mapped: the destination is set once it's ready
         if (out.building) { void awaitCity(out.building); return }
       } catch (e) {
         const { brief, reply } = converse(text, latest.current.brief)
         dispatch({ type: 'brief', brief })
-        dispatch({ type: 'chat', role: 'ai', text: `(Claude is unreachable: ${(e as Error).message} Using offline mode.) ${reply}` })
+        dispatch({ type: 'chat', role: 'ai', text: `(The planner is unreachable: ${(e as Error).message} Using offline mode.) ${reply}` })
+        void placeStay(brief)
       } finally {
         setTyping(false)
       }
@@ -568,10 +572,32 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       }
     }
     dispatch({ type: 'brief', brief })
+    void placeStay(brief)
     setTimeout(() => {
       setTyping(false)
       dispatch({ type: 'chat', role: 'ai', text: reply })
     }, 450)
+  }
+
+  // Where they said they're staying goes on the map as soon as there's a city to look in, and
+  // becomes the trip's base when it's time to choose one.
+  const stayAsked = useRef('')
+  const placeStay = async (just?: TripBrief) => {
+    const b = just ?? latest.current.brief
+    const stay = b.story?.stay
+    if (!stay || stay.coord || !b.destination) return
+    const key = `${b.destination}|${stay.name.toLowerCase()}`
+    if (stayAsked.current === key) return
+    stayAsked.current = key
+    try {
+      const found = await findStay(stay.name, b.destination)
+      const now = latest.current.brief
+      if (now.story?.stay?.name !== stay.name || now.destination !== b.destination) return
+      dispatch({ type: 'brief', brief: { ...now, story: { ...now.story, stay: { name: stay.name, coord: found.coord } } } })
+      dispatch({ type: 'planner', event: { type: 'camera', center: found.coord, zoom: 13 } })
+    } catch {
+      // not found, or no server: it stays a name, and the planner picks a base as usual
+    }
   }
 
   // Edits typed while the planner was still drawing.
@@ -894,6 +920,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
       } : undefined}
       onInvite={account && !member ? openInvite : undefined}
       onBrief={patch => dispatch({ type: 'brief', brief: { ...latest.current.brief, ...patch } })}
+      modelIntake={plansRemotely(brain)}
       onRetune={!member ? retune : undefined} />
   )
   const journalEl = state.phase === 'intake' ? null : (
@@ -908,7 +935,7 @@ function TripApp({ acct }: { acct: AccountHandle }) {
             <div className="summary">
               <div><small>Base</small><b>{state.hotel.hotel.name}</b></div>
               <div><small>Stops</small><b>{totals.stops}</b></div>
-              <div><small>Stay</small><b>${totals.stay.toLocaleString()}</b></div>
+              <div><small>Stay</small><b>{state.hotel && !state.hotel.hotel.nightly ? 'Booked' : `$${totals.stay.toLocaleString()}`}</b></div>
             </div>
           )}
 

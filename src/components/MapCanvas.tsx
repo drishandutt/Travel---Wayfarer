@@ -253,7 +253,7 @@ export function MapCanvas({ state, dispatch, insets, theme }: { state: TripState
         el.className = 'marker'
         el.innerHTML = `<div class="hotel-pin"><span class="hotel-core"><span>⌂</span></span><span class="pin-label"><b></b><small></small></span></div>`
         el.querySelector('b')!.textContent = s.hotel.name
-        el.querySelector('small')!.textContent = `$${s.hotel.nightly}/night · ${Math.round(s.avgCommute)} min avg commute`
+        el.querySelector('small')!.textContent = s.hotel.nightly ? `$${s.hotel.nightly}/night · ${Math.round(s.avgCommute)} min avg commute` : `Where you’re staying · ${Math.round(s.avgCommute)} min avg commute`
         el.addEventListener('click', () => dispatch({ type: 'select-place', id: s.hotel.id }))
         rec = { el, marker: new maplibregl.Marker({ element: el }).setLngLat(s.hotel.coord).addTo(map) }
         hotels.current.set(s.hotel.id, rec)
@@ -265,6 +265,23 @@ export function MapCanvas({ state, dispatch, insets, theme }: { state: TripState
       rec.el.style.zIndex = chosen ? '30' : '2'
     }
   }, [state.hotelScores, state.hotel, state.selectedPlace, ready])
+
+  // where they said they're staying, on the map from the first message, until it's the chosen base
+  const stayPin = useRef<maplibregl.Marker | null>(null)
+  const stay = state.brief.story?.stay
+  const stayShown = stay?.coord && !state.hotelScores.some(s => s.hotel.id === 'my-stay') ? stay : undefined
+  useEffect(() => {
+    const map = mapRef.current
+    stayPin.current?.remove()
+    stayPin.current = null
+    if (!map || !stayShown?.coord) return
+    const el = document.createElement('div')
+    el.className = 'marker'
+    el.innerHTML = `<div class="hotel-pin chosen"><span class="hotel-core"><span>⌂</span></span><span class="pin-label"><b></b><small>Where you’re staying</small></span></div>`
+    el.querySelector('b')!.textContent = stayShown.name
+    stayPin.current = new maplibregl.Marker({ element: el }).setLngLat(stayShown.coord).addTo(map)
+    return () => { stayPin.current?.remove(); stayPin.current = null }
+  }, [stayShown?.name, stayShown?.coord?.[0], stayShown?.coord?.[1], ready])
 
   // animated route drawing
   useEffect(() => {

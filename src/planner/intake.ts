@@ -1,5 +1,6 @@
 import type { BudgetTier, TripBrief, Vibe } from '../types'
 import { CITIES, cityById, findCity } from '../data/cities'
+import { applyStory, dayDate, extractStory } from './story'
 
 // Conversational intake: turns free text into a structured TripBrief.
 // This rule-based extractor is the offline stand-in for an LLM call with a
@@ -68,7 +69,10 @@ export function extractBrief(text: string, prev: TripBrief): TripBrief {
   const heard = vocab.filter(k => new RegExp(`\\b(?:${k}|${k.replace(/y$/, 'ie')})(?:e?s)?\\b`).test(t))
   if (heard.length) next.tastes = [...new Set([...(next.tastes ?? []), ...heard])]
 
-  return next
+  // dates, where they're staying, when they land, who's coming, the occasion, what to avoid
+  const told = extractStory(text, next)
+  if (days) told.days = next.days // "3 days", said outright, wins over a date range
+  return applyStory(told)
 }
 
 export function resolveBudgetTier(b: TripBrief): BudgetTier {
@@ -87,7 +91,11 @@ export function isReady(b: TripBrief): boolean {
 
 // ── The conversation ─────────────────────────────────────────────────────────
 
-export type BriefField = 'destination' | 'days' | 'travelers' | 'vibes' | 'budget'
+export type BriefField = 'destination' | 'days' | 'travelers' | 'person' | 'vibes' | 'budget'
+
+// The person the trip is for, when we know who's coming but nothing about them yet.
+export const personToAsk = (b: TripBrief) => b.story?.people?.find(p => !p.notes)
+const PLURAL = new Set(['kids', 'parents', 'grandparents', 'friends', 'colleagues'])
 
 // What we still want to know, in order. Fields left open are never asked again.
 export function nextField(b: TripBrief): BriefField | undefined {
@@ -95,8 +103,11 @@ export function nextField(b: TripBrief): BriefField | undefined {
   if (!b.days) return 'days'
   const open = b.open ?? []
   if (!b.travelers && !open.includes('travelers')) return 'travelers'
-  if (!b.vibes.length && !open.includes('vibes')) return 'vibes'
-  if (!b.budgetTier && !b.budgetAmount && !open.includes('budget')) return 'budget'
+  // a friend would ask about the people before the budget
+  if (personToAsk(b) && !open.includes('person')) return 'person'
+  if (!b.vibes.length && !b.story?.feel?.length && !open.includes('vibes')) return 'vibes'
+  // where they're staying says enough about the budget to start
+  if (!b.budgetTier && !b.budgetAmount && !b.story?.stay && !open.includes('budget')) return 'budget'
   return undefined
 }
 
@@ -105,6 +116,7 @@ export const QUICK_REPLIES: Record<BriefField, string[]> = {
   destination: CITIES.map(c => c.name),
   days: ['2 days', '3 days', '5 days'],
   travelers: ['Just me', 'A couple', 'Family of 4', 'Group of 6'],
+  person: ['Food & drinks', 'Art & music', 'Adventure', 'Slow & cosy'],
   vibes: ['Food', 'Culture', 'Nightlife', 'Slow & romantic', 'Mix of everything'],
   budget: ['Cheap', 'Comfortable', 'Splurge', 'Not sure'],
 }
@@ -117,6 +129,10 @@ export function nextQuestion(b: TripBrief): string {
       return `How many days do you have there? I can map up to ${MAX_DAYS}.`
     case 'travelers':
       return 'Who’s coming along? Solo, a couple, a group of friends?'
+    case 'person': {
+      const who = personToAsk(b)!.who
+      return `${PLURAL.has(who) ? 'What are the' : 'What’s your'} ${who} into? Tell me anything, it shapes the whole trip.`
+    }
     case 'vibes':
       return 'What’s the vibe? Food crawl, culture, nightlife, slow and romantic… or a mix of everything.'
     case 'budget':
@@ -132,11 +148,13 @@ const NO_PREFERENCE = /\b(mix|match|anything|everything|all of (it|them|the abov
 
 const OPEN_NOTE: Record<string, string> = {
   travelers: 'I’ll plan for two for now, and you can change that anytime.',
+  person: 'No problem, I’ll go by what you’ve told me.',
   vibes: 'A bit of everything it is.',
   budget: 'I’ll aim for comfortable, and you can change that anytime.',
 }
 const MISSED_NOTE: Record<string, string> = {
   travelers: 'I didn’t catch how many of you there are, so I’ll plan for two for now.',
+  person: 'No problem, I’ll go by what you’ve told me.',
   vibes: 'I didn’t catch a vibe in that, so I’ll keep it to a bit of everything.',
   budget: 'I didn’t catch a budget in that, so I’ll aim for comfortable.',
 }
@@ -162,12 +180,29 @@ export function converse(text: string, prev: TripBrief, destination?: string): {
     else if (/\b(medium|average|normal)\b/.test(t)) brief = { ...brief, budgetTier: 'comfort' }
   }
 
+  // An answer about the person the trip's for is kept in their words.
+  if (asked === 'person' && !(NO_PREFERENCE.test(t) && t.split(/\s+/).length <= 4) && text.trim().length > 1) {
+    const who = personToAsk(prev)!.who
+    const story = brief.story ?? {}
+    brief = { ...brief, story: { ...story, people: (story.people ?? []).map(p => (p.who === who && !p.notes ? { ...p, notes: text.trim().slice(0, 120) } : p)) } }
+  }
+
   // What we just learned, said back so they know they were heard.
   const heard: string[] = []
   const city = cityById(brief.destination)
   if (city && brief.destination !== prev.destination) heard.push(city.name)
-  if (brief.days && brief.days !== prev.days) heard.push(`${brief.days} day${brief.days > 1 ? 's' : ''}`)
-  if (brief.travelers && brief.travelers !== prev.travelers) heard.push(brief.travelers === 1 ? 'just you' : `${brief.travelers} people`)
+  if (brief.startDate && brief.days && brief.startDate !== prev.startDate) heard.push(brief.days > 1 ? `${dayDate(brief, 1)} to ${dayDate(brief, brief.days)}` : `${dayDate(brief, 1)}`)
+  else if (brief.days && brief.days !== prev.days) heard.push(`${brief.days} day${brief.days > 1 ? 's' : ''}`)
+  const story = brief.story ?? {}
+  const before = prev.story ?? {}
+  const newPeople = (story.people ?? []).filter(p => !before.people?.some(q => q.who === p.who))
+  if (newPeople.length) heard.push(`you and your ${newPeople.map(p => p.who).join(' and ')}`)
+  else if (brief.travelers && brief.travelers !== prev.travelers) heard.push(brief.travelers === 1 ? 'just you' : `${brief.travelers} people`)
+  if (story.stay && story.stay.name !== before.stay?.name) heard.push(`staying at ${story.stay.name}`)
+  if (story.arrive !== undefined && story.arrive !== before.arrive) heard.push(`free from ${Math.floor(story.arrive / 60)}:${String(story.arrive % 60).padStart(2, '0')} on day 1`)
+  if (story.occasion && story.occasion !== before.occasion) heard.push(story.occasion)
+  const newAvoid = (story.avoid ?? []).filter(a => !before.avoid?.includes(a))
+  if (newAvoid.length) heard.push(newAvoid.map(a => (a === 'touristy' ? 'nothing touristy' : `no ${a}`)).join(', '))
   const newVibes = brief.vibes.filter(v => !prev.vibes.includes(v))
   if (newVibes.length) heard.push(newVibes.join(' + '))
   if (brief.budgetAmount && brief.budgetAmount !== prev.budgetAmount) heard.push(`$${brief.budgetAmount.toLocaleString()} budget`)

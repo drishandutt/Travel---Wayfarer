@@ -8,7 +8,7 @@ cp .env.example .env   # add ANTHROPIC_API_KEY to plan with Claude
 npm run dev            # web on http://localhost:5173, API on :8787
 ```
 
-Without a key the app runs fully offline on the heuristic planner; the top bar shows which brain is active (**Claude Opus 5.5** or **Offline planner**).
+Without a model key the app runs fully offline on the heuristic planner. With `ANTHROPIC_API_KEY` it plans with Claude, and with only `OPENAI_API_KEY` it plans with OpenAI. The top bar shows which brain is active (for example **Claude Opus 5.5**, **GPT 6 Astra** or **Offline planner**).
 
 ---
 
@@ -360,6 +360,8 @@ Stops are grouped by area first (`kmeans` in `geo.ts`), then two passes in `src/
 - **`orderDay` untangles one day.** It tries several opening stops, then reverses stretches and moves single stops while travel time drops. Evening and night stops always keep their order after the daytime ones. Morning versus midday is only a preference, so a morning spot can slide later when that saves real travel.
 - **`rebalanceDays` works across days.** It moves or swaps stops when that lowers total travel, evens out day sizes and avoids stacking evening stops. Hops over 18 minutes count extra, since one haul across town feels worse than several short hops and reads on the map as a stop on the wrong day. So it can accept a little more travel to fill a nearly empty day or end an overloaded one earlier. Asking in chat to tidy the whole trip runs this again; a single day's *Tidy route* only re-orders that day.
 
+**Rush hour.** A hop that isn't a walk takes longer in the morning (8:00–10:30) and evening (17:00–20:30) peaks, by a factor for each city (`trafficOf` in `geo.ts`: Mumbai 1.8, London 1.2, Tokyo 1.05, 1.3 for cities not listed), with half of that in the half hour either side. `buildDay` passes each hop's departure time, so an evening across town costs what it really does. Hops to and from the hotel aren't timed yet.
+
 Route lines on the map are only slightly curved, because street routes aren't known yet and a big bow makes a hop look longer than it is.
 
 ---
@@ -390,6 +392,29 @@ Tokyo and Lisbon are hand-made and London was built once from Wikivoyage; every 
 
 ## The intake conversation
 
+**The trip story** (`TripBrief.story`, `src/planner/story.ts`) holds what people tell us beyond the basics:
+- why they're going (`occasion`)
+- who's coming, with anything known about each person (`people`)
+- where they're staying (`stay`, placed on the map once found)
+- when they're free on day 1 and when they must be done on the last day (`arrive`, `leave`)
+- what they want to happen and on which day (`moments`)
+- the mood (`feel`)
+- what not to plan (`avoid`)
+
+With a model, the intake fills it. Offline, `extractStory` reads the same things from the text: dates in the usual forms ("24, 25, 26", "Dec 3-6", "the 12th to the 14th"; never a count or an amount), "staying at …", "landing at 1 pm", relations ("my girlfriend", "the kids"), occasions, moments tied to a day ("24th: a crazy date night"), and avoid-lists after "not", "no", "hate" and "don't want".
+
+What the story means for the plan:
+- `applyStory` turns it into the settings the planners already read, without overriding a slider someone moved. For example, "touristy" moves *Knows the city* to mostly local favourites, "crowds" sets the crowds slider, kids set the kids slider, and "romantic" adds the vibe.
+- `storyLines` says it to the model planner and the hotel pick in words.
+- Day 1 starts 75 minutes after they arrive (`arrivalFloor`, read by `buildDay`).
+- Once their hotel is on the map, it is the base: `stayHotel` gives it to both planners' hotel step, and no other hotel is chosen. Its price isn't known, so the summary says *Booked* and the cost estimate uses the budget's usual rate.
+
+The hotel is found with `POST /api/places/stay`. It looks the name up on OpenStreetMap (`resolvePlace`, nothing described), keeps it on the trip only, and never adds it to the city's catalog. It is pinned on the map as *Where you're staying* from the first message.
+
+**What I heard.** Once three or more things are known, the chat shows them as chips. Tapping a chip starts a correction in the message box ("Not quite: … should be "), and × takes that piece out.
+
+**One question, like a friend.** Offline, the order is destination, days, who's coming, **the person** ("What's your girlfriend into?", when someone's coming and nothing is known about them; the answer is kept in their words in `people[].notes`), vibe, then budget. Budget isn't asked when they've said where they're staying, and vibe isn't asked when the story has a feel. With a model, the model picks the one question whose answer would change the plan most, and sends its own tap-to-answer chips with it (`chips` on the chat message).
+
 `converse` in `src/planner/intake.ts` reads each message against the question on screen, says back what it heard, and always moves on. A bare answer ("5", "low") belongs to the question asked. Optional questions are never repeated: "mix and match" or an unclear reply settles that field and adds it to `brief.open`. Only destination and days are required. Tap-to-answer chips come from `QUICK_REPLIES`. Trips are capped at `MAX_DAYS` (5), and the reply says so when someone asks for more. A city the app doesn't know is looked up and built (see *Any city*).
 
 ---
@@ -408,26 +433,32 @@ Every push to `main` on GitHub (`drishandutt/Travel---Wayfarer`) deploys. A depl
 railway up --service wayfarer
 ```
 
-The directory is linked to the project. The Railway connector available to Claude is a different, work account, so it isn't used for this app. There is no `ANTHROPIC_API_KEY` on the service, so it runs the offline planner. Adding a key would switch on the Claude endpoints for anyone with the URL, so add rate limits first. `OPENAI_API_KEY` is safe to add as it is: it only powers the travellers’-own-places lookups, which are already rate limited per visitor. Money's email sign-in wouldn't protect them, since anyone can type an address. Shared expenses need `DATABASE_URL` on the service: see [Money](#money-shared-expenses).
+The directory is linked to the project. The Railway connector available to Claude is a different, work account, so it isn't used for this app. There is no `ANTHROPIC_API_KEY` on the service, so the intake, the planner and the hotel pick run on OpenAI. Its key comes from `OPENAI_API_KEY` or the dev tools' *Settings*. Those three routes are limited per visitor: intake 120, plans 20 and hotels 30 an hour. Across everyone, `WAYFARER_DAILY_MODEL_CALLS` (3000 a day unless set) caps them, after which the app falls back to the offline planner until the next day. Money's email sign-in wouldn't protect these routes, since anyone can type an address. Shared expenses need `DATABASE_URL` on the service: see [Money](#money-shared-expenses).
 
 ---
 
-## The Claude brain (`server/`)
+## The model brain (`server/`)
 
-The browser never holds the API key. A small Node server (`server/index.ts`) talks to Claude and streams `PlannerEvent`s back as Server-Sent Events. `RemotePlanner` reads that stream; it implements the same `PlannerEngine` interface as `MockPlanner`, so no component changed.
+The browser never holds an API key. A small Node server (`server/index.ts`) talks to the model and streams `PlannerEvent`s back as Server-Sent Events. `RemotePlanner` reads that stream; it implements the same `PlannerEngine` interface as `MockPlanner`, so no component changed.
 
-| Step | Endpoint | How Claude is used |
+The model is Claude when `ANTHROPIC_API_KEY` is set, otherwise OpenAI (`server/llm.ts`). `structured` makes one JSON-schema call. `toolLoop` runs a tool loop:
+- **Claude:** the assistant turn goes back verbatim each round.
+- **OpenAI:** the Responses API, with `previous_response_id` and `function_call_output` items.
+
+Tools are strict on both. `/api/health` says which model plans (`planner`, `model`).
+
+| Step | Endpoint | How the model is used |
 |---|---|---|
-| Intake | `POST /api/intake` → `{reply, brief, building?}` | One call with **structured output** (JSON schema): Claude returns the whole updated `TripBrief` plus a one-question reply. Effort `low`. The destination is free text; the server resolves it, building the city if need be. |
-| Planning | `POST /api/plan` → SSE | **Tool-using agent loop** (`server/planAgent.ts`). Claude gets the brief and the place catalog, then calls `shortlist_places` → `commit_day` (once per day) → `finish_plan`. Every tool carries a `narration` sentence that becomes the live thinking log. Effort `medium`. |
-| Hotels | `POST /api/hotels` → SSE | Commute, price and vibe scores are computed; Claude makes the final pick and explains it (structured output, effort `low`). Candidates animate in while it deliberates. |
+| Intake | `POST /api/intake` → `{reply, chips, brief, building?}` | One call with **structured output** (JSON schema). The model returns the whole updated `TripBrief` and its story, a reply that asks the one question that would change the plan most, and tap-to-answer chips. Effort `low`. The destination is free text; the server resolves it, building the city if need be. |
+| Planning | `POST /api/plan` → SSE | **Tool-using agent loop** (`server/planAgent.ts`). The model gets the brief, its story and the place catalog, then calls `shortlist_places` → `commit_day` (once per day) → `finish_plan`. Every tool carries a `narration` sentence that becomes the live thinking log. Effort `medium`. |
+| Hotels | `POST /api/hotels` → SSE | Where they're staying, if they said and it's on the map, is the base, with no model call. Otherwise commute, price and vibe scores are computed, and the model makes the final pick and explains it (structured output, effort `low`). Candidates animate in while it deliberates. |
 
 Design choices:
-- **Claude decides, code computes.** Claude chooses places, groupings, order and start times. Timings, travel legs and hotel metrics come from the deterministic primitives in `src/planner/core.ts`, which the offline planner shares, so numbers are never hallucinated.
-- **Tool results feed back reality.** `shortlist_places` returns each kept place's nearest neighbours with travel minutes, and `commit_day` returns the computed timeline (including idle gaps), so Claude can correct course on later days.
-- **Strict tools + server-side validation.** Tool schemas use `strict: true`, and every input is re-checked (unknown or reused ids are returned as tool errors for Claude to fix).
-- **Resilience.** Requests opt into server-side refusal fallback (`fallbacks: "default"`). Closing the tab or pressing *Start over* aborts the in-flight Claude call. Any failure becomes an `error` event, and the UI falls back to the last stable phase.
-- **Config** (`.env`): `WAYFARER_MODEL` (default `claude-opus-5-5`), `WAYFARER_EFFORT_PLAN|INTAKE|HOTEL`, `WAYFARER_BRAIN=mock` to force offline, `WAYFARER_API_PORT`.
+- **The model decides, code computes.** The model chooses places, groupings, order and start times. Timings, travel legs and hotel metrics come from the deterministic primitives in `src/planner/core.ts`, which the offline planner shares, so numbers are never hallucinated.
+- **Tool results feed back reality.** `shortlist_places` returns each kept place's nearest neighbours with travel minutes, and `commit_day` returns the computed timeline (including idle gaps), so the model can correct course on later days.
+- **Strict tools + server-side validation.** Tool schemas use `strict: true`, and every input is re-checked (unknown or reused ids are returned as tool errors for the model to fix).
+- **Resilience.** Claude requests opt into server-side refusal fallback (`fallbacks: "default"`). Closing the tab or pressing *Start over* aborts the in-flight model call. Any failure becomes an `error` event, and the UI falls back to the last stable phase.
+- **Config** (`.env`): `WAYFARER_MODEL` (default `claude-opus-5-5`), `WAYFARER_OPENAI_MODEL` (default `gpt-6-astra`), `WAYFARER_EFFORT_PLAN|INTAKE|HOTEL`, `WAYFARER_BRAIN=mock` to force offline planning, `WAYFARER_DAILY_MODEL_CALLS`, `WAYFARER_API_PORT`.
 
 ---
 
@@ -549,10 +580,10 @@ src/
 
 | Concern | Today | Production swap |
 |---|---|---|
-| Understanding the user | ✅ Claude (structured output); regex extractor offline | — |
-| Planning brain | ✅ Claude agent loop over SSE; `MockPlanner` offline | — |
+| Understanding the user | ✅ Claude or OpenAI (structured output, with the trip story); rule-based reading offline | — |
+| Planning brain | ✅ Claude or OpenAI agent loop over SSE; `MockPlanner` offline | — |
 | Places | ✅ Tokyo and Lisbon by hand; London and any other city from Wikivoyage + Wikidata on request; travellers' finds promoted | Opening hours and a places API for the long tail |
-| Travel time | Distance heuristic (walk ≤ 1.4 km, else transit) | Routing API (Google Routes / Mapbox / OSRM) via `estimateTravel` |
+| Travel time | Distance heuristic (walk ≤ 1.4 km, else transit), slowed at rush hour by a factor per city | Routing API (Google Routes / Mapbox / OSRM) via `estimateTravel` |
 | Route geometry | Bezier arcs | Real polylines from the routing API |
 | Photos | ✅ Wikipedia / Commons (free) | Google Places / Foursquare photos for restaurants and hotels |
 | Reels & videos | Curated snapshot in `data/videos.ts`. Instagram has no open search, so reels come from its public `instagram.com/popular/<topic>` grids; YouTube and TikTok come from search. Each was kept only if its title or caption names the place and it loads: YouTube's oEmbed confirms embedding is allowed, Instagram's embed page reports dead reels, but TikTok's oEmbed accepts any id, so check TikToks in the player itself. Clips get deleted over time, so re-check it now and then, and curate new cities when you add them. Places with no curated clips (travellers’ own) are searched live: see *Your own places* | Instagram Graph API + YouTube Data API behind `getVideos` |

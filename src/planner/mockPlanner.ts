@@ -3,7 +3,7 @@ import { tripCity } from '../data/cities'
 import { centroid, fmtClock } from './geo'
 import { resolveBudgetTier } from './intake'
 import { sleep, type PlannerEngine, type Picks } from './engine'
-import { applyGapFill, dayShape, buildDay, findGapFill, groupDays, hotelLegs, scoreHotel, scorePlace, shortlist } from './core'
+import { applyGapFill, dayShape, buildDay, findGapFill, groupDays, hotelLegs, scoreHotel, scorePlace, shortlist, stayHotel } from './core'
 
 export class MockPlanner implements PlannerEngine {
   constructor(private speed = 1) {}
@@ -125,6 +125,17 @@ export class MockPlanner implements PlannerEngine {
     yield { type: 'scan', center: gravity, radiusKm: 3 }
     yield { type: 'camera', center: gravity, zoom: city.zoom + 0.6 }
     await this.wait(900, signal)
+
+    // where they told us they're staying is the base
+    const stay = stayHotel(brief)
+    if (stay) {
+      const score = { ...scoreHotel(stay, brief, days), priceFit: 1 }
+      yield { type: 'hotel-candidate', score }
+      yield { type: 'thought', text: `You’re staying at ${stay.name}: ~${Math.round(score.avgCommute)} min to each day’s start and end. Wiring it into every day’s route.`, tone: 'decide' }
+      yield { type: 'camera', center: stay.coord, zoom: city.zoom + 0.8 }
+      yield { type: 'hotel-pick', score, days: hotelLegs(stay, days) }
+      return
+    }
 
     const scores = city.hotels.map(h => scoreHotel(h, brief, days))
     for (const s of scores) {

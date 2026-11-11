@@ -32,7 +32,7 @@ export function PlaceCard({ state, dispatch, onLogExpense, voteOn }: { state: Tr
         <PhotoGallery id={h.id} name={h.name} coord={h.coord} exactLookup={false} nearbyLabel="The neighbourhood" lead={HOTEL_PHOTOS[h.id]} />
         <div className="pc-meta">
           <span className="kind">Hotel</span>
-          <span>${h.nightly} a night</span>
+          <span>{h.nightly ? `$${h.nightly} a night` : 'Where you’re staying'}</span>
           <span>~{Math.round(hotel.avgCommute)} min to each day</span>
         </div>
         <h3>{h.name}</h3>

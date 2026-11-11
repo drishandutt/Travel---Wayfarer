@@ -1,7 +1,7 @@
 import type { DayPlan, PlannerEvent, TripBrief } from '../types'
 import type { PlannerEngine, Picks } from './engine'
 
-// Streams PlannerEvents from the server, where Claude does the planning.
+// Streams PlannerEvents from the server, where a model (Claude or OpenAI) does the planning.
 // Same interface as MockPlanner, so the UI cannot tell them apart.
 export class RemotePlanner implements PlannerEngine {
   planItinerary(brief: TripBrief, signal: AbortSignal, picks?: Picks) {

@@ -33,7 +33,8 @@ export function estimateCosts(brief: TripBrief, days: DayPlan[], city: City, hot
   const tier = resolveBudgetTier(brief)
   const stops = days.flatMap(d => d.stops.map(s => s.place))
 
-  const nightly = hotel?.hotel.nightly ?? STAY_GUESS[tier]
+  // a hotel they booked themselves has no price we know: estimate it for their budget
+  const nightly = hotel?.hotel.nightly || STAY_GUESS[tier]
   const stay = nightly * nights * rooms
   const entry = stops.filter(p => !isMeal(p)).reduce((s, p) => s + ENTRY[p.price] * people, 0)
   const meals = stops.filter(isMeal).reduce((s, p) => s + MEAL[p.price] * people, 0)
@@ -43,7 +44,7 @@ export function estimateCosts(brief: TripBrief, days: DayPlan[], city: City, hot
   const buffer = Math.round(subtotal * 0.08)
 
   const lines: CostLine[] = [
-    { key: 'stay', label: 'Stay', amount: stay, note: hotel ? `${hotel.hotel.name} · $${nightly} × ${nights} night${nights > 1 ? 's' : ''}${rooms > 1 ? ` × ${rooms} rooms` : ''}` : `Estimate until you pick a base (~$${nightly}/night)` },
+    { key: 'stay', label: 'Stay', amount: stay, note: hotel?.hotel.nightly ? `${hotel.hotel.name} · $${nightly} × ${nights} night${nights > 1 ? 's' : ''}${rooms > 1 ? ` × ${rooms} rooms` : ''}` : hotel ? `${hotel.hotel.name} · your booking, estimated at ~$${nightly}/night` : `Estimate until you pick a base (~$${nightly}/night)` },
     { key: 'food', label: 'Food & drink', amount: food, note: `Planned meals + ~$${DAILY_FOOD[tier]}/person/day for breakfast & snacks` },
     { key: 'entry', label: 'Tickets & entry', amount: entry, note: `${stops.filter(p => !isMeal(p) && p.price > 0).length} paid sights · ${stops.filter(p => !isMeal(p) && p.price === 0).length} free` },
     { key: 'transport', label: 'Getting around', amount: transport, note: `${city.transport.transitName} + walking between every stop` },

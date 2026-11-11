@@ -14,7 +14,8 @@ import type { SharedPlan, VoteValue } from '../trip/types'
 // Trip lifecycle:  intake → swipe → planning → review → hotels → final
 export type Phase = 'intake' | 'swipe' | 'planning' | 'review' | 'hotels' | 'final'
 
-export interface ChatMessage { id: string; role: 'user' | 'ai'; text: string }
+// `chips`: tap-to-answer replies to a question the planner asked in this message
+export interface ChatMessage { id: string; role: 'user' | 'ai'; text: string; chips?: string[] }
 export interface Thought { id: string; text: string; tone: 'info' | 'decide' | 'warn' }
 export interface Candidate { place: Place; verdict: 'consider' | 'keep' | 'drop' }
 
@@ -50,7 +51,7 @@ export interface TripState {
 }
 
 export type Action =
-  | { type: 'chat'; role: 'user' | 'ai'; text: string }
+  | { type: 'chat'; role: 'user' | 'ai'; text: string; chips?: string[] }
   | { type: 'brief'; brief: TripBrief }
   | { type: 'phase'; phase: Phase }
   | { type: 'planner'; event: PlannerEvent }
@@ -496,7 +497,7 @@ export function reducer(s: TripState, a: Action): TripState {
 function baseReducer(s: TripState, a: Action): TripState {
   switch (a.type) {
     case 'chat':
-      return { ...s, messages: [...s.messages, { id: uid(), role: a.role, text: a.text }] }
+      return { ...s, messages: [...s.messages, { id: uid(), role: a.role, text: a.text, ...(a.chips?.length ? { chips: a.chips } : {}) }] }
     case 'brief':
       return { ...s, brief: a.brief }
     case 'phase':

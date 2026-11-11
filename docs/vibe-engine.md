@@ -1,6 +1,6 @@
 # The Vibe Engine: updates that make Wayfarer understand people
 
-_Status: plan · 2026-11-11_
+_Status: Release 1 live · 2026-11-11_
 
 These are general updates to the tool. They aren't for one city or one kind of trip. Each one
 makes every trip feel understood, surprising and easy. They're grouped into what the planner
@@ -187,15 +187,30 @@ Score Gemini's or ChatGPT's answers to the same messages alongside. Nothing ship
 
 | Release | Updates | What people notice |
 |---|---|---|
-| **1 · Heard** | A1–A6, C3 | It catches everything they said and asks one good question. |
+| **1 · Heard** ✅ | A1–A6, C3 | It catches everything they said and asks one good question. |
 | **2 · Knows** | B1–B6, C1–C2, C4–C6 | Local places, real times, short hops, plans that read like a story. |
 | **3 · Delights** | D1–D5 | Things they'd never have found, and surprises that stay secret. |
 | **4 · Home** | E1–E4 | It remembers them, helps on the day, and makes the recap. |
 
+### Release 1: what shipped
+
+- **A1 · The brain works on OpenAI.** The intake, the planner (its tool loop) and the hotel pick run through `server/llm.ts`: Claude when there's an Anthropic key, OpenAI otherwise. The routes are limited per visitor (intake 120, plans 20, hotels 30 an hour) and to 3,000 calls a day in all (`WAYFARER_DAILY_MODEL_CALLS`).
+- **A2 · The trip story** is `TripBrief.story`, in `src/planner/story.ts`.
+- **A3 · "What I heard"** chips show in the chat. Tap a chip to correct it, or × to remove it.
+- **A4 · One question.**
+  - Offline, it asks about the person ("What's your girlfriend into?") before the budget, and skips the budget when the hotel is known.
+  - A model picks its own question and sends chips with it.
+- **A5 · Offline reading** covers dates, where they're staying, arrival and leaving times, who's coming, the occasion, moments and avoid-lists.
+- **A6 · The hotel** is pinned from the first message and becomes the base.
+- **C3 · Rush hour** slows hops at peak times, by city. Day 1 also starts after they arrive.
+- **Not yet:**
+  - the read-back's "map truth" line (how far things are from the hotel at rush hour)
+  - honouring the leaving time on the last day, except where the model planner is told it
+
 ## Decisions needed
 
-1. **Claude in production:** set a monthly spend cap and per-visitor limits, then turn on the
-   key.
+1. **Which model:** settled. OpenAI runs everything when there's no Anthropic key, with
+   per-visitor limits and a daily cap.
 2. **Place data:** either web search plus OpenStreetMap (cheap and it builds up, but patchy on
    opening hours), or add Google Places as well (better hours, ratings and photos, but paid,
    with limits on caching). Recommendation: start without Google Places, and add it if the

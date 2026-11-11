@@ -6,10 +6,11 @@ import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import type { DayPlan, PlannerEvent, TripBrief } from '../src/types'
 import type { Picks } from '../src/planner/engine'
-import { MODEL, brainEnabled, describeError } from './claude'
+import { describeError } from './claude'
+import { modelName, provider } from './llm'
 import { runIntake, type IntakeRequest } from './intake'
-import { planWithClaude } from './planAgent'
-import { hotelsWithClaude } from './hotelAgent'
+import { planWithModel } from './planAgent'
+import { hotelsWithModel } from './hotelAgent'
 import { closeMoneyDb, moneyApi } from './money/routes'
 import { clientIp, overLimit } from './money/auth'
 import { PlaceError, cachedVideos, placeVideos, resolvePlace, traceSocial, type ResolveRequest } from './places'
@@ -30,13 +31,14 @@ import type { UserRow } from './money/auth'
 captureServerConsole()
 
 // Minimal API server. The browser holds no secrets: the Anthropic key lives here.
-//   GET  /api/health   -> { claude, model, money, openai, agent }
+//   GET  /api/health   -> { claude, planner, model, money, openai, agent }  planner: 'claude' | 'openai' | null
 //   POST /api/agent    -> { state, text, calls }   one round of the trip chatbot (server/agent.ts)
 //   POST /api/intake   -> { reply, brief }
 //   POST /api/import-itinerary { text } -> a trip from a pasted itinerary (server/importItinerary.ts)
 //   POST /api/plan     -> text/event-stream of PlannerEvent
 //   POST /api/hotels   -> text/event-stream of PlannerEvent
 //   POST /api/places/resolve -> { place, note?, shared? }  a traveller's own place, from a maps link or a name
+//   POST /api/places/stay    -> { name, coord }  where they said they're staying, found on the map
 //   GET  /api/places/videos  -> PlaceVideos       reels & videos of a place, by name and city
 //   GET  /api/cities         -> every city the app can plan
 //   GET  /api/cities/:id     -> the City (places, hotels, essentials), promoted finds and profiles included
@@ -48,6 +50,8 @@ captureServerConsole()
 
 // In production this one server also serves the built site, on the host's PORT.
 const PRODUCTION = process.env.NODE_ENV === 'production'
+// a ceiling on intake, planning and hotel calls across everyone, per day, so spend can't run away
+const DAILY_MODEL_CALLS = Number(process.env.WAYFARER_DAILY_MODEL_CALLS) || 3000
 // In dev, not PORT: dev tools often set that for Vite.
 const PORT = Number(process.env.WAYFARER_API_PORT ?? (PRODUCTION ? process.env.PORT : undefined) ?? 8787)
 const DIST = resolve(dirname(fileURLToPath(import.meta.url)), '../dist')
@@ -146,7 +150,7 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
     trackRequest(req, res, url.pathname)
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      return json(res, 200, { claude: brainEnabled, model: brainEnabled ? MODEL : null, money: Boolean(await moneyApi()), openai: openaiEnabled, agent: agentEnabled(), linkReader: chromiumPath() ? 'browser' : 'fetch' })
+      return json(res, 200, { claude: provider() === 'claude', planner: provider(), model: modelName(), money: Boolean(await moneyApi()), openai: openaiEnabled, agent: agentEnabled(), linkReader: chromiumPath() ? 'browser' : 'fetch' })
     }
     // Before the check below: shared expenses have nothing to do with Claude and must work without a key.
     if (url.pathname.startsWith('/api/money/')) {
@@ -264,8 +268,28 @@ const server = createServer(async (req, res) => {
         throw err
       }
     }
-    if (!brainEnabled && url.pathname.startsWith('/api/')) {
-      return json(res, 503, { error: 'Claude is not configured. Set ANTHROPIC_API_KEY in .env.' })
+    // where they said they're staying, put on the map: a lookup only, never shared with the city
+    if (req.method === 'POST' && url.pathname === '/api/places/stay') {
+      if (overLimit(`place:${clientIp(req)}`, 40, 3_600_000)) return json(res, 429, { error: 'That’s a lot of places in a short while. Try again in a bit.' })
+      const body = await readJson<{ name?: unknown; city?: unknown }>(req)
+      if (typeof body.name !== 'string' || typeof body.city !== 'string' || !body.name.trim()) return json(res, 400, { error: 'name and city are required' })
+      try {
+        const r = await resolvePlace({ name: body.name.slice(0, 100), city: body.city.slice(0, 60), describe: false }, abortOnClose(res).signal)
+        track('place.stay', { ...from(req), subject: body.city.slice(0, 60), detail: { asked: body.name.slice(0, 100), found: r.place.name } })
+        return json(res, 200, { name: r.place.name, coord: r.place.coord })
+      } catch (err) {
+        if (err instanceof PlaceError) return json(res, 422, { error: err.message })
+        throw err
+      }
+    }
+    if (!provider() && url.pathname.startsWith('/api/')) {
+      return json(res, 503, { error: 'No model is connected. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.' })
+    }
+    // every one of these is a model call: limited per visitor, and in all per day
+    const modelRoute = { '/api/intake': ['intake', 120], '/api/plan': ['plan', 20], '/api/hotels': ['hotels', 30] }[url.pathname] as [string, number] | undefined
+    if (req.method === 'POST' && modelRoute) {
+      if (overLimit(`${modelRoute[0]}:${clientIp(req)}`, modelRoute[1], 3_600_000)) return json(res, 429, { error: 'That’s a lot of requests in a short while. Try again in a bit.' })
+      if (overLimit('model:day', DAILY_MODEL_CALLS, 86_400_000)) return json(res, 503, { error: 'The planner has had a very busy day. It’ll be back tomorrow, and the offline planner still works.' })
     }
     if (req.method === 'POST' && url.pathname === '/api/intake') {
       const body = await readJson<IntakeRequest>(req)
@@ -273,11 +297,11 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/plan') {
       const { brief, picks } = await readJson<{ brief: TripBrief; picks?: Picks }>(req)
-      return stream(res, signal => planWithClaude(brief, signal, picks))
+      return stream(res, signal => planWithModel(brief, signal, picks))
     }
     if (req.method === 'POST' && url.pathname === '/api/hotels') {
       const { brief, days } = await readJson<{ brief: TripBrief; days: DayPlan[] }>(req)
-      return stream(res, signal => hotelsWithClaude(brief, days, signal))
+      return stream(res, signal => hotelsWithModel(brief, days, signal))
     }
     if (PRODUCTION && !url.pathname.startsWith('/api/') && (req.method === 'GET' || req.method === 'HEAD')) {
       return await serveStatic(url.pathname, res)
@@ -290,7 +314,7 @@ const server = createServer(async (req, res) => {
 })
 
 server.listen(PORT, () => {
-  console.log(`Wayfarer API on http://localhost:${PORT} — brain: ${brainEnabled ? MODEL : 'offline (no ANTHROPIC_API_KEY)'}`)
+  console.log(`Wayfarer API on http://localhost:${PORT} — brain: ${modelName() ?? 'offline (no ANTHROPIC_API_KEY or OPENAI_API_KEY)'}`)
   // connect (and run any migration) now, not on someone's first tap
   void moneyApi()
 })
