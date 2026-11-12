@@ -6,7 +6,7 @@ import { converse, isReady, nextField } from './planner/intake'
 import { MockPlanner } from './planner/mockPlanner'
 import { FallbackPlanner, RemotePlanner } from './planner/remotePlanner'
 import { claudeIntake, detectBrain, findStay, findVibe, plansRemotely, type BrainStatus } from './planner/brain'
-import { hasMood, moodOf } from './planner/story'
+import { hasMood } from './planner/story'
 import { customPlaceRequest, isFind, mapsHost, resolveCustomPlace, type CustomPlaceRequest } from './planner/customPlaces'
 import { runAgent } from './agent/run'
 import type { Place, PlannerEvent, TripBrief } from './types'
@@ -590,14 +590,15 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   // Where they said they're staying goes on the map as soon as there's a city to look in, and
   // becomes the trip's base when it's time to choose one.
   const stayAsked = useRef('')
-  // Places that fit what they told us, searched for in the background while they talk, and at the
-  // top of the deck once found. One search per city and mood; the deck waits for one under way.
+  // Places that fit what they told us, searched for once per trip and city, when they ask for the
+  // deck: by then the story is told, and a search per message would cost a search per message.
   const vibeKey = useRef('')
   const saidBasic = useRef(false)
   const vibeJob = useRef<Promise<void> | null>(null)
   const findLocal = (b: TripBrief) => {
     if (!plansRemotely(brain) || !b.destination || !hasMood(b)) return
-    const key = `${b.destination}|${moodOf(b)}`
+    // this trip (its first message, which Start over and New trip change) in this city
+    const key = `${latest.current.messages.find(m => m.role === 'user')?.id ?? ''}|${b.destination}`
     if (vibeKey.current === key) return
     vibeKey.current = key
     const city = b.destination
@@ -617,7 +618,6 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   }
 
   const placeStay = async (just?: TripBrief) => {
-    findLocal(just ?? latest.current.brief)
     const b = just ?? latest.current.brief
     const stay = b.story?.stay
     if (!stay || stay.coord || !b.destination) return
@@ -654,11 +654,12 @@ function TripApp({ acct }: { acct: AccountHandle }) {
   const startDeck = async () => {
     if (shouldOffer) { offerFriends(); return } // going with friends: ask before the voting starts
     setInvitePrompt(false)
-    // places that fit their mood are still being found: worth the wait, up to a point
+    // places that fit what they told us: searched for now, once for this trip, and worth the wait
+    findLocal(latest.current.brief)
     if (vibeJob.current) {
-      dispatch({ type: 'chat', role: 'ai', text: 'Finding the places that fit what you told me, one moment…' })
+      dispatch({ type: 'chat', role: 'ai', text: 'Finding places that fit what you told me. This takes a minute or two, once per trip…' })
       setTyping(true)
-      await Promise.race([vibeJob.current, new Promise(r => setTimeout(r, 90_000))])
+      await Promise.race([vibeJob.current, new Promise(r => setTimeout(r, 180_000))])
       setTyping(false)
       if (latest.current.phase !== 'intake') return
     }

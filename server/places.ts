@@ -716,11 +716,11 @@ async function socialWithOpenAI(q: VideoQuery): Promise<Video[]> {
     const response = await openai!.responses.create({
       model: openaiLightModel(),
       reasoning: { effort: 'low' },
-      tools: [{ type: 'web_search', filters: { allowed_domains: ['instagram.com', 'tiktok.com'] } }],
+      tools: [{ type: 'web_search', search_context_size: 'low', filters: { allowed_domains: ['instagram.com', 'tiktok.com'] } }],
       include: ['web_search_call.action.sources'],
       input: `${socialAsk(q)} List every reel or video you found that is about this place, with its exact URL from the search results, the creator's handle, and its caption.`,
       text: { format: { type: 'json_schema', name: 'clips', strict: true, schema: CLIPS_SCHEMA } },
-    }, { signal: AbortSignal.timeout(90_000) })
+    }, { signal: AbortSignal.timeout(90_000), maxRetries: 0 })
 
     const results = openAIResults(response.output, response.status === 'completed' ? response.output_text : null)
     const kept = await clipsFrom(results, q)

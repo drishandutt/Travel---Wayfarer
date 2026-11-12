@@ -254,7 +254,7 @@ const server = createServer(async (req, res) => {
       // longer than the host keeps a request open), and the browser asks again until it's done.
       // Only starting one counts against the limits; it carries on if they close the tab.
       const ip = clientIp(req)
-      const out = await vibeStatus(cityPath[1], brief, (await whoIs(req))?.id ?? null, () => canSearch(8) && !overLimit(`vibe:${ip}`, 10, 3_600_000) && !overLimit('model:day', DAILY_MODEL_CALLS, 86_400_000))
+      const out = await vibeStatus(cityPath[1], brief, (await whoIs(req))?.id ?? null, () => canSearch(4) && !overLimit(`vibe:${ip}`, 4, 3_600_000) && !overLimit('model:day', DAILY_MODEL_CALLS, 86_400_000))
       if (out.status === 'limited') return json(res, 429, { error: 'That’s a lot of searches in a short while. Try again in a bit.' })
       return json(res, 200, out)
     }

@@ -206,9 +206,12 @@ describe('a trip about nights out', () => {
     assert.ok(kindFit(bar, { ...said, kids: 1 }) < kindFit(bar, said))
   })
 
-  it('searches for nights out on their own, beside food and days', () => {
-    assert.deepEqual(focusesOf(said).map(f => f.key), ['wow', 'nights', 'eats', 'days'], 'a surprise date night gets its showstoppers too')
-    assert.deepEqual(focusesOf({ vibes: ['history'], rhythm: 0.25 }).map(f => f.key), ['eats', 'days'])
+  it('searches twice at most: the showstoppers or nights out, then food and days', () => {
+    const f = focusesOf(said)
+    assert.deepEqual(f.map(x => x.key), ['wow', 'days'], 'a surprise date night: its showstoppers, nights out included')
+    assert.match(f[0].ask, /nights out/i)
+    assert.deepEqual(focusesOf({ vibes: ['nightlife'] }).map(x => x.key), ['nights', 'days'])
+    assert.deepEqual(focusesOf({ vibes: ['history'], rhythm: 0.25 }).map(x => x.key), ['days'])
   })
 
   it('keeps leading with places for a trip about sights', () => {
@@ -238,6 +241,7 @@ describe('the mood search as a job', { skip: Boolean(process.env.ANTHROPIC_API_K
     for (let i = 0; i < 100 && now.status === 'running'; i++) { await new Promise(r => setTimeout(r, 50)); now = await vibeStatus('lisbon', brief, null, () => { allowed++; return true }) }
     assert.equal(now.status, 'failed')
     assert.match(now.status === 'failed' ? now.error : '', /credits/)
+    assert.equal(calls, focusesOf(brief).length, 'one call per search: a refusal isn’t retried')
     const before = calls
     assert.equal((await vibeStatus('lisbon', brief, null, () => { allowed++; return true })).status, 'failed', 'remembered, not asked again')
     assert.equal(calls, before)

@@ -68,17 +68,20 @@ type Candidate = z.infer<typeof Found>['places'][number]
 // What the trip needs searching for, each as its own focused search: one broad search spreads
 // itself thin (a date-night trip got breakfasts and parks), so a trip about nights out gets a
 // search for nights out, and so on. They run side by side.
-export interface Focus { key: 'wow' | 'nights' | 'eats' | 'days'; want: number; ask: string }
+export interface Focus { key: 'wow' | 'nights' | 'days'; want: number; ask: string }
 export function focusesOf(brief: TripBrief): Focus[] {
   const nights = brief.vibes.includes('nightlife') || (brief.rhythm ?? 0.5) >= 0.6 || Boolean(brief.story?.moments?.some(m => m.when === 'night' || m.when === 'evening'))
+  const special = isSpecial(brief)
+  // Two searches at most: each web search feeds tens of thousands of tokens of pages back to the
+  // model, so more of them cost a lot and trip the provider's per-minute limit.
+  const showstoppers = 'The showstoppers: the most unforgettable things two people could do here for this occasion. Think a private sunset boat or yacht, a rooftop bar on a high floor with the whole city below, a chef’s table or tasting menu, a hidden speakeasy, a once-in-a-lifetime experience, a show or a setting that makes the night. Premium is fine; ordinary is not.'
+  const nightsOut = 'Their nights out: cocktail bars, speakeasies, rooftop bars and lounges, live music and jazz, places to dance, late-night food, and night experiences (a comedy show, a gig, a night food tour).'
   const out: Focus[] = []
-  // a trip meant to be remembered gets a search for its showstoppers first
-  if (isSpecial(brief)) out.push({ key: 'wow', want: 10, ask: 'The showstoppers: the most unforgettable things two people could do here for this occasion. Think a private sunset boat or yacht, a rooftop bar on a high floor with the whole city below, a chef’s table or tasting menu, a hidden speakeasy, a once-in-a-lifetime experience, a show or a setting that makes the night. The kind of places people talk about for years. Premium is fine; ordinary is not.' })
-  if (nights) out.push({ key: 'nights', want: 14, ask: 'Their nights out: cocktail bars, speakeasies, rooftop bars and lounges, wine bars, live music and jazz, places to dance, late-night food, and night experiences (a comedy show, a gig, a night walk or food tour). Cover a range from intimate to lively.' })
-  out.push({ key: 'eats', want: nights ? 8 : 12, ask: isSpecial(brief)
-    ? 'Where to eat for this occasion: dinners with a setting (by the sea, on a roof, candlelit, a chef’s counter), lunches with character, and one or two local dishes worth crossing town for. Not everyday canteens.'
-    : 'Where to eat: lunch and dinner places with character, cafés, and the street food or local dishes worth crossing a road for.' })
-  out.push({ key: 'days', want: nights ? 8 : 12, ask: 'Their days: at least three experiences to do together (a class, a workshop, a boat, a show, a spa, a walk with a local), a view at sunset, a neighbourhood to wander, and two or three surprising ideas they would never think of.' })
+  if (special) out.push({ key: 'wow', want: 12, ask: nights ? `${showstoppers} Then ${nightsOut.charAt(0).toLowerCase()}${nightsOut.slice(1)}` : showstoppers })
+  else if (nights) out.push({ key: 'nights', want: 12, ask: nightsOut })
+  out.push({ key: 'days', want: out.length ? 10 : 14, ask: special
+    ? 'Where to eat for this occasion (dinners with a setting: by the sea, on a roof, candlelit; not everyday canteens), and their days: experiences to do together (a class, a workshop, a boat, a spa, a walk with a local), a view at sunset, and two or three surprising ideas they would never think of.'
+    : 'Where to eat (places with character, cafés, the local dishes worth crossing town for), and their days: experiences to do together (a class, a workshop, a boat, a show, a walk with a local), a view at sunset, a neighbourhood to wander, and two or three surprising ideas they would never think of.' })
   return out
 }
 
@@ -112,10 +115,10 @@ async function searchClaude(city: City, brief: TripBrief, focus: Focus, signal?:
       ...FALLBACK,
       model: MODEL,
       max_tokens: 16000,
-      output_config: { effort: 'medium', format: { type: 'json_schema', schema: SCHEMA } },
-      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }],
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }],
       messages,
-    }, { signal })
+    }, { signal, maxRetries: 0 })
     collectResults(response.content, results)
     if (response.stop_reason !== 'pause_turn') { text = textOf(response); break }
     messages.push({ role: 'assistant', content: response.content })
@@ -126,13 +129,14 @@ async function searchClaude(city: City, brief: TripBrief, focus: Focus, signal?:
 async function searchOpenAI(city: City, brief: TripBrief, focus: Focus, signal?: AbortSignal): Promise<{ found: Candidate[]; sources: Set<string> }> {
   const response = await openai!.responses.create({
     model: OPENAI_MODEL,
-    reasoning: { effort: 'medium' },
-    tools: [{ type: 'web_search' }],
+    reasoning: { effort: 'low' },
+    // pages come back to the model as tokens: the small setting is plenty for names and links
+    tools: [{ type: 'web_search', search_context_size: 'low' }],
     include: ['web_search_call.action.sources'],
     input: ask(city, brief, focus),
     text: { format: { type: 'json_schema', name: 'places', strict: true, schema: SCHEMA as unknown as Record<string, unknown> } },
-    max_output_tokens: 16000,
-  }, { signal })
+    max_output_tokens: 10000,
+  }, { signal, maxRetries: 0 }) // a refusal or a limit fails once, rather than costing again
   const sources = new Map<string, string>()
   collectOpenAISources(response.output, sources)
   return { found: response.status === 'completed' ? Found.parse(JSON.parse(response.output_text)).places : [], sources: new Set(sources.keys()) }
@@ -199,6 +203,7 @@ function links(fromMap: Place['links'], instagram: string, sources: Set<string>)
 }
 
 const running = new Map<string, Promise<VibeResult>>()
+let queue: Promise<unknown> = Promise.resolve()
 // what this server searched lately, so a repeat doesn't wait on the database
 const recent = new Map<string, { ids: string[]; at: number }>()
 export interface VibeResult { places: Place[]; cached: boolean; mood: string; searched: number }
@@ -216,7 +221,11 @@ export async function findByVibe(cityId: string, brief: TripBrief, userId: strin
   }
   const pending = running.get(key)
   if (pending) return pending
-  const job = search(city, brief, mood, key, userId, signal)
+  // one search at a time on this server: they're heavy, and side by side they trip the
+  // provider's per-minute limit and fail together
+  const turn = queue.catch(() => {}).then(() => search(city, brief, mood, key, userId, signal))
+  queue = turn
+  const job = turn
     .catch(err => { failed.set(key, { error: (err as Error).message, at: Date.now() }); throw err })
     .finally(() => running.delete(key))
   running.set(key, job)
